@@ -17,6 +17,7 @@
      0001 0000 0000 0000 0000 0000 0000   queen side castle flag  0x1000000
 **/
 
+
 /**
  * Encode move information to move type (uint32_t).
  * @return the encoded move.

@@ -3,9 +3,7 @@ project(tiki_engine_core)
 set(CMAKE_C_STANDARD 23)
 include(CheckCSourceCompiles)
 
-
 include_directories(${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR})
-
 
 set (SOURCES
         src/bitboard_constants.c
@@ -13,9 +11,9 @@ set (SOURCES
         src/mask_generator.c
         src/random.c
         src/attack_mask.c
-        src/move_encoding.c)
-
-
+        src/move_encoding.c
+        src/zobrist_key.c
+        src/board.c)
 
 add_library(${PROJECT_NAME} ${SOURCES})
 set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC ${PROJECT_SOURCE_DIR}/include)

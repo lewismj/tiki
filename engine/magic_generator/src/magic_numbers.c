@@ -73,7 +73,7 @@ void generate_magic_numbers() {
     for (int i=0; i<64; i++) {
         printf("0x%" PRIx64  "ULL,\n",
                find_magic_number(i,
-                                 tiki_bitboard_const.rook_relevant_bits[i],
+                                 bitboard_const.rook_relevant_bits[i],
                                  create_rook_blocker_mask,
                                  create_rook_attack_mask, &rng_state));
     }
@@ -82,7 +82,7 @@ void generate_magic_numbers() {
     for (int i=0; i<64; i++) {
         printf("0x%" PRIx64  "ULL,\n",
                find_magic_number(i,
-                                 tiki_bitboard_const.bishop_relevant_bits[i],
+                                 bitboard_const.bishop_relevant_bits[i],
                                  create_bishop_blocker_mask,
                                  create_bishop_attack_mask, &rng_state));
     }

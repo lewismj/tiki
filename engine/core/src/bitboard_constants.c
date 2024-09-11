@@ -1,6 +1,6 @@
 #include "bitboard_constants.h"
 
-const tiki_bitboard_const_t tiki_bitboard_const = {
+const bitboard_const_t bitboard_const = {
         .square_mask = {
                 0x1,
                 0x2,

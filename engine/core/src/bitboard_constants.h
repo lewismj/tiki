@@ -13,8 +13,8 @@ typedef struct {
     const bitboard not_hg_file;
     const bitboard rook_magic_numbers[64];
     const bitboard bishop_magic_numbers[64];
-} tiki_bitboard_const_t;
+} bitboard_const_t;
 
-extern const tiki_bitboard_const_t tiki_bitboard_const;
+extern const bitboard_const_t bitboard_const;
 
 #endif

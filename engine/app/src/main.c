@@ -15,7 +15,7 @@ int main(int argc, char* argv[]) {
 
 
 
-    tiki_attack_mask_t* attack_mask = create_attack_mask();
+    init_attack_table();
 
     bitboard occupancy = 0ULL;
     set_bit(&occupancy,d6);

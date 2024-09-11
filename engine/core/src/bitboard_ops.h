@@ -20,7 +20,7 @@ void print_bitboard(const bitboard* b, showable options);
  * @return true is the bit corresponding to 's' has be set, false otherwise.
  */
 static inline __attribute__((always_inline)) bool is_bit_set(const bitboard* b, square s) {
-    return (*b & tiki_bitboard_const.square_mask[s]) != 0;
+    return (*b & bitboard_const.square_mask[s]) != 0;
 }
 
 /**
@@ -30,7 +30,7 @@ static inline __attribute__((always_inline)) bool is_bit_set(const bitboard* b, 
  * @param s the square on the bitboard to set.
  */
 static inline __attribute__((always_inline)) void set_bit(bitboard* b, square s) {
-    *b |= tiki_bitboard_const.square_mask[s];
+    *b |= bitboard_const.square_mask[s];
 }
 
 /**
@@ -40,7 +40,7 @@ static inline __attribute__((always_inline)) void set_bit(bitboard* b, square s)
  * @param s the square on the bitboard to unset.
  */
 static inline __attribute__((always_inline)) void pop_bit(bitboard* b, square s) {
-    *b &= ~tiki_bitboard_const.square_mask[s];
+    *b &= ~bitboard_const.square_mask[s];
 }
 
 /**
