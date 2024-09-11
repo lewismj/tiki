@@ -3,7 +3,6 @@
 
 #include "types.h"
 
-#define USE_PEXT
 
 typedef struct {
     bitboard* rook_blocker_masks;
