@@ -1,5 +1,4 @@
 #include <stdlib.h>
-#include <inttypes.h>
 
 #include "random.h"
 #include "zobrist_key.h"
@@ -61,4 +60,20 @@ zobrist_key_t* create_zobrist_key(uint32_t* rng_state) {
 void init_zobrist_key() {
     uint32_t rng_state = random_seed;
     create_zobrist_key(&rng_state);
+}
+
+uint64_t get_piece_key(square s, piece p) {
+    return zk_instance->piece_keys[s][p];
+}
+
+uint64_t get_enpassant_key(square s) {
+    return zk_instance->enpassant_keys[s];
+}
+
+uint64_t get_castle_key(int castle_flag) {
+    return zk_instance->castle_keys[castle_flag % 15];
+}
+
+uint64_t get_side_key() {
+    return zk_instance->side_key;
 }

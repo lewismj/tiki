@@ -40,13 +40,14 @@ static char* square_to_str[] = {
         "a4", "b4", "c4", "d4", "e4", "f4", "g4", "h4",
         "a3", "b3", "c3", "d3", "e3", "f3", "g3", "h3",
         "a2", "b2", "c2", "d2", "e2", "f2", "g2", "h2",
-        "a1", "b1", "c1", "d1", "e1", "f1", "g1", "h1", "none"
+        "a1", "b1", "c1", "d1", "e1", "f1", "g1", "h1",
+        "none"
 };
 
 /**
  * Sides (colours)
  */
-typedef enum : int { white = 01, black = 02 } colour;
+typedef enum : int { white , black, both } colour;
 
 /**
  * Move.
@@ -58,7 +59,7 @@ typedef uint32_t move;
  */
 typedef enum : int { P, N, B, R, Q, K, p, n, b, r, q, k, none } piece;
 
-static char* piece_to_str[] = {"P",
+static char* piece_to_str[] = {  "P",
                                 "N",
                                 "B",
                                 "R",
@@ -71,6 +72,19 @@ static char* piece_to_str[] = {"P",
                                 "q",
                                 "k",
                                 "none"};
+
+static int char_to_piece[] = {  ['P'] = P,
+                                ['N'] = N,
+                                ['B'] = B,
+                                ['R'] = R,
+                                ['Q'] = Q,
+                                ['K'] = K,
+                                ['p'] = p,
+                                ['n'] = n,
+                                ['b'] = b,
+                                ['r'] = r,
+                                ['q'] = q,
+                                ['k'] = k};
 
 /**
  * Castling rights.

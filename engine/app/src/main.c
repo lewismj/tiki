@@ -8,28 +8,37 @@
 #include "../../core/src/random.h"
 #include "../../core/src/mask_generator.h"
 #include "../../core/src/attack_mask.h"
+#include "../../core/src/zobrist_key.h"
+#include "../../core/src/board.h"
 
 int main(int argc, char* argv[]) {
     setbuf(stdout, 0); // Jetbrains debug need zero buffer.
     printf("tiki\n");
 
-
-
     init_attack_table();
+    init_zobrist_key();
 
-    bitboard occupancy = 0ULL;
-    set_bit(&occupancy,d6);
-    set_bit(&occupancy,f6);
-    set_bit(&occupancy,f4);
-    set_bit(&occupancy,a5);
-    set_bit(&occupancy,d2);
-    set_bit(&occupancy,b4);
-    set_bit(&occupancy,b2);
-    bitboard attacks = rook_attack(d4, occupancy);
-    print_bitboard(&attacks, show | hex);
+    board_t* board = new_board();
+    unsafe_parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", board);
+    print_board(board, show | hex);
 
-    attacks = bishop_attack(d4, occupancy);
-    print_bitboard(&attacks, show | hex);
+
+
+
+//    bitboard occupancy = 0ULL;
+//    set_bit(&occupancy,d6);
+//    set_bit(&occupancy,f6);
+//    set_bit(&occupancy,f4);
+//    set_bit(&occupancy,a5);
+//    set_bit(&occupancy,d2);
+//    set_bit(&occupancy,b4);
+//    set_bit(&occupancy,b2);
+//    bitboard attacks = rook_attack(d4, occupancy);
+//    print_bitboard(&attacks, show | hex);
+//
+//    attacks = bishop_attack(d4, occupancy);
+
+//    print_bitboard(&attacks, show | hex);
 
 
 //    bitboard attack_mask = create_knight_attack_mask(d4);

@@ -42,6 +42,12 @@ static inline __attribute__((always_inline)) move encode_move(  square  source,
            (queen_side_castle_flag << 24);
 }
 
+static inline __attribute__((always_inline)) move encode_basic_move(square  source, square target, piece move_piece) {
+    return source |
+           (target << 6) |
+           (move_piece << 12);
+}
+
 static inline __attribute__((always_inline)) square get_source_square(move m) {
     return m & 0x3f;
 }
