@@ -13,6 +13,9 @@
 
 #define MaximumSearchDepthPly 64
 
+/**
+ *
+ */
 typedef struct {
     bitboard* pieces;
     bitboard* occupancy;
@@ -35,16 +38,30 @@ typedef struct {
  */
 void unsafe_parse_fen(const char* fen, board_t* board);
 
-
+/**
+ *
+ * @return
+ */
 board_t* new_board();
+
+/**
+ *
+ * @param board
+ */
 void free_board(board_t* board);
+
+/**
+ *
+ * @param board
+ * @param options
+ */
 void print_board(board_t* board, showable options);
 
 /**
  * Recomputes the Zobrist hash of the board state.
  * @param board the board state.
  */
-static inline __attribute__((always_inline)) void recalculate_hash(board_t* board) {
+static inline_always void recalculate_hash(board_t* board) {
     uint64_t hash = 0ULL;
 
     for (int p=0; p<12; p++) {
@@ -62,6 +79,5 @@ static inline __attribute__((always_inline)) void recalculate_hash(board_t* boar
 
     board->hash = hash;
 }
-
 
 #endif

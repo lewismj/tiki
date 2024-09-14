@@ -7,6 +7,9 @@
 #include "attack_mask.h"
 
 
+/**
+ *
+ */
 typedef struct {
     bitboard* rook_blocker_masks;
     bitboard** rook_attack_table;
@@ -103,7 +106,7 @@ bitboard king_attack(square s) {
 }
 
 bitboard knight_attack(square s) {
-    return am_instance->king_attacks[s];
+    return am_instance->knight_attacks[s];
 }
 
 bitboard pawn_attack(square s, colour c) {
@@ -197,6 +200,10 @@ bitboard bishop_attack(square s, bitboard occupancy) {
 #else
     return magic_bishop_attack(s,occupancy);
 #endif
+}
+
+bitboard queen_attack(square s, bitboard occupancy) {
+   return rook_attack(s, occupancy) | bishop_attack(s, occupancy);
 }
 
 void init_attack_table() {

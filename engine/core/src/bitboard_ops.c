@@ -22,4 +22,5 @@ void print_bitboard(const bitboard* b, showable options) {
     {
         printf("hex: 0x%" PRIx64 "\n", *b);
     }
+    printf("\n");
 }

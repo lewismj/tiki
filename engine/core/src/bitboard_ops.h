@@ -4,6 +4,7 @@
 #include "types.h"
 #include "bitboard_constants.h"
 
+
 /**
  * Print bitboard to standard output.
  *
@@ -19,7 +20,7 @@ void print_bitboard(const bitboard* b, showable options);
  * @param s the square to check.
  * @return true is the bit corresponding to 's' has be set, false otherwise.
  */
-static inline __attribute__((always_inline)) bool is_bit_set(const bitboard* b, square s) {
+static inline_always bool is_bit_set(const bitboard* b, square s) {
     return (*b & bitboard_const.square_mask[s]) != 0;
 }
 
@@ -29,7 +30,7 @@ static inline __attribute__((always_inline)) bool is_bit_set(const bitboard* b, 
  * @param b the bitboard to update.
  * @param s the square on the bitboard to set.
  */
-static inline __attribute__((always_inline)) void set_bit(bitboard* b, square s) {
+static inline_always void set_bit(bitboard* b, square s) {
     *b |= bitboard_const.square_mask[s];
 }
 
@@ -39,7 +40,7 @@ static inline __attribute__((always_inline)) void set_bit(bitboard* b, square s)
  * @param b the bitboard to update.
  * @param s the square on the bitboard to unset.
  */
-static inline __attribute__((always_inline)) void pop_bit(bitboard* b, square s) {
+static inline_always void pop_bit(bitboard* b, square s) {
     *b &= ~bitboard_const.square_mask[s];
 }
 
@@ -49,7 +50,7 @@ static inline __attribute__((always_inline)) void pop_bit(bitboard* b, square s)
  * @param b the bitboard.
  * @return  the number of trailing zeros.
  */
-static inline __attribute__((always_inline)) int trailing_zero_count(bitboard b) {
+static inline_always int trailing_zero_count(bitboard b) {
     if (b == 0ULL) return 64;
     return __builtin_ctzll(b);
 }
@@ -59,7 +60,7 @@ static inline __attribute__((always_inline)) int trailing_zero_count(bitboard b)
  * @param b pointer to the bitboard.
  * @return the square index.
  */
-static inline __attribute__((always_inline)) int get_lsb_and_pop_bit(bitboard* b) {
+static inline_always int get_lsb_and_pop_bit(bitboard* b) {
     int index = trailing_zero_count(*b);
     pop_bit(b, index);
     return index;
@@ -71,7 +72,7 @@ static inline __attribute__((always_inline)) int get_lsb_and_pop_bit(bitboard* b
  * @param b the bitboard.
  * @return the number of bits set.
  */
-static inline __attribute__((always_inline)) int pop_count(bitboard b) {
+static inline_always int pop_count(bitboard b) {
     return __builtin_popcountll(b);
 }
 

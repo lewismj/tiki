@@ -131,7 +131,6 @@ void free_board(board_t* board) {
 }
 
 void print_board(board_t* board, showable options) {
-
     if (options & show) {
         for (int rank = 0; rank < 8; rank++) {
             for (int file = 0; file < 8; file++) {
@@ -146,10 +145,30 @@ void print_board(board_t* board, showable options) {
             }
             printf("\n");
         }
+        printf("\n     A  B  C  D  E  F  G  H\n\n");
+        printf("side\t\t%s\n", board->side == white ? "white" : "black");
+        printf("en passant:\t%s\n", square_to_str[board->en_passant]);
+        printf("castle rights:\t");
+        if (board->castle_flag == 0) {
+            printf("-");
+        } else {
+            if (board->castle_flag & white_king) printf("K");
+            if (board->castle_flag & white_queen) printf("Q");
+            if (board->castle_flag & black_king) printf("k");
+            if (board->castle_flag & black_queen) printf("q");
+        }
+        printf("\n");
+        printf("Half move:\t%d\n", board->half_move);
+        printf("Full move:\t%d\n", board->full_move);
+        printf("\n");
     }
 
     if (options & hex) {
-
+        printf("hash:\n");
+        printf("white:\t\t0x%" PRIx64 "\n", board->occupancy[white]);
+        printf("black:\t\t0x%" PRIx64 "\n", board->occupancy[black]);
+        printf("both:\t\t0x%" PRIx64 "\n", board->occupancy[both]);
+        printf("hash:\t\t0x%" PRIx64 "\n", board->hash);
     }
 
 }

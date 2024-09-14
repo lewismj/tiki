@@ -3,6 +3,9 @@
 
 #include "types.h"
 
+/**
+ *
+ */
 typedef struct {
     const bitboard square_mask[64];
     const unsigned int bishop_relevant_bits[64];
@@ -15,6 +18,9 @@ typedef struct {
     const bitboard bishop_magic_numbers[64];
 } bitboard_const_t;
 
+/**
+ *
+ */
 extern const bitboard_const_t bitboard_const;
 
 #endif

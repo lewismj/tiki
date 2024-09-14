@@ -29,6 +29,14 @@ bitboard bishop_attack(square s, bitboard occupancy);
 /**
  *
  * @param s
+ * @param occupancy
+ * @return
+ */
+bitboard queen_attack(square s, bitboard occupancy);
+
+/**
+ *
+ * @param s
  * @return
  */
 bitboard king_attack(square s);

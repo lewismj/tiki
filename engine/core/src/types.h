@@ -89,7 +89,7 @@ static int char_to_piece[] = {  ['P'] = P,
 /**
  * Castling rights.
  */
-typedef enum {
+typedef enum: int {
     white_king  = 01,
     white_queen = 02,
     black_king  = 04,
@@ -105,8 +105,16 @@ typedef bitboard (*mask_function)(int square_index);
 /**
  * A move function is a function that takes a square and a bitboard representing
  * blockers and returns a bitboard representing all the valid positions the piece
- * may move to. Not used 'in game', just for generating magic numbers etc.
+ * may move to.
+ * Note, the 'attack_mask' functions provide the basic functions for move generation,
+ * based on the magic numbers generated & mask generators on startup.S
  */
 typedef bitboard (*move_function)(square s, const bitboard bitboard);
+
+/** For King and Knight, the move function doesn't take into account blockers. */
+typedef bitboard (*no_blocker_move_function)(square s);
+
+
+#define inline_always inline __attribute__((always_inline))
 
 #endif

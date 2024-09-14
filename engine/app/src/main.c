@@ -10,19 +10,26 @@
 #include "../../core/src/attack_mask.h"
 #include "../../core/src/zobrist_key.h"
 #include "../../core/src/board.h"
+#include "../../core/src/move_generator.h"
+
 
 int main(int argc, char* argv[]) {
     setbuf(stdout, 0); // Jetbrains debug need zero buffer.
-    printf("tiki\n");
+    printf("Tiki Chess\n\n");
 
     init_attack_table();
     init_zobrist_key();
 
     board_t* board = new_board();
+    //unsafe_parse_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1 ", board);
     unsafe_parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", board);
     print_board(board, show | hex);
-
-
+    move_buffer_t buffer;
+    buffer.index = 0;
+    generate_moves(board, &buffer);
+    printf("move index: %d\n", buffer.index);
+    for (int i=0; i < buffer.index; i++) print_move(buffer.moves[i]);
+    free_board(board);
 
 
 //    bitboard occupancy = 0ULL;

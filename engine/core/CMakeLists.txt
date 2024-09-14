@@ -13,7 +13,8 @@ set (SOURCES
         src/attack_mask.c
         src/move_encoding.c
         src/zobrist_key.c
-        src/board.c)
+        src/board.c
+        src/move_generator.c)
 
 add_library(${PROJECT_NAME} ${SOURCES})
 set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC ${PROJECT_SOURCE_DIR}/include)
@@ -36,6 +37,11 @@ if(PEXT_SUPPORTED)
     target_link_options(${PROJECT_NAME} PRIVATE "-mbmi2")
 else()
     message(STATUS "PEXT instruction is not supported.")
+endif()
+
+if (CMAKE_BUILD_TYPE MATCHES "^[Rr]elease")
+    message(STATUS "Release build use: -O3")
+    target_compile_options(${PROJECT_NAME} PRIVATE "-O3")
 endif()
 
 
