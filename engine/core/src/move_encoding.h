@@ -54,6 +54,17 @@ static inline_always move encode_capture(square source, square target, piece mov
     return encode_move(source, target, move_piece, 0, 1, 0, 0, 0,0);
 }
 
+static inline_always move encode_pawn_promotion(square source, square target, piece move_piece, piece promoted_piece, int capture_flag) {
+    return encode_move(source, target, move_piece, promoted_piece, capture_flag, 0, 0, 0, 0);
+}
+
+/**
+ * Caller should ensure move_piece is P or p.
+ */
+static inline_always move encode_pawn_double_push(square source, square target, piece move_piece) {
+    return encode_move(source, target, move_piece, 0, 0, 1, 0, 0, 0);
+}
+
 static inline_always square get_source_square(move m) {
     return m & 0x3f;
 }

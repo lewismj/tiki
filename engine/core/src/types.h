@@ -90,10 +90,10 @@ static int char_to_piece[] = {  ['P'] = P,
  * Castling rights.
  */
 typedef enum: int {
-    white_king  = 01,
-    white_queen = 02,
-    black_king  = 04,
-    black_queen = 010
+    white_king_side  = 01,
+    white_queen_side = 02,
+    black_king_side  = 04,
+    black_queen_side = 010
 } castle_rights;
 
 /**

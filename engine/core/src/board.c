@@ -39,7 +39,7 @@ board_t* new_board() {
     board->pieces = (bitboard*) malloc(12 * sizeof(bitboard));
     board->occupancy = (bitboard*) malloc(3 * sizeof(bitboard));
     board->en_passant = none_sq;
-    board->castle_flag = white_king | white_queen | black_king | black_queen;
+    board->castle_flag = white_king_side | white_queen_side | black_king_side | black_queen_side;
     board->side = white;
     board->half_move = 0;
     board->full_move = 0;
@@ -50,7 +50,7 @@ void reset_board(board_t* board) {
     memset(board->pieces, 0, 12 * sizeof(bitboard));
     memset(board->occupancy, 0, 3 * sizeof(bitboard));
     board->en_passant = none_sq;
-    board->castle_flag = white_king | white_queen | black_king | black_queen;
+    board->castle_flag = white_king_side | white_queen_side | black_king_side | black_queen_side;
     board->side = white;
     board->half_move = 0;
     board->full_move = 0;
@@ -85,10 +85,10 @@ void unsafe_parse_fen(const char* fen, board_t* board) {
     /* castling rights.     */
     while (*ptr != ' ') {
         switch (*ptr) {
-            case 'K': board->castle_flag |= white_king;
-            case 'Q': board->castle_flag |= white_queen;
-            case 'k': board->castle_flag |= black_king;
-            case 'q': board->castle_flag |= black_queen;
+            case 'K': board->castle_flag |= white_king_side;
+            case 'Q': board->castle_flag |= white_queen_side;
+            case 'k': board->castle_flag |= black_king_side;
+            case 'q': board->castle_flag |= black_queen_side;
             case '-': break;
         }
     }
@@ -152,10 +152,10 @@ void print_board(board_t* board, showable options) {
         if (board->castle_flag == 0) {
             printf("-");
         } else {
-            if (board->castle_flag & white_king) printf("K");
-            if (board->castle_flag & white_queen) printf("Q");
-            if (board->castle_flag & black_king) printf("k");
-            if (board->castle_flag & black_queen) printf("q");
+            if (board->castle_flag & white_king_side) printf("K");
+            if (board->castle_flag & white_queen_side) printf("Q");
+            if (board->castle_flag & black_king_side) printf("k");
+            if (board->castle_flag & black_queen_side) printf("q");
         }
         printf("\n");
         printf("Half move:\t%d\n", board->half_move);
