@@ -2,7 +2,7 @@
 
 #include "move_encoding.h"
 
-void print_move(move m) {
+void print_move(move_t m) {
     printf("move: %d, ", m);
     printf("source: %s, ", square_to_str[get_source_square(m)]);
     printf("target: %s, ", square_to_str[get_target_square(m)]);

@@ -2,6 +2,7 @@
 #define TIKI_BOARD_H
 
 #include <inttypes.h>
+#include <stdbool.h>
 
 #include "types.h"
 #include "bitboard_ops.h"
@@ -14,7 +15,7 @@
 #define MaximumSearchDepthPly 64
 
 /**
- *
+ * Represents the board (position) state of a game.
  */
 typedef struct {
     bitboard* pieces;
@@ -25,8 +26,42 @@ typedef struct {
     int half_move;
     int full_move;
     uint64_t hash;
+    /* Used for applying/undo moves to a board. */
     uint32_t undo[MaximumSearchDepthPly];
+    int stack_ptr;
 } board_t;
+
+
+/**
+ *   When making a move the castle flag needs to be updated, encoding is as follows:
+ *
+ *                              castling    move
+ *                              right       update      binary  decimal
+ *
+ *  king & rooks didn't move:   111  &      1111    =   1111        15
+ *
+ *  white king moved:           1111 &      1100    =   1100        12
+ *  white king's rook moved:    1111 &      1110    =   1110        14
+ *  white queen's rook moved:   1111 &      1101    =   1101        13
+ *
+ *  black king moved:           1111 &      0011    =   1011        3
+ *  black king's rook moved:    1111 &      1011    =   1011        11
+ *  black queen's rook moved:   1111 &      0111    =  0111         7
+ *
+ *  From this, we can look at the board and pre-compute how the rights would change if a rook/king on a square is
+ *  the source of a move. i.e. white queen's rook is at a1, if that moves on its own, we'd mask with 13 as above,
+ *  for the whole chess board we have as follows:
+ */
+static int castling_update[] = {
+        7, 15, 15, 15, 3, 15, 15, 11,
+        15, 15, 15, 15, 15, 15, 15, 15,
+        15, 15, 15, 15, 15, 15, 15, 15,
+        15, 15, 15, 15, 15, 15, 15, 15,
+        15, 15, 15, 15, 15, 15, 15, 15,
+        15, 15, 15, 15, 15, 15, 15, 15,
+        15, 15, 15, 15, 15, 15, 15, 15,
+        13, 15, 15, 15, 12, 15, 15, 14
+};
 
 /**
  * unsafe in this context means no validation.
@@ -79,5 +114,11 @@ static inline_always void recalculate_hash(board_t* board) {
 
     board->hash = hash;
 }
+
+static inline_always bool make_move(board_t* board, move_t move) {
+    return false;
+}
+
+static inline_always void undo_move(board_t* board);
 
 #endif

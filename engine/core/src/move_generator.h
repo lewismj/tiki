@@ -23,7 +23,7 @@ typedef struct  {
  * those moves. The moves are stored starting at the 'index' position.
  *
  * @param board the board position state.
- * @param move_buffer the move buffer.
+ * @param move_buffer the move_t buffer.
  */
 void generate_moves(board_t* board, move_buffer_t* move_buffer);
 
@@ -77,7 +77,7 @@ static inline_always bool is_square_attacked(board_t* board, colour c, square s)
  * @param not_self  the bitboard of opponent or empty.
  * @param opponent  the opponent bitboard.
  * @param fn        piece attack function.
- * @param move_buffer   the move buffer.
+ * @param move_buffer   the move_t buffer.
  */
 static inline_always void generate_piece_move(  piece p,
                                                 bitboard pieces,
@@ -92,7 +92,7 @@ static inline_always void generate_piece_move(  piece p,
         bitboard attacks = (move_fn(source, *both) & *not_self);
         while (attacks) {
             square target = get_lsb_and_pop_bit(&attacks);
-            move mv = is_bit_set(opponent, target)
+            move_t mv = is_bit_set(opponent, target)
                     ? encode_capture(source, target, p)
                     : encode_no_capture(source, target, p);
             move_buffer->moves[move_buffer->index++] = mv;

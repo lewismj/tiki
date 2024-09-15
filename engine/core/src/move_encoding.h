@@ -4,7 +4,7 @@
 #include "types.h"
 
 /**
-      binary move bits                                            hex
+      binary move_t bits                                            hex
 
      0000 0000 0000 0000 0000 0011 1111   source square           0x3f
      0000 0000 0000 0000 1111 1100 0000   target square           0xfc0
@@ -23,18 +23,18 @@
 
 
 /**
- * Encode move information to move type (uint32_t).
- * @return the encoded move.
+ * Encode move_t information to move_t type (uint32_t).
+ * @return the encoded move_t.
  */
-static inline_always move encode_move(square  source,
-                                      square target,
-                                      piece move_piece,
-                                      int promoted,
-                                      int capture_flag,
-                                      int double_push_flag,
-                                      int en_passant_flag,
-                                      int king_side_castle_flag,
-                                      int queen_side_castle_flag) {
+static inline_always move_t encode_move(square  source,
+                                        square target,
+                                        piece move_piece,
+                                        int promoted,
+                                        int capture_flag,
+                                        int double_push_flag,
+                                        int en_passant_flag,
+                                        int king_side_castle_flag,
+                                        int queen_side_castle_flag) {
     return source |
            (target << 6) |
            (move_piece << 12) |
@@ -46,61 +46,61 @@ static inline_always move encode_move(square  source,
            (queen_side_castle_flag << 24);
 }
 
-static inline_always move encode_no_capture(square source, square target, piece move_piece) {
+static inline_always move_t encode_no_capture(square source, square target, piece move_piece) {
     return encode_move(source, target, move_piece, 0, 0,0,0,0,0);
  }
 
-static inline_always move encode_capture(square source, square target, piece move_piece) {
+static inline_always move_t encode_capture(square source, square target, piece move_piece) {
     return encode_move(source, target, move_piece, 0, 1, 0, 0, 0,0);
 }
 
-static inline_always move encode_pawn_promotion(square source, square target, piece move_piece, piece promoted_piece, int capture_flag) {
+static inline_always move_t encode_pawn_promotion(square source, square target, piece move_piece, piece promoted_piece, int capture_flag) {
     return encode_move(source, target, move_piece, promoted_piece, capture_flag, 0, 0, 0, 0);
 }
 
 /**
  * Caller should ensure move_piece is P or p.
  */
-static inline_always move encode_pawn_double_push(square source, square target, piece move_piece) {
+static inline_always move_t encode_pawn_double_push(square source, square target, piece move_piece) {
     return encode_move(source, target, move_piece, 0, 0, 1, 0, 0, 0);
 }
 
-static inline_always square get_source_square(move m) {
+static inline_always square get_source_square(move_t m) {
     return m & 0x3f;
 }
 
-static inline_always square get_target_square(move m) {
+static inline_always square get_target_square(move_t m) {
     return (m & 0xfc0) >> 6;
 }
 
-static inline_always piece get_move_piece(move m) {
+static inline_always piece get_move_piece(move_t m) {
     return (m & 0xf000) >> 12;
 }
 
-static inline_always piece get_promoted_piece(move m) {
+static inline_always piece get_promoted_piece(move_t m) {
     return (m & 0xf0000) >> 16;
 }
 
-static inline_always int get_capture_flag(move m) {
+static inline_always int get_capture_flag(move_t m) {
     return (int) m & 0x100000;
 }
 
-static inline_always int get_double_push_flag(move m) {
+static inline_always int get_double_push_flag(move_t m) {
     return (int) m & 0x200000;
 }
 
-static inline_always int get_enpassant_flag(move m) {
+static inline_always int get_enpassant_flag(move_t m) {
     return (int) m & 0x200000;
 }
 
-static inline_always int get_king_side_castle_flag(move m) {
+static inline_always int get_king_side_castle_flag(move_t m) {
     return (int) m & 0x800000;
 }
 
-static inline_always int get_queen_side_castle_flag(move m) {
+static inline_always int get_queen_side_castle_flag(move_t m) {
     return (int) m & 0x1000000;
 }
 
-void print_move(move m);
+void print_move(move_t m);
 
 #endif

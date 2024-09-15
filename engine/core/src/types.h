@@ -52,10 +52,10 @@ typedef enum : int { white , black, both } colour;
 /**
  * Move.
  */
-typedef uint32_t move;
+typedef uint32_t move_t;
 
 /**
- * Pieces, none is used in the move encoding for empty 'promoted piece' field.
+ * Pieces, none is used in the move_t encoding for empty 'promoted piece' field.
  */
 typedef enum : int { P, N, B, R, Q, K, p, n, b, r, q, k, none } piece;
 
@@ -98,20 +98,20 @@ typedef enum: int {
 
 /**
  * A mask function is a function that takes a square and returns a bitboard.
- * This is all the possible squares that the piece may move to, assuming no blockers.
+ * This is all the possible squares that the piece may move_t to, assuming no blockers.
  */
 typedef bitboard (*mask_function)(int square_index);
 
 /**
- * A move function is a function that takes a square and a bitboard representing
+ * A move_t function is a function that takes a square and a bitboard representing
  * blockers and returns a bitboard representing all the valid positions the piece
- * may move to.
- * Note, the 'attack_mask' functions provide the basic functions for move generation,
+ * may move_t to.
+ * Note, the 'attack_mask' functions provide the basic functions for move_t generation,
  * based on the magic numbers generated & mask generators on startup.S
  */
 typedef bitboard (*move_function)(square s, const bitboard bitboard);
 
-/** For King and Knight, the move function doesn't take into account blockers. */
+/** For King and Knight, the move_t function doesn't take into account blockers. */
 typedef bitboard (*no_blocker_move_function)(square s);
 
 

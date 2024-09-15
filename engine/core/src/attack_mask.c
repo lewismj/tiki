@@ -8,7 +8,8 @@
 
 
 /**
- *
+ * Attack tables, here we use the magic bitboards & pext cache to provide the
+ * functions used by the move generator.
  */
 typedef struct {
     bitboard* rook_blocker_masks;

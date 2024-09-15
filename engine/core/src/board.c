@@ -43,6 +43,7 @@ board_t* new_board() {
     board->side = white;
     board->half_move = 0;
     board->full_move = 0;
+    board->stack_ptr = 0;
     return board;
 }
 
@@ -54,6 +55,7 @@ void reset_board(board_t* board) {
     board->side = white;
     board->half_move = 0;
     board->full_move = 0;
+    board->stack_ptr = 0;
 }
 
 void unsafe_parse_fen(const char* fen, board_t* board) {
@@ -168,7 +170,7 @@ void print_board(board_t* board, showable options) {
         printf("white:\t\t0x%" PRIx64 "\n", board->occupancy[white]);
         printf("black:\t\t0x%" PRIx64 "\n", board->occupancy[black]);
         printf("both:\t\t0x%" PRIx64 "\n", board->occupancy[both]);
-        printf("hash:\t\t0x%" PRIx64 "\n", board->hash);
+        printf("hash:\t\t0x%" PRIx64 "\n\n", board->hash);
     }
 
 }
