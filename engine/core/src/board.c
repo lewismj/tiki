@@ -36,8 +36,6 @@ static char *piece_to_ascii[12] = {"P",
 
 board_t* new_board() {
     board_t* board = (board_t*) malloc(sizeof(board_t));
-    board->pieces = (bitboard*) malloc(12 * sizeof(bitboard));
-    board->occupancy = (bitboard*) malloc(3 * sizeof(bitboard));
     board->en_passant = none_sq;
     board->castle_flag = white_king_side | white_queen_side | black_king_side | black_queen_side;
     board->side = white;
@@ -126,8 +124,6 @@ void unsafe_parse_fen(const char* fen, board_t* board) {
 
 void free_board(board_t* board) {
     if (board != NULL) {
-        free(board->pieces);
-        free(board->occupancy);
         free(board);
     }
 }

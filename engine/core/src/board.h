@@ -6,20 +6,33 @@
 
 #include "types.h"
 #include "bitboard_ops.h"
+#include "move_encoding.h"
 #include "zobrist_key.h"
 
-/**
- * Define the common board data structure.
- */
 
-#define MaximumSearchDepthPly 64
+/**
+ * Structure used for undo-ing moves, note we create a fixed size array and store
+ * the values, try to make undo as fast as possible. We store at most some maximum ply depth
+ * number of entries.
+ */
+typedef struct {
+    move_t move;
+    int castle_flag;
+    int en_passant;
+    int half_move;
+    int full_move;
+    uint64_t hash;
+} undo_meta_t;
+
+#define MAX_DEPTH 16
 
 /**
  * Represents the board (position) state of a game.
+ * Typically engine will create a single instance.
  */
 typedef struct {
-    bitboard* pieces;
-    bitboard* occupancy;
+    bitboard pieces[12];
+    bitboard occupancy[3];
     int castle_flag;
     square en_passant;
     colour side;
@@ -27,7 +40,7 @@ typedef struct {
     int full_move;
     uint64_t hash;
     /* Used for applying/undo moves to a board. */
-    uint32_t undo[MaximumSearchDepthPly];
+    undo_meta_t stack[MAX_DEPTH];
     int stack_ptr;
 } board_t;
 
@@ -116,6 +129,64 @@ static inline_always void recalculate_hash(board_t* board) {
 }
 
 static inline_always bool make_move(board_t* board, move_t move) {
+    /*
+     * Put move and associate state onto the stack, put enough
+     * information onto the stack so it can be popped in an undo op.
+     */
+    board->stack[board->stack_ptr].move = move;
+    board->stack[board->stack_ptr].castle_flag = board->castle_flag;
+    board->stack[board->stack_ptr].en_passant = board->en_passant;
+    board->stack[board->stack_ptr].half_move = board->half_move;
+    board->stack[board->stack_ptr].full_move = board->full_move;
+
+    /* Retrieve move properties. */
+    square source = get_source_square(move);
+    square target = get_target_square(move);
+    int move_piece = get_move_piece(move);
+    int capture_flag = get_capture_flag(move);
+    int enpassant_flag = get_enpassant_flag(move);
+    int opponent = board->side == white ? black : white;
+
+    /* Move the piece from the source square to the target square. */
+    pop_bit(&board->pieces[move_piece], source);
+    pop_bit(&board->occupancy[board->side], source);
+    set_bit(&board->pieces[move_piece], target);
+    set_bit(&board->occupancy[board->side], target);
+
+    board->hash ^= get_piece_key(source, move_piece);
+    board->hash ^= get_piece_key(target, move_piece);
+
+    /* Update half move counter, if necessary. */
+    if ( move_piece == P || move_piece == p || capture_flag) {
+        board->half_move = 0;
+    } else {
+        board->half_move++;
+    }
+
+    /* A square is only en passant for one move... */
+    if (board->en_passant != none_sq) board->hash ^= get_enpassant_key(board->en_passant);
+    board->en_passant = none_sq;
+
+    /* Captures. */
+    if (capture_flag) {
+        if (enpassant_flag) {
+            /* Move is en passant capture.
+             *      We've moved the pawn from source to target at the start, but we need to remove the
+             *      opposing pawn, since it wasn't at the target square (post capture) in en-passant.
+             */
+            if (board->side == white) {
+
+            } else {
+
+            }
+        } /* en passant. */
+
+    }
+
+    /* Double push of pawn. */
+
+
+    board->stack_ptr++;
     return false;
 }
 
