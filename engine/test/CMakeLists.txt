@@ -2,7 +2,8 @@ project(tiki_engine_test)
 
 set(CMAKE_C_STANDARD 23)
 
-set (SOURCES src/bitboard_get_set_tests.c)
+set (SOURCES    src/tiki_test_runner.c
+                src/make_move_tests.c)
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 

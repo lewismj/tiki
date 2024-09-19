@@ -31,7 +31,6 @@ int main(int argc, char* argv[]) {
     print_board(&board1, show | hex);
 
     board_t board2;
-
     unsafe_parse_fen("3k4/8/8/8/5n2/8/4P3/4K3 b - - 0 1", &board2);
     move_t f4d3 = encode_move(f4, d3, n, 0, 0, 0, 0, 0, 0);
     make_move(&board2, f4d3);
