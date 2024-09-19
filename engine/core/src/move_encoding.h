@@ -58,9 +58,6 @@ static inline_always move_t encode_pawn_promotion(square source, square target, 
     return encode_move(source, target, move_piece, promoted_piece, capture_flag, 0, 0, 0, 0);
 }
 
-/**
- * Caller should ensure move_piece is P or p.
- */
 static inline_always move_t encode_pawn_double_push(square source, square target, piece move_piece) {
     return encode_move(source, target, move_piece, 0, 0, 1, 0, 0, 0);
 }
@@ -90,7 +87,7 @@ static inline_always int get_double_push_flag(move_t m) {
 }
 
 static inline_always int get_enpassant_flag(move_t m) {
-    return (int) m & 0x200000;
+    return (int) m & 0x400000;
 }
 
 static inline_always int get_king_side_castle_flag(move_t m) {

@@ -3,7 +3,6 @@
 #include "random.h"
 #include "zobrist_key.h"
 
-
 typedef struct {
     uint64_t** piece_keys;
     uint64_t* enpassant_keys;
@@ -26,6 +25,7 @@ void free_zobrist_key_instance() {
 
 zobrist_key_t* create_zobrist_key(uint32_t* rng_state) {
     zk_instance = (zobrist_key_t*) malloc(sizeof(zobrist_key_t));
+
     if (zk_instance != NULL) {
 
         /* Zobrist key for square/piece combinations. */

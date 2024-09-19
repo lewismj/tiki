@@ -20,16 +20,29 @@ int main(int argc, char* argv[]) {
     init_attack_table();
     init_zobrist_key();
 
-    board_t* board = new_board();
-    unsafe_parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", board);
-    print_board(board, show | hex);
-    move_buffer_t buffer;
-    buffer.index = 0;
-    generate_moves(board, &buffer);
-    printf("move index: %d\n", buffer.index);
-    for (int i=0; i < buffer.index; i++) print_move(buffer.moves[i]);
-    free_board(board);
+    board_t* board1 = new_board();
+//    board_t* board2 = new_board();
+//
+    unsafe_parse_fen("3k4/8/8/8/3Pp3/8/4P3/4K3 b kK d3 0 1", board1);
+    print_board(board1, show|hex);
+//
+      free(board1);
+//    free(board2);
 
+//    board_t* board = new_board();
+//    unsafe_parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", board);
+//    print_board(board, show | hex);
+//    move_buffer_t buffer;
+//    buffer.index = 0;
+//    generate_moves(board, &buffer);
+//    printf("move index: %d\n", buffer.index);
+//    for (int i=0; i < buffer.index; i++) print_move(buffer.moves[i]);
+//
+//
+//    make_move(board,2099443);
+//    print_board(board, show | hex);
+
+    //free_board(board);
 
 //    bitboard occupancy = 0ULL;
 //    set_bit(&occupancy,d6);

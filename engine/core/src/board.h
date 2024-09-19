@@ -176,6 +176,7 @@ static inline_always bool make_move(board_t* board, move_t move) {
      * Put move and associate state onto the stack, put enough
      * information onto the stack, so that it can be popped in an undo op.
      */
+
     board->stack[board->stack_ptr].move = move;
     board->stack[board->stack_ptr].castle_flag = board->castle_flag;
     board->stack[board->stack_ptr].en_passant = board->en_passant;
@@ -300,7 +301,6 @@ static inline_always bool make_move(board_t* board, move_t move) {
     square king_sq = board->side == white ? trailing_zero_count(k) : trailing_zero_count(K);
     board->stack_ptr++;
 
-
     return !is_square_attacked(board, board->side, king_sq);
 }
 
@@ -373,7 +373,7 @@ static inline_always void undo_move(board_t* board) {
     board->half_move = undo_element->half_move;
     board->full_move = undo_element->full_move;
     board->hash = undo_element->hash;
-    
+
     board->occupancy[both] = board->occupancy[white] | board->occupancy[black];
     board->side = board->side == white ? black : white;
 
