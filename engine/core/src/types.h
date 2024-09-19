@@ -13,8 +13,9 @@ typedef uint64_t bitboard;
  * Flags used for the print_bitboard function.
  */
 typedef enum {
-    show = 01,      /*  Display full bitboard as square matrix. */
-    hex = 02,       /*  Display the hexadecimal value of the bitboard(s). */
+    show = 0x01,      /*  Display full bitboard as square matrix. */
+    hex  = 0x02,      /*  Display the hexadecimal value of the bitboard(s). */
+    min  = 0x04,      /*  On board, display just the board, no other information, e.g. castle rights etc. */
 } showable;
 
 /**

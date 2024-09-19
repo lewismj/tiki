@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <inttypes.h>
+#include <locale.h>
 
 #include "../../core/src/types.h"
 #include "../../core/src/bitboard_ops.h"
@@ -20,13 +21,29 @@ int main(int argc, char* argv[]) {
     init_attack_table();
     init_zobrist_key();
 
-    board_t* board1 = new_board();
-//    board_t* board2 = new_board();
-//
-    unsafe_parse_fen("3k4/8/8/8/3Pp3/8/4P3/4K3 b kK d3 0 1", board1);
-    print_board(board1, show|hex);
-//
-      free(board1);
+    board_t board1;
+    unsafe_parse_fen("3k4/8/8/8/3Pp3/8/4P3/4K3 b - d3 0 1", &board1);
+    move_t e4d3 = encode_move(e4, d3, p, 0, 1, 0, 1, 0, 0);
+    move_t e2d3 = encode_move(e2, d3, P, 0, 1, 0, 0, 0, 0);
+
+    make_move(&board1, e4d3);
+    make_move(&board1, e2d3);
+    print_board(&board1, show | hex);
+
+    board_t board2;
+
+    unsafe_parse_fen("3k4/8/8/8/5n2/8/4P3/4K3 b - - 0 1", &board2);
+    move_t f4d3 = encode_move(f4, d3, n, 0, 0, 0, 0, 0, 0);
+    make_move(&board2, f4d3);
+    make_move(&board2, e2d3);
+    print_board(&board2, show | hex);
+
+
+
+
+//print_board(&board1, show|hex);
+//    print_board(&board2, show|hex);
+
 //    free(board2);
 
 //    board_t* board = new_board();

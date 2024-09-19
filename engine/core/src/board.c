@@ -73,6 +73,7 @@ void unsafe_parse_fen(const char* fen, board_t* board) {
         } else if (file <8) {
             int piece = char_to_piece[*ptr];
             set_bit(&board->pieces[piece], rank * 8 + file);
+            board->occupancy[piece < p ? white : black] |= board->pieces[piece];
             file++;
         }
         ptr++;
@@ -115,8 +116,6 @@ void unsafe_parse_fen(const char* fen, board_t* board) {
     while (*ptr++ != ' ') ;
     board->full_move = atoi(ptr);
 
-    for (int piece = P; piece <= K; piece++) board->occupancy[white] |= board->pieces[piece];
-    for (int piece = p; piece <= k; piece++) board->occupancy[black] |= board->pieces[piece];
     board->occupancy[both] |= board->occupancy[white];
     board->occupancy[both] |= board->occupancy[black];
 
@@ -130,7 +129,7 @@ void free_board(board_t* board) {
 }
 
 void print_board(board_t* board, showable options) {
-    if (options & show) {
+    if (options & (show|min) ) {
         for (int rank = 0; rank < 8; rank++) {
             for (int file = 0; file < 8; file++) {
                 square sq = rank * 8 + file;
@@ -145,21 +144,23 @@ void print_board(board_t* board, showable options) {
             printf("\n");
         }
         printf("\n     A  B  C  D  E  F  G  H\n\n");
-        printf("side\t\t%s\n", board->side == white ? "white" : "black");
-        printf("en passant:\t%s\n", square_to_str[board->en_passant]);
-        printf("castle rights:\t");
-        if (board->castle_flag == 0) {
-            printf("none");
-        } else {
-            if (board->castle_flag & white_king_side) printf("K");
-            if (board->castle_flag & white_queen_side) printf("Q");
-            if (board->castle_flag & black_king_side) printf("k");
-            if (board->castle_flag & black_queen_side) printf("q");
+        if (options & show && ! (options & min)) {
+            printf("side\t\t%s\n", board->side == white ? "white" : "black");
+            printf("en passant:\t%s\n", square_to_str[board->en_passant]);
+            printf("castle rights:\t");
+            if (board->castle_flag == 0) {
+                printf("none");
+            } else {
+                if (board->castle_flag & white_king_side) printf("K");
+                if (board->castle_flag & white_queen_side) printf("Q");
+                if (board->castle_flag & black_king_side) printf("k");
+                if (board->castle_flag & black_queen_side) printf("q");
+            }
+            printf("\n");
+            printf("Half move:\t%d\n", board->half_move);
+            printf("Full move:\t%d\n", board->full_move);
+            printf("\n");
         }
-        printf("\n");
-        printf("Half move:\t%d\n", board->half_move);
-        printf("Full move:\t%d\n", board->full_move);
-        printf("\n");
     }
 
     if (options & hex) {

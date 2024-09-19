@@ -200,6 +200,7 @@ static inline_always bool make_move(board_t* board, move_t move) {
     pop_bit(&board->occupancy[board->side], source);
     set_bit(&board->pieces[move_piece], target);
     set_bit(&board->occupancy[board->side], target);
+    pop_bit(&board->occupancy[board->side], source);
 
     board->hash ^= get_piece_key(source, move_piece);
     board->hash ^= get_piece_key(target, move_piece);
@@ -237,7 +238,7 @@ static inline_always bool make_move(board_t* board, move_t move) {
         } /* en passant. */
         else {
             /* Process capture. Find the piece we're capturing and pop the bit. */
-            int *pieces = board->side == white ? white_pieces : black_pieces;
+            int *pieces = board->side == white ? black_pieces : white_pieces;
             for (int i=0; i<=5; i++) {
                 piece captured_piece = pieces[i];
                 if (!is_bit_set(&board->pieces[captured_piece],target)) continue;
