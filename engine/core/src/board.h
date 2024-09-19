@@ -8,6 +8,7 @@
 #include "bitboard_ops.h"
 #include "move_encoding.h"
 #include "zobrist_key.h"
+#include "attack_mask.h"
 
 
 /**
@@ -17,6 +18,7 @@
  */
 typedef struct {
     move_t move;
+    int captured_piece;
     int castle_flag;
     int en_passant;
     int half_move;
@@ -128,10 +130,51 @@ static inline_always void recalculate_hash(board_t* board) {
     board->hash = hash;
 }
 
+/**
+ * Return true if the given square 's' is attacked by any piece of colour 'c'.
+ *
+ * @param board the board position.
+ * @param c     the colour of the attacker.
+ * @param s     the square that might be attacked.
+ * @return  true, if square attacked; false otherwise.
+ */
+static inline_always bool is_square_attacked(board_t* board, colour c, square s) {
+    /**
+     *  For pawns, we do the following, say we have a white pawn on square s, is it attacked by a black pawn?
+     *  We look at the white pawn attacks and see if there is a black pawn on those squares.
+     *  For everything else within the function, the logic is just is Colour c attacking square s, use the
+     *  BitBoard of the piece for the given colour.
+     */
+
+    bitboard rooks = c == white ? board->pieces[R] : board->pieces[r];
+    bitboard rook_attacks = rook_attack(s, board->occupancy[both]);
+    if (rook_attacks & rooks) return true;
+
+    bitboard bishops = c == white ? board->pieces[B] : board->pieces[b];
+    bitboard bishop_attacks = bishop_attack(s, board->occupancy[both]);
+    if (bishop_attacks & bishops) return true;
+
+    bitboard knights = c == white ? board->pieces[N] : board->pieces[n];
+    if (knight_attack(s) & knights) return true;
+
+    bitboard queens = c == white ? board->pieces[Q] : board->pieces[q];
+    bitboard queen_attacks = rook_attacks | bishop_attacks;
+    if (queen_attacks & queens) return true;
+
+    bitboard pawns = c == white ? board->pieces[P] : board->pieces[p];
+    bitboard pawn_attacks = c == white ? pawn_attack(s, black) : pawn_attack(s,white);
+    if (pawn_attacks & pawns) return true;
+
+    bitboard kings = c == white ? board->pieces[K] : board->pieces[k];
+    bitboard king_attacks = king_attack(s);
+    return king_attacks & kings;
+}
+
+
 static inline_always bool make_move(board_t* board, move_t move) {
     /*
      * Put move and associate state onto the stack, put enough
-     * information onto the stack so it can be popped in an undo op.
+     * information onto the stack, so that it can be popped in an undo op.
      */
     board->stack[board->stack_ptr].move = move;
     board->stack[board->stack_ptr].castle_flag = board->castle_flag;
@@ -145,6 +188,10 @@ static inline_always bool make_move(board_t* board, move_t move) {
     int move_piece = get_move_piece(move);
     int capture_flag = get_capture_flag(move);
     int enpassant_flag = get_enpassant_flag(move);
+    int double_push_flag = get_double_push_flag(move);
+    int king_side_castle_flag = get_king_side_castle_flag(move);
+    int queen_side_castle_flag = get_queen_side_castle_flag(move);
+    int promoted = get_promoted_piece(move);
     int opponent = board->side == white ? black : white;
 
     /* Move the piece from the source square to the target square. */
@@ -170,26 +217,167 @@ static inline_always bool make_move(board_t* board, move_t move) {
     /* Captures. */
     if (capture_flag) {
         if (enpassant_flag) {
-            /* Move is en passant capture.
-             *      We've moved the pawn from source to target at the start, but we need to remove the
-             *      opposing pawn, since it wasn't at the target square (post capture) in en-passant.
+            /*
+             * Move is en passant capture.
+             * We've moved the pawn from source to target at the start, but we need to remove the
+             * opposing pawn, since it wasn't at the target square (post capture) in en-passant.
              */
             if (board->side == white) {
-
+                square sq = target + 8;
+                pop_bit(&board->pieces[p], sq);
+                pop_bit(&board->occupancy[opponent], sq);
+                board->hash ^= get_piece_key(sq, p);
             } else {
-
+                square sq = target - 8;
+                pop_bit(&board->pieces[P], sq);
+                pop_bit(&board->occupancy[opponent], sq);
+                board->hash ^= get_piece_key(sq, P);
             }
         } /* en passant. */
-
+        else {
+            /* Process capture. Find the piece we're capturing and pop the bit. */
+            int *pieces = board->side == white ? white_pieces : black_pieces;
+            for (int i=0; i<=5; i++) {
+                piece captured_piece = pieces[i];
+                if (!is_bit_set(&board->pieces[captured_piece],target)) continue;
+                board->stack[board->stack_ptr].captured_piece = captured_piece;
+                pop_bit(&board->pieces[captured_piece], target);
+                pop_bit(&board->occupancy[opponent], target);
+                board->hash ^= get_piece_key(target, captured_piece);
+                break;
+            }
+        }
     }
 
     /* Double push of pawn. */
+    if (double_push_flag) {
+        square sq = board->side == white ? target + 8 : target - 8;
+        board->en_passant = sq;
+        board->hash ^= get_enpassant_key(sq);
+    } else if (king_side_castle_flag) {
+        /* King side castling. */
+        int rook = board->side == white ? R : r;
+        int from = target +1;
+        int to = target -1;
+        pop_bit(&board->pieces[rook], from);
+        pop_bit(&board->occupancy[board->side], from);
+        set_bit(&board->pieces[rook], to);
+        set_bit(&board->occupancy[board->side], to);
+        board->hash ^= get_piece_key(from, rook);
+        board->hash ^= get_piece_key(to, rook);
+    } else if (queen_side_castle_flag) {
+        /* Queen side castling. */
+        int rook = board->side == white ? R: r;
+        int from = target -2;
+        int to = target +1;
+        pop_bit(&board->pieces[rook], from);
+        pop_bit(&board->occupancy[board->side], from);
+        set_bit(&board->pieces[rook], to);
+        set_bit(&board->occupancy[board->side], to);
+        board->hash ^= get_piece_key(from, rook);
+        board->hash ^= get_piece_key(to, rook);
 
+    } else if (promoted) {
+        /* Here promoted is piece, but if promoted=0, indicated no promotion. */
+        int pawn = board->side == white ? P : p;
+        pop_bit(&board->pieces[pawn], target);
+        pop_bit(&board->occupancy[board->side], target);
+        board->hash ^= get_piece_key(target, pawn);
 
+        set_bit(&board->pieces[promoted], target);
+        set_bit(&board->occupancy[board->side], target);
+        board->hash ^= get_piece_key(target, promoted);
+    }
+
+    board->castle_flag &= castling_update[source];
+    board->castle_flag &= castling_update[target];
+    board->hash ^= get_castle_key(board->castle_flag);
+
+    board->occupancy[both] = board->occupancy[white] | board->occupancy[black];
+    board->side = opponent;
+    board->hash ^= get_side_key();
+
+    square king_sq = board->side == white ? trailing_zero_count(k) : trailing_zero_count(K);
     board->stack_ptr++;
-    return false;
+
+
+    return !is_square_attacked(board, board->side, king_sq);
 }
 
-static inline_always void undo_move(board_t* board);
+static inline_always void undo_move(board_t* board) {
+    if (board->stack_ptr == -1) return;
+    undo_meta_t* undo_element = &board->stack[board->stack_ptr];
+    move_t undo_move = undo_element->move;
+
+    piece undo_piece = get_move_piece(undo_move);
+    colour old_side_index = board->side == white ? black : white;
+
+    square undo_source = get_source_square(undo_move);
+    square undo_target = get_target_square(undo_move);
+
+    /* First move the piece back, before replacing any capture etc. */
+    set_bit(&board->pieces[undo_piece], undo_source);
+    set_bit(&board->occupancy[old_side_index], undo_source);
+    pop_bit(&board->pieces[undo_piece], undo_target);
+    pop_bit(&board->occupancy[old_side_index], undo_target);
+
+    int capture_flag = get_capture_flag(undo_move);
+    int enpassant_flag = get_enpassant_flag(undo_move);
+
+    if (capture_flag) {
+        if (enpassant_flag) {
+            if (old_side_index == white) {
+                int target = undo_target + 8;
+                set_bit(&board->pieces[p], target);
+                set_bit(&board->occupancy[black], target);
+            } else {
+                int target = undo_target - 8;
+                set_bit(&board->pieces[P], target);
+                set_bit(&board->occupancy[white], target);
+            }
+        } else {
+            piece captured_piece = undo_element->captured_piece;
+            set_bit(&board->pieces[captured_piece], undo_target);
+            set_bit(&board->occupancy[board->side], undo_target);
+        }
+    }
+
+    int king_side_castle_flag = get_king_side_castle_flag(undo_move);
+    int queen_side_castle_flag = get_queen_side_castle_flag(undo_move);
+    int promoted_piece = get_promoted_piece(undo_move); /* 0 indicates no promotion. */
+
+    if (king_side_castle_flag) {
+        piece rook = old_side_index == white ? R : r;
+        int from = undo_target + 1;
+        int to = undo_target - 1;
+        set_bit(&board->pieces[rook], from);
+        set_bit(&board->occupancy[old_side_index], from);
+        pop_bit(&board->pieces[rook], to);
+        pop_bit(&board->occupancy[old_side_index], to);
+    } else if (queen_side_castle_flag) {
+        piece rook = old_side_index == white ? R : r;
+        int from = undo_target - 2;
+        int to = undo_target + 1;
+        set_bit(&board->occupancy[old_side_index], from);
+        set_bit(&board->occupancy[old_side_index], from);
+        pop_bit(&board->pieces[rook], to);
+        pop_bit(&board->occupancy[old_side_index], to);
+    } else if (promoted_piece) {
+        pop_bit(&board->pieces[promoted_piece], undo_target);
+        pop_bit(&board->pieces[old_side_index], undo_target);
+    }
+
+    /* Reset flags and counters. */
+    board->castle_flag = undo_element->castle_flag;
+    board->en_passant = undo_element->en_passant;
+    board->half_move = undo_element->half_move;
+    board->full_move = undo_element->full_move;
+    board->hash = undo_element->hash;
+    
+    board->occupancy[both] = board->occupancy[white] | board->occupancy[black];
+    board->side = board->side == white ? black : white;
+
+    board->stack_ptr--;
+}
 
 #endif

@@ -55,9 +55,12 @@ typedef enum : int { white , black, both } colour;
 typedef uint32_t move_t;
 
 /**
- * Pieces, none is used in the move_t encoding for empty 'promoted piece' field.
+ * Pieces.
  */
 typedef enum : int { P, N, B, R, Q, K, p, n, b, r, q, k, none } piece;
+
+static int black_pieces[] = { p, n, b, r, q, k};
+static int white_pieces[] = { P, N, B, R, Q, K };
 
 static char* piece_to_str[] = {  "P",
                                 "N",

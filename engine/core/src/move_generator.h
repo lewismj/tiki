@@ -5,7 +5,7 @@
 #include "board.h"
 #include "attack_mask.h"
 #include "move_encoding.h"
-
+#include "board.h"
 
 /**
  * As moves are generated to a particular depth, we store them in a fixed
@@ -27,46 +27,6 @@ typedef struct  {
  */
 void generate_moves(board_t* board, move_buffer_t* move_buffer);
 
-
-/**
- * Return true if the given square 's' is attacked by any piece of colour 'c'.
- *
- * @param board the board position.
- * @param c     the colour of the attacker.
- * @param s     the square that might be attacked.
- * @return  true, if square attacked; false otherwise.
- */
-static inline_always bool is_square_attacked(board_t* board, colour c, square s) {
-    /**
-     *  For pawns, we do the following, say we have a white pawn on square s, is it attacked by a black pawn?
-     *  We look at the white pawn attacks and see if there is a black pawn on those squares.
-     *  For everything else within the function, the logic is just is Colour c attacking square s, use the
-     *  BitBoard of the piece for the given colour.
-     */
-
-    bitboard rooks = c == white ? board->pieces[R] : board->pieces[r];
-    bitboard rook_attacks = rook_attack(s, board->occupancy[both]);
-    if (rook_attacks & rooks) return true;
-
-    bitboard bishops = c == white ? board->pieces[B] : board->pieces[b];
-    bitboard bishop_attacks = bishop_attack(s, board->occupancy[both]);
-    if (bishop_attacks & bishops) return true;
-
-    bitboard knights = c == white ? board->pieces[N] : board->pieces[n];
-    if (knight_attack(s) & knights) return true;
-
-    bitboard queens = c == white ? board->pieces[Q] : board->pieces[q];
-    bitboard queen_attacks = rook_attacks | bishop_attacks;
-    if (queen_attacks & queens) return true;
-
-    bitboard pawns = c == white ? board->pieces[P] : board->pieces[p];
-    bitboard pawn_attacks = c == white ? pawn_attack(s, black) : pawn_attack(s,white);
-    if (pawn_attacks & pawns) return true;
-
-    bitboard kings = c == white ? board->pieces[K] : board->pieces[k];
-    bitboard king_attacks = king_attack(s);
-    return king_attacks & kings;
-}
 
 /**
  * Update the move buffer with all the moves (if possible) of a specified piece type.
