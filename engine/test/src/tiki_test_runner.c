@@ -1,5 +1,6 @@
 #include "unity.h"
 #include "make_undo_move_tests.h"
+#include "perf_tests.h"
 
 #include "../../core/src/attack_mask.h"
 #include "../../core/src/zobrist_key.h"
@@ -22,5 +23,6 @@ int main(void) {
     RUN_TEST(test_make_move_hash2);
     RUN_TEST(test_make_move_hash3);
     RUN_TEST(test_undo_restores_state1);
+    RUN_TEST(full_perft_tests);
     return UNITY_END();
 }
