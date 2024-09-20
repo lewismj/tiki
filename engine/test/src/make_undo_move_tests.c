@@ -79,7 +79,7 @@ void test_make_move_hash3() {
 }
 
 
-void test_undo_restores_state() {
+void test_undo_restores_state1() {
     static const char* fen[] = {
             "8/8/8/8/8/8/6k1/4K2R w K - 0 1",
             "8/1k6/8/5N2/8/4n3/8/2K5 w - - 0 1",

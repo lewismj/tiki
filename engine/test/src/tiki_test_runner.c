@@ -21,6 +21,6 @@ int main(void) {
     RUN_TEST(test_make_move_hash1);
     RUN_TEST(test_make_move_hash2);
     RUN_TEST(test_make_move_hash3);
-    RUN_TEST(test_undo_restores_state);
+    RUN_TEST(test_undo_restores_state1);
     return UNITY_END();
 }

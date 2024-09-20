@@ -8,6 +8,11 @@ set (SOURCES    src/tiki_test_runner.c
 add_executable(${PROJECT_NAME} ${SOURCES})
 
 
+if (CMAKE_BUILD_TYPE MATCHES "^[Rr]elease")
+    target_compile_options(${PROJECT_NAME} PRIVATE "-O3")
+endif()
+
+
 target_include_directories(${PROJECT_NAME} PRIVATE
         ${PROJECT_SOURCE_DIR}/../core/include
 )
