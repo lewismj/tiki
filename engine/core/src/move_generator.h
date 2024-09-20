@@ -27,19 +27,22 @@ typedef struct  {
  */
 void generate_moves(board_t* board, move_buffer_t* move_buffer);
 
+void generate_black_pawn_moves(board_t* board, move_buffer_t* move_buffer);
+
+
 
 /**
  * Update the move buffer with all the moves (if possible) of a specified piece type.
  * Used for bishop, rook, queen.
  *
- * @param p         the piece type.
- * @param pieces    the bitboard of piece type p.
+ * @param move_piece         the piece type.
+ * @param pieces    the bitboard of piece type move_piece.
  * @param not_self  the bitboard of opponent or empty.
  * @param opponent  the opponent bitboard.
  * @param fn        piece attack function.
  * @param move_buffer   the move_t buffer.
  */
-static inline_always void generate_piece_move(  piece p,
+static inline_always void generate_piece_move(  piece move_piece,
                                                 bitboard pieces,
                                                 const bitboard* not_self,
                                                 const bitboard* opponent,
@@ -53,8 +56,8 @@ static inline_always void generate_piece_move(  piece p,
         while (attacks) {
             square target = get_lsb_and_pop_bit(&attacks);
             move_t mv = is_bit_set(opponent, target)
-                    ? encode_capture(source, target, p)
-                    : encode_no_capture(source, target, p);
+                    ? encode_move(source, target, move_piece, 0, 1, 0, 0, 0, 0)
+                    : encode_move(source, target, move_piece, 0, 0, 0, 0, 0, 0);
             move_buffer->moves[move_buffer->index++] = mv;
         }
     }

@@ -176,12 +176,12 @@ static inline_always bool make_move(board_t* board, move_t move) {
      * Put move and associate state onto the stack, put enough
      * information onto the stack, so that it can be popped in an undo op.
      */
-
     board->stack[board->stack_ptr].move = move;
     board->stack[board->stack_ptr].castle_flag = board->castle_flag;
     board->stack[board->stack_ptr].en_passant = board->en_passant;
     board->stack[board->stack_ptr].half_move = board->half_move;
     board->stack[board->stack_ptr].full_move = board->full_move;
+    board->stack[board->stack_ptr].hash = board->hash;
 
     /* Retrieve move properties. */
     square source = get_source_square(move);
@@ -305,8 +305,8 @@ static inline_always bool make_move(board_t* board, move_t move) {
     return !is_square_attacked(board, board->side, king_sq);
 }
 
-static inline_always void undo_move(board_t* board) {
-    if (board->stack_ptr == -1) return;
+static inline_always void pop_move(board_t* board) {
+    if (--board->stack_ptr == -1) return;
     undo_meta_t* undo_element = &board->stack[board->stack_ptr];
     move_t undo_move = undo_element->move;
 
@@ -359,13 +359,13 @@ static inline_always void undo_move(board_t* board) {
         piece rook = old_side_index == white ? R : r;
         int from = undo_target - 2;
         int to = undo_target + 1;
-        set_bit(&board->occupancy[old_side_index], from);
+        set_bit(&board->pieces[rook], from);
         set_bit(&board->occupancy[old_side_index], from);
         pop_bit(&board->pieces[rook], to);
         pop_bit(&board->occupancy[old_side_index], to);
     } else if (promoted_piece) {
         pop_bit(&board->pieces[promoted_piece], undo_target);
-        pop_bit(&board->pieces[old_side_index], undo_target);
+        pop_bit(&board->occupancy[old_side_index], undo_target);
     }
 
     /* Reset flags and counters. */
@@ -377,8 +377,6 @@ static inline_always void undo_move(board_t* board) {
 
     board->occupancy[both] = board->occupancy[white] | board->occupancy[black];
     board->side = board->side == white ? black : white;
-
-    board->stack_ptr--;
 }
 
 #endif

@@ -19,18 +19,18 @@ void generate_white_pawn_moves(board_t* board, move_buffer_t* move_buffer) {
         if (target_sq >= a8 && !is_bit_set(&board->occupancy[both], target_sq)) {
             if (source >= a7 && source <= h7) {
                 /* pawn promotion with no capture. */
-                move_buffer->moves[move_buffer->index++] = encode_pawn_promotion(source, target_sq, P, Q, 0);
-                move_buffer->moves[move_buffer->index++] = encode_pawn_promotion(source, target_sq, P, R, 0);
-                move_buffer->moves[move_buffer->index++] = encode_pawn_promotion(source, target_sq, P, B, 0);
-                move_buffer->moves[move_buffer->index++] = encode_pawn_promotion(source, target_sq, P, N, 0);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, P, Q, 0, 0, 0, 0, 0);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, P, R, 0, 0, 0, 0, 0);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, P, B, 0, 0, 0, 0, 0);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, P, N, 0, 0, 0, 0, 0);
             } else {
                 /* No capture, single square move. */
-                move_buffer->moves[move_buffer->index++] = encode_no_capture(source, target_sq, P);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, P, 0, 0, 0, 0, 0, 0);
 
                 /* Check to see if we can add a double push. */
                 int double_push_sq = source - 16;
                 if (source >= a2 && source <= h2 && !is_bit_set(&board->occupancy[both], double_push_sq)) {
-                    move_buffer->moves[move_buffer->index++] = encode_pawn_double_push(source, double_push_sq, P);
+                    move_buffer->moves[move_buffer->index++] = encode_move(source, double_push_sq, P, 0, 0, 1, 0, 0, 0);
                 }
             }
         }
@@ -41,13 +41,13 @@ void generate_white_pawn_moves(board_t* board, move_buffer_t* move_buffer) {
             int attack_sq = get_lsb_and_pop_bit(&attacks);
             if (source >= a7 && source <=h7) {
                 /* capture with promotion. */
-                move_buffer->moves[move_buffer->index++] = encode_pawn_promotion(source, target_sq, P, Q, 1);
-                move_buffer->moves[move_buffer->index++] = encode_pawn_promotion(source, target_sq, P, R, 1);
-                move_buffer->moves[move_buffer->index++] = encode_pawn_promotion(source, target_sq, P, B, 1);
-                move_buffer->moves[move_buffer->index++] = encode_pawn_promotion(source, target_sq, P, N, 1);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, P, Q, 1, 0, 0, 0, 0);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, P, R, 1, 0, 0, 0, 0);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, P, B, 1, 0, 0, 0, 0);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, P, N, 1, 0, 0, 0, 0);
             } else {
                 /* capture. */
-                move_buffer->moves[move_buffer->index++] = encode_capture(source, attack_sq, P);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, attack_sq, P, 0, 1, 0, 0, 0, 0);
             }
         }
 
@@ -64,42 +64,44 @@ void generate_white_pawn_moves(board_t* board, move_buffer_t* move_buffer) {
 
 void generate_black_pawn_moves(board_t* board, move_buffer_t* move_buffer) {
     /* pawn, non-capturing moves. */
-    bitboard b = board->pieces[p];
-    while (b) {
-        square source = get_lsb_and_pop_bit(&b);
+    bitboard black_pawns = board->pieces[p];
+    while (black_pawns) {
+        square source = get_lsb_and_pop_bit(&black_pawns);
         int target_sq = source + 8;
         if (target_sq >= h2 && !is_bit_set(&board->occupancy[both], target_sq)) {
             if (source >= a2 && source <= h2) {
                 /* pawn promotion with no capture. */
-                move_buffer->moves[move_buffer->index++] = encode_pawn_promotion(source, target_sq, p, q, 0);
-                move_buffer->moves[move_buffer->index++] = encode_pawn_promotion(source, target_sq, p, r, 0);
-                move_buffer->moves[move_buffer->index++] = encode_pawn_promotion(source, target_sq, p, b, 0);
-                move_buffer->moves[move_buffer->index++] = encode_pawn_promotion(source, target_sq, p, n, 0);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, p, q, 0, 0, 0, 0, 0);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, p, r, 0, 0, 0, 0, 0);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, p, b, 0, 0, 0, 0, 0);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, p, n, 0, 0, 0, 0, 0);
             } else {
                 /* No capture, single square move. */
-                move_buffer->moves[move_buffer->index++] = encode_no_capture(source, target_sq, p);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, p, 0, 0, 0, 0, 0, 0);
 
                 /* Check to see if we can add a double push. */
                 int double_push_sq = source + 16;
                 if (source >= a7 && source <= h7 && !is_bit_set(&board->occupancy[both], double_push_sq)) {
-                    move_buffer->moves[move_buffer->index++] = encode_pawn_double_push(source, double_push_sq, p);
+                    move_buffer->moves[move_buffer->index++] = encode_move(source, double_push_sq, p, 0, 0, 1, 0, 0, 0);
                 }
             }
         }
 
         /* pawn captures. */
         bitboard attacks = pawn_attack(source, black) & board->occupancy[white];
+//        print_bitboard(&attacks, show);
+//        print_bitboard(&board->occupancy[white], show);
         while (attacks) {
             int attack_sq = get_lsb_and_pop_bit(&attacks);
             if (source >= a2 && source <=h2) {
                 /* capture with promotion. */
-                move_buffer->moves[move_buffer->index++] = encode_pawn_promotion(source, target_sq, p, q, 1);
-                move_buffer->moves[move_buffer->index++] = encode_pawn_promotion(source, target_sq, p, r, 1);
-                move_buffer->moves[move_buffer->index++] = encode_pawn_promotion(source, target_sq, p, b, 1);
-                move_buffer->moves[move_buffer->index++] = encode_pawn_promotion(source, target_sq, p, n, 1);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, attack_sq, p, q, 1, 0, 0, 0, 0);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, attack_sq, p, r, 1, 0, 0, 0, 0);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, attack_sq, p, b, 1, 0, 0, 0 ,0);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, attack_sq, p, n, 1, 0, 0, 0, 0);
             } else {
                 /* capture. */
-                move_buffer->moves[move_buffer->index++] = encode_capture(source, attack_sq, p);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, attack_sq, p, 0, 1, 0, 0 ,0 ,0);
             }
         }
 
