@@ -119,15 +119,17 @@ void test_undo_restores_state() {
             /* Restored board should have same hash. */
             TEST_ASSERT_EQUAL_UINT64(original.hash, board.hash);
 
-            /* Piece bitboards should be matching. */
+            /* Check board state is the same. */
             for (int tmp = P; tmp <= k; tmp++) {
-                if (original.pieces[tmp] != board.pieces[tmp]) {
-                    printf("Piece bitboard not matching after undo, board: %s, piece: %s\n", fen[i], piece_to_str[tmp]);
-                    print_move(buffer.moves[j]);
-
-                }
                 TEST_ASSERT_EQUAL_UINT64(original.pieces[tmp], board.pieces[tmp]);
             }
+            TEST_ASSERT_EQUAL_UINT64(original.occupancy[white], board.occupancy[white]);
+            TEST_ASSERT_EQUAL_UINT64(original.occupancy[black], board.occupancy[black]);
+            TEST_ASSERT_EQUAL_UINT64(original.occupancy[both], board.occupancy[both]);
+            TEST_ASSERT_EQUAL_INT(original.castle_flag, board.castle_flag);
+            TEST_ASSERT_EQUAL_INT(original.en_passant, board.en_passant);
+            TEST_ASSERT_EQUAL_INT(original.half_move, board.half_move);
+            TEST_ASSERT_EQUAL_INT(original.full_move, board.full_move);
         }
     }
 }
