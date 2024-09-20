@@ -41,10 +41,10 @@ void generate_white_pawn_moves(board_t* board, move_buffer_t* move_buffer) {
             int attack_sq = get_lsb_and_pop_bit(&attacks);
             if (source >= a7 && source <=h7) {
                 /* capture with promotion. */
-                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, P, Q, 1, 0, 0, 0, 0);
-                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, P, R, 1, 0, 0, 0, 0);
-                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, P, B, 1, 0, 0, 0, 0);
-                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, P, N, 1, 0, 0, 0, 0);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, attack_sq, P, Q, 1, 0, 0, 0, 0);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, attack_sq, P, R, 1, 0, 0, 0, 0);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, attack_sq, P, B, 1, 0, 0, 0, 0);
+                move_buffer->moves[move_buffer->index++] = encode_move(source, attack_sq, P, N, 1, 0, 0, 0, 0);
             } else {
                 /* capture. */
                 move_buffer->moves[move_buffer->index++] = encode_move(source, attack_sq, P, 0, 1, 0, 0, 0, 0);
@@ -89,8 +89,6 @@ void generate_black_pawn_moves(board_t* board, move_buffer_t* move_buffer) {
 
         /* pawn captures. */
         bitboard attacks = pawn_attack(source, black) & board->occupancy[white];
-//        print_bitboard(&attacks, show);
-//        print_bitboard(&board->occupancy[white], show);
         while (attacks) {
             int attack_sq = get_lsb_and_pop_bit(&attacks);
             if (source >= a2 && source <=h2) {
