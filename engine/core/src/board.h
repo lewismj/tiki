@@ -299,7 +299,9 @@ static inline_always bool make_move(board_t* board, move_t move) {
     board->side = opponent;
     board->hash ^= get_side_key();
 
-    square king_sq = board->side == white ? trailing_zero_count(k) : trailing_zero_count(K);
+    square king_sq = board->side == white ?
+            trailing_zero_count(board->pieces[k]) :
+            trailing_zero_count(board->pieces[K]);
     board->stack_ptr++;
 
     return !is_square_attacked(board, board->side, king_sq);

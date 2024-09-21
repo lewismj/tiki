@@ -68,7 +68,8 @@ void generate_black_pawn_moves(board_t* board, move_buffer_t* move_buffer) {
     while (black_pawns) {
         square source = get_lsb_and_pop_bit(&black_pawns);
         int target_sq = source + 8;
-        if (target_sq >= h2 && !is_bit_set(&board->occupancy[both], target_sq)) {
+
+        if (target_sq <=h1 && !is_bit_set(&board->occupancy[both], target_sq)) {
             if (source >= a2 && source <= h2) {
                 /* pawn promotion with no capture. */
                 move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, p, q, 0, 0, 0, 0, 0);
@@ -82,10 +83,12 @@ void generate_black_pawn_moves(board_t* board, move_buffer_t* move_buffer) {
                 /* Check to see if we can add a double push. */
                 int double_push_sq = source + 16;
                 if (source >= a7 && source <= h7 && !is_bit_set(&board->occupancy[both], double_push_sq)) {
-                    move_buffer->moves[move_buffer->index++] = encode_move(source, double_push_sq, p, 0, 0, 1, 0, 0, 0);
+                    move_buffer->moves[move_buffer->index++] = encode_move(source, double_push_sq, p, 0, 0, 1, 0, 0,
+                                                                           0);
                 }
             }
         }
+
 
         /* pawn captures. */
         bitboard attacks = pawn_attack(source, black) & board->occupancy[white];
@@ -118,8 +121,8 @@ void generate_white_castling_moves(board_t* board, move_buffer_t* move_buffer) {
     if (board->castle_flag & white_king_side) {
         if (!is_bit_set(&board->occupancy[both], f1) &&
             !is_bit_set(&board->occupancy[both], g1) &&
-            !is_bit_set(&board->occupancy[black], e1) &&
-            !is_bit_set(&board->occupancy[black], f1)) {
+            !is_square_attacked(board, black, e1) &&
+            !is_square_attacked(board, black,f1)) {
 
             move_buffer->moves[move_buffer->index++] =
                     encode_move(e1, g1, K, 0, 0, 0, 0, 1, 0);
@@ -129,8 +132,8 @@ void generate_white_castling_moves(board_t* board, move_buffer_t* move_buffer) {
         if (!is_bit_set(&board->occupancy[both], d1) &&
             !is_bit_set(&board->occupancy[both], c1) &&
             !is_bit_set(&board->occupancy[both], b1) &&
-            !is_bit_set(&board->occupancy[black], e1) &&
-            !is_bit_set(&board->occupancy[black], d1)) {
+            !is_square_attacked(board,black, e1) &&
+            !is_square_attacked(board, black, d1)) {
 
             move_buffer->moves[move_buffer->index++] =
                     encode_move(e1, c1, K, 0, 0, 0, 0, 0, 1);
@@ -142,8 +145,8 @@ void generate_black_castling_moves(board_t* board, move_buffer_t* move_buffer) {
     if (board->castle_flag & black_king_side) {
         if (!is_bit_set(&board->occupancy[both], f8) &&
             !is_bit_set(&board->occupancy[both], g8)  &&
-            !is_bit_set(&board->occupancy[white], e8) &&
-            !is_bit_set(&board->occupancy[white], f8))
+            !is_square_attacked(board, white, e8) &&
+            !is_square_attacked(board, white, f8))
         {
             move_buffer->moves[move_buffer->index++] =
                     encode_move(e8, g8, k, 0, 0, 0, 0, 1, 0);
@@ -154,8 +157,8 @@ void generate_black_castling_moves(board_t* board, move_buffer_t* move_buffer) {
         if (!is_bit_set(&board->occupancy[both], d8) &&
             !is_bit_set(&board->occupancy[both], c8) &&
             !is_bit_set(&board->occupancy[both], b8) &&
-            !is_bit_set(&board->occupancy[white], e8) &&
-            !is_bit_set(&board->occupancy[white], d8)) {
+            !is_square_attacked(board, white,e8) &&
+            !is_square_attacked(board, white, d8)) {
 
             move_buffer->moves[move_buffer->index++] =
                     encode_move(e8, c8, k, 0, 0, 0, 0, 0, 1);
