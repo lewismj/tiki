@@ -15,7 +15,6 @@ static int calc_perft(board_t* b, int depth)
     generate_moves(b, &buffer);
     for (int i=0; i<buffer.index; i++) {
         int num_moves = 0;
-
         if (make_move(b, buffer.moves[i])) {
             num_moves += calc_perft(b, depth - 1);
         }
