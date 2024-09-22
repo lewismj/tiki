@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdalign.h>
 
 #ifndef bool
     #define bool	_Bool
@@ -127,6 +128,6 @@ typedef bitboard (*no_blocker_move_function)(square s);
 
 
 #define inline_always inline __attribute__((always_inline))
-
+#define align __attribute__((aligned(64)))
 
 #endif

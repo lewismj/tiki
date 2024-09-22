@@ -14,13 +14,6 @@
 
 #include "magic_numbers.h"
 
-void generate_square_constants() {
-    for (int sq=0; sq<64; sq++) {
-        bitboard b = 0ULL;
-        set_bit(&b, sq);
-        printf("0x%" PRIx64 ",\n", b);
-    }
-}
 
 uint64_t candidate_magic_number(uint32_t* rng_state) {
     return next_random_64(rng_state) & next_random_64(rng_state) & next_random_64(rng_state);

@@ -4,6 +4,7 @@ set(CMAKE_C_STANDARD 23)
 
 set (SOURCES
         src/magic_numbers.c
+        src/square_masks.c
         src/main.c)
 
 add_executable(${PROJECT_NAME} ${SOURCES})

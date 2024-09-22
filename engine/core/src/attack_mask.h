@@ -6,54 +6,17 @@
 
 
 /**
- *
+ * This function needs to be called before we can invoke any of the 'attack' functions,
+ * it initializes all the tables used when calculating attacks (Pext etc.).
  */
 void init_attack_table();
 
-/**
- *
- * @param s
- * @param occupancy
- * @return
- */
+
 bitboard rook_attack(square s, bitboard occupancy);
-
-/**
- *
- * @param s
- * @param occupancy
- * @return
- */
 bitboard bishop_attack(square s, bitboard occupancy);
-
-/**
- *
- * @param s
- * @param occupancy
- * @return
- */
 bitboard queen_attack(square s, bitboard occupancy);
-
-/**
- *
- * @param s
- * @return
- */
 bitboard king_attack(square s);
-
-/**
- *
- * @param s
- * @return
- */
 bitboard knight_attack(square s);
-
-/**
- *
- * @param s
- * @param c
- * @return
- */
 bitboard pawn_attack(square s, colour c);
 
 #endif

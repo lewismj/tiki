@@ -12,7 +12,7 @@
  * size array, n.b. don't use a linked list as this would be unnecessarily
  * slow.
  */
-typedef struct {
+typedef struct align {
     uint32_t moves[512];
     int index;
 } move_buffer_t;
