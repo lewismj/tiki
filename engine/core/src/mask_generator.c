@@ -1,10 +1,6 @@
-#include <stdio.h>
-
 #include "bitboard_constants.h"
 #include "bitboard_ops.h"
-
 #include "mask_generator.h"
-
 
 
 bitboard create_rook_blocker_mask(square s) {

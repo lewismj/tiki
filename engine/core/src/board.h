@@ -1,6 +1,7 @@
 #ifndef TIKI_BOARD_H
 #define TIKI_BOARD_H
 
+#include <stdalign.h>
 #include <inttypes.h>
 #include <stdbool.h>
 
@@ -16,7 +17,7 @@
  * the values, try to make undo as fast as possible. We store at most some maximum ply depth
  * number of entries.
  */
-typedef struct {
+typedef struct  {
     move_t move;
     int captured_piece;
     int castle_flag;

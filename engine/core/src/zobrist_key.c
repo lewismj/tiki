@@ -1,4 +1,4 @@
-#include <stdlib.h>
+#include <stdalign.h>
 
 #include "random.h"
 #include "zobrist_key.h"
@@ -10,7 +10,7 @@ typedef struct {
     uint64_t side_key;
 } zobrist_key_t;
 
-static zobrist_key_t zk_instance;
+static alignas(64) zobrist_key_t zk_instance;
 
 void init_zobrist_keys(uint32_t* rng_state) {
     /* Zobrist key for square/piece combinations. */

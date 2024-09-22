@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <time.h>
 #include <sys/time.h>
-
+#include <stdalign.h>
 
 #include "../../core/src/types.h"
 #include "../../core/src/bitboard_ops.h"
@@ -15,12 +15,11 @@
 #include "../../core/src/move_generator.h"
 
 
-static int perft(board_t* b, int depth)
-{
+static int perft(board_t* b, int depth) {
     if (depth == 0 ) return 1;
 
     int sum = 0;
-    move_buffer_t buffer;
+    alignas(64) move_buffer_t buffer;
     buffer.index = 0;
     generate_moves(b, &buffer);
     for (int i=0; i<buffer.index; i++) {
@@ -41,7 +40,7 @@ int main(int argc, char* argv[]) {
     init_attack_table();
     init_zobrist_key();
 
-    board_t board;
+    alignas(64) board_t board;
     unsafe_parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
     struct timeval start, end;
     // Use elapsed time not clock time here:

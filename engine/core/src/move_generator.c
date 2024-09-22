@@ -1,6 +1,4 @@
-#include <stdio.h>
 #include "move_generator.h"
-
 
 static bitboard knight_attack_wrapper(square s, bitboard ) {
     return knight_attack(s);

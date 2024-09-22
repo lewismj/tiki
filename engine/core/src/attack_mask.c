@@ -3,7 +3,7 @@
 #include "bitboard_ops.h"
 #include "mask_generator.h"
 #include "attack_mask.h"
-
+#include <stdalign.h>
 
 /**
  * Attack tables, here we use the magic bitboards & pext cache to provide the
@@ -25,7 +25,7 @@ typedef struct {
 } tiki_attack_mask_t;
 
 
-static tiki_attack_mask_t am_instance;
+static alignas(64) tiki_attack_mask_t am_instance;
 
 void set_blocker_masks(bitboard* mask_array, mask_function f) {
     for (int sq=0; sq<64; sq++) {
