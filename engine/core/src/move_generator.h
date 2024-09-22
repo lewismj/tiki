@@ -13,7 +13,7 @@
  * slow.
  */
 typedef struct  {
-    uint32_t moves[1024];
+    uint32_t moves[512];
     int index;
 } move_buffer_t;
 

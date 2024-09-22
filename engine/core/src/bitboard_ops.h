@@ -4,6 +4,9 @@
 #include "types.h"
 #include "bitboard_constants.h"
 
+#ifndef bool
+    #define bool	_Bool
+#endif
 
 /**
  * Print bitboard to standard output.

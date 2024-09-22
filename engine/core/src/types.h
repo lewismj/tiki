@@ -21,7 +21,7 @@ typedef enum {
 /**
  * The chessboard squares.
  */
-typedef enum : int {
+typedef enum {
     a8, b8, c8, d8, e8, f8, g8, h8,
     a7, b7, c7, d7, e7, f7, g7, h7,
     a6, b6, c6, d6, e6, f6, g6, h6,
@@ -48,7 +48,7 @@ static char* square_to_str[] = {
 /**
  * Sides (colours)
  */
-typedef enum : int { white , black, both } colour;
+typedef enum { white , black, both } colour;
 
 /**
  * Move.
@@ -58,7 +58,7 @@ typedef uint32_t move_t;
 /**
  * Pieces.
  */
-typedef enum : int { P, N, B, R, Q, K, p, n, b, r, q, k, none } piece;
+typedef enum { P, N, B, R, Q, K, p, n, b, r, q, k, none } piece;
 
 static int black_pieces[] = { p, n, b, r, q, k};
 static int white_pieces[] = { P, N, B, R, Q, K };
@@ -93,7 +93,7 @@ static int char_to_piece[] = {  ['P'] = P,
 /**
  * Castling rights.
  */
-typedef enum: int {
+typedef enum {
     white_king_side  = 01,
     white_queen_side = 02,
     black_king_side  = 04,
@@ -104,7 +104,7 @@ typedef enum: int {
  * A mask function is a function that takes a square and returns a bitboard.
  * This is all the possible squares that the piece may move_t to, assuming no blockers.
  */
-typedef bitboard (*mask_function)(int square_index);
+typedef bitboard (*mask_function)(square sq);
 
 /**
  * A move_t function is a function that takes a square and a bitboard representing
@@ -120,5 +120,6 @@ typedef bitboard (*no_blocker_move_function)(square s);
 
 
 #define inline_always inline __attribute__((always_inline))
+
 
 #endif

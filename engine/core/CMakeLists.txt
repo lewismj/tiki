@@ -1,5 +1,6 @@
 project(tiki_engine_core)
 
+set(CMAKE_C_STANDARD_REQUIRED True)
 set(CMAKE_C_STANDARD 23)
 include(CheckCSourceCompiles)
 
@@ -39,12 +40,11 @@ else()
     message(STATUS "PEXT instruction is not supported.")
 endif()
 
+
 if (CMAKE_BUILD_TYPE MATCHES "^[Rr]elease")
     message(STATUS "Release build use: -O3")
     target_compile_options(${PROJECT_NAME} PRIVATE "-O3")
 endif()
-
-
 
 
 install(TARGETS ${PROJECT_NAME}

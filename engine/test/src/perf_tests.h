@@ -13,7 +13,9 @@ typedef struct {
 } perf_data_t;
 
 
-/** The perft tests. */
+/**
+ * The perft tests.
+ */
 static  perf_data_t perft_data[] = {
         { "8/8/8/8/8/8/6k1/4K2R w K - 0 1", { 12, 38, 564, 2219, 37735, 185867 }},
         { "8/8/8/8/8/8/1k6/R3K3 w Q - 0 1", { 15, 65, 1018, 4573, 80619, 413018 }},

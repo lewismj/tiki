@@ -146,20 +146,22 @@ static inline_always bool is_square_attacked(board_t* board, colour c, square s)
      *  BitBoard of the piece for the given colour.
      */
 
+    bitboard queens = c == white ? board->pieces[Q] : board->pieces[q];
+
     bitboard rooks = c == white ? board->pieces[R] : board->pieces[r];
     bitboard rook_attacks = rook_attack(s, board->occupancy[both]);
-    if (rook_attacks & rooks) return true;
+    if (rook_attacks & (rooks|queens)) return true;
 
     bitboard bishops = c == white ? board->pieces[B] : board->pieces[b];
     bitboard bishop_attacks = bishop_attack(s, board->occupancy[both]);
-    if (bishop_attacks & bishops) return true;
+    if (bishop_attacks & (bishops|queens)) return true;
 
     bitboard knights = c == white ? board->pieces[N] : board->pieces[n];
     if (knight_attack(s) & knights) return true;
 
-    bitboard queens = c == white ? board->pieces[Q] : board->pieces[q];
-    bitboard queen_attacks = rook_attacks | bishop_attacks;
-    if (queen_attacks & queens) return true;
+//    bitboard queens = c == white ? board->pieces[Q] : board->pieces[q];
+//    bitboard queen_attacks = rook_attacks | bishop_attacks;
+//    if (queen_attacks & queens) return true;
 
     bitboard pawns = c == white ? board->pieces[P] : board->pieces[p];
     bitboard pawn_attacks = c == white ? pawn_attack(s, black) : pawn_attack(s,white);
@@ -189,10 +191,6 @@ static inline_always bool make_move(board_t* board, move_t move) {
     int move_piece = get_move_piece(move);
     int capture_flag = get_capture_flag(move);
     int enpassant_flag = get_enpassant_flag(move);
-    int double_push_flag = get_double_push_flag(move);
-    int king_side_castle_flag = get_king_side_castle_flag(move);
-    int queen_side_castle_flag = get_queen_side_castle_flag(move);
-    int promoted = get_promoted_piece(move);
     int opponent = board->side == white ? black : white;
 
     /* Move the piece from the source square to the target square. */
@@ -250,6 +248,11 @@ static inline_always bool make_move(board_t* board, move_t move) {
             }
         }
     }
+
+    int double_push_flag = get_double_push_flag(move);
+    int king_side_castle_flag = get_king_side_castle_flag(move);
+    int queen_side_castle_flag = get_queen_side_castle_flag(move);
+    int promoted = get_promoted_piece(move);
 
     /* Double push of pawn. */
     if (double_push_flag) {
