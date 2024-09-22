@@ -46,7 +46,7 @@ int main(int argc, char* argv[]) {
     struct timeval start, end;
     // Use elapsed time not clock time here:
     gettimeofday(&start, NULL);
-    int pn = perft(&board, 5);
+    int pn = perft(&board, 6);
     printf("Perft (startpos) :%d\n",pn);
     gettimeofday(&end, NULL);
     long seconds = end.tv_sec - start.tv_sec;

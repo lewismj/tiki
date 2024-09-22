@@ -2,6 +2,13 @@
 #define TIKI_TYPES_H
 
 #include <stdint.h>
+#include <stdbool.h>
+
+#ifndef bool
+    #define bool	_Bool
+    #define true	1
+    #define false	0
+#endif
 
 
 /**
