@@ -1,12 +1,5 @@
 #include "evaluation_mask.h"
 
-typedef struct {
-    bitboard rank_mask[64];
-    bitboard file_mask[64];
-    bitboard isolated_pawn_mask[64];
-    bitboard passed_pawn_mask[2][64];
-} evaluation_mask_t;
-
 
 static evaluation_mask_t evaluation_mask_instance = {
         .rank_mask = {
