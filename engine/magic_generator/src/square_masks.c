@@ -217,9 +217,26 @@ void generate_isolated_and_passed_pawn_masks() {
         }
     }
 
-    printf("isolated_pawns\n");
+    printf("\nisolated_pawns\n");
     for (int sq=0; sq<64; sq++) {
         printf("0x%" PRIx64 ",\n", isolated_pawns[sq]);
-
     }
+
+    printf("\npassed pawns:\n");
+    printf("{\n");
+    for (int i = 0; i < 2; i++) {
+        printf("    {");
+        for (int j = 0; j < 64; j++) {
+            printf("0x%" PRIx64, passed_pawns[i][j]);
+            if (j < 63) {
+                printf(", ");  // Add a comma between elements
+            }
+        }
+        printf("}");
+        if (i < 1) {
+            printf(",\n");
+        }
+    }
+
+    printf("\n};\n");
 }

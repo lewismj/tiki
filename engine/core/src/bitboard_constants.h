@@ -7,7 +7,7 @@
 /**
  * BitBoard constants (e.g. magic numbers). See 'magic_generator'.
  */
-typedef struct align {
+typedef struct {
     const bitboard square_mask[64];
     const unsigned int bishop_relevant_bits[64];
     const unsigned int rook_relevant_bits[64];

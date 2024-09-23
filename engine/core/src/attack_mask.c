@@ -25,7 +25,7 @@ typedef struct {
 } tiki_attack_mask_t;
 
 
-static alignas(64) tiki_attack_mask_t am_instance;
+static align tiki_attack_mask_t am_instance;
 
 void set_blocker_masks(bitboard* mask_array, mask_function f) {
     for (int sq=0; sq<64; sq++) {

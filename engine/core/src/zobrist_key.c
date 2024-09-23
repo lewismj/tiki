@@ -1,5 +1,3 @@
-#include <stdalign.h>
-
 #include "random.h"
 #include "zobrist_key.h"
 
@@ -10,7 +8,7 @@ typedef struct {
     uint64_t side_key;
 } zobrist_key_t;
 
-static alignas(64) zobrist_key_t zk_instance;
+static zobrist_key_t zk_instance;
 
 void init_zobrist_keys(uint32_t* rng_state) {
     /* Zobrist key for square/piece combinations. */
@@ -20,7 +18,10 @@ void init_zobrist_keys(uint32_t* rng_state) {
         }
     }
 
-    /* Zobrist key for square being en-passant (Just generate key for every square: allow simple/fast indexing. */
+    /*
+     * Zobrist key for square being en-passant
+     * Just generate key for every square: allow simple/fast indexing.
+     */
     for (unsigned int sq = 0; sq < 64; sq++) {
         zk_instance.enpassant_keys[sq] = next_random_64(rng_state);
     }

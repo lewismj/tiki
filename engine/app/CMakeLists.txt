@@ -2,10 +2,11 @@ project(tiki_app)
 
 set(CMAKE_C_STANDARD 23)
 
+
 add_executable(${PROJECT_NAME} src/main.c)
 
 if (CMAKE_BUILD_TYPE MATCHES "^[Rr]elease")
-    target_compile_options(${PROJECT_NAME} PRIVATE "-O3")
+    target_compile_options(${PROJECT_NAME} PRIVATE "-O2")
 endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/../core/include)

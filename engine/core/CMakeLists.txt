@@ -41,6 +41,13 @@ else()
     message(STATUS "PEXT instruction is not supported.")
 endif()
 
+if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
+    message("Clang C compiler is being used.")
+elseif(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+    message("GCC C compiler is being used.")
+else()
+    message("Unknown C compiler is being used.")
+endif()
 
 if (CMAKE_BUILD_TYPE MATCHES "^[Rr]elease")
     message(STATUS "Release build use: -O3")

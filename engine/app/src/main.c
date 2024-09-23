@@ -5,10 +5,6 @@
 #include <stdalign.h>
 
 #include "../../core/src/types.h"
-#include "../../core/src/bitboard_ops.h"
-#include "../../core/src/bitboard_constants.h"
-#include "../../core/src/random.h"
-#include "../../core/src/mask_generator.h"
 #include "../../core/src/attack_mask.h"
 #include "../../core/src/zobrist_key.h"
 #include "../../core/src/board.h"
@@ -41,6 +37,7 @@ int main(int argc, char* argv[]) {
     printf("Initializing tables ...");
     init_attack_table();
     init_zobrist_key();
+    init_evaluation_masks();
     printf(" done\n");
 
     alignas(64) board_t board;
