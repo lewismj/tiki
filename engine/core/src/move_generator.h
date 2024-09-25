@@ -61,6 +61,7 @@ static inline_always void generate_piece_move(  piece move_piece,
 
 }
 
+void generate_white_pawn_moves(board_t* board, move_buffer_t* move_buffer);
 
 
 

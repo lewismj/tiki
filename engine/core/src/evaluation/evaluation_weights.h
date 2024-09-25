@@ -1,0 +1,4 @@
+#ifndef TIKI_EVALUATION_WEIGHTS_H
+#define TIKI_EVALUATION_WEIGHTS_H
+
+#endif

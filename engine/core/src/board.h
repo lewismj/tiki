@@ -131,6 +131,14 @@ static inline_always void recalculate_hash(board_t* board) {
     board->hash = hash;
 }
 
+
+/**
+ *  For pawns, we do the following, say we have a white pawn on square s, is it attacked by a black pawn?
+ *  We look at the white pawn attacks and see if there is a black pawn on those squares.
+ *  For everything else within the function, the logic is just is Colour c attacking square s, use the
+ *  BitBoard of the piece for the given colour.
+ */
+
 /**
  * Return true if the given square 's' is attacked by any piece of colour 'c'.
  *
@@ -139,14 +147,9 @@ static inline_always void recalculate_hash(board_t* board) {
  * @param s     the square that might be attacked.
  * @return  true, if square attacked; false otherwise.
  */
-static inline_always bool is_square_attacked(board_t* board, colour c, square s) {
-    /**
-     *  For pawns, we do the following, say we have a white pawn on square s, is it attacked by a black pawn?
-     *  We look at the white pawn attacks and see if there is a black pawn on those squares.
-     *  For everything else within the function, the logic is just is Colour c attacking square s, use the
-     *  BitBoard of the piece for the given colour.
-     */
 
+/*
+static inline_always bool is_square_attacked(board_t* board, colour c, square s) {
     bitboard queens = c == white ? board->pieces[Q] : board->pieces[q];
 
     bitboard rooks = c == white ? board->pieces[R] : board->pieces[r];
@@ -160,10 +163,6 @@ static inline_always bool is_square_attacked(board_t* board, colour c, square s)
     bitboard knights = c == white ? board->pieces[N] : board->pieces[n];
     if (knight_attack(s) & knights) return true;
 
-//    bitboard queens = c == white ? board->pieces[Q] : board->pieces[q];
-//    bitboard queen_attacks = rook_attacks | bishop_attacks;
-//    if (queen_attacks & queens) return true;
-
     bitboard pawns = c == white ? board->pieces[P] : board->pieces[p];
     bitboard pawn_attacks = c == white ? pawn_attack(s, black) : pawn_attack(s,white);
     if (pawn_attacks & pawns) return true;
@@ -171,6 +170,36 @@ static inline_always bool is_square_attacked(board_t* board, colour c, square s)
     bitboard kings = c == white ? board->pieces[K] : board->pieces[k];
     bitboard king_attacks = king_attack(s);
     return king_attacks & kings;
+}
+ */
+
+
+static inline_always bool is_square_attacked_black(board_t* board, square s) {
+    if (knight_attack(s) & board->pieces[n]) return true;
+
+    bitboard rook_attacks = rook_attack(s, board->occupancy[both]);
+    if (rook_attacks & (board->pieces[r]|board->pieces[q])) return true;
+
+    bitboard bishop_attacks = bishop_attack(s, board->occupancy[both]);
+    if (bishop_attacks & (board->pieces[b]|board->pieces[q])) return true;
+
+    if (pawn_attack(s,white) & board->pieces[p]) return true;
+
+    return king_attack(s) & board->pieces[k];
+}
+
+static inline_always bool is_square_attacked_white(board_t* board, square s) {
+    if (knight_attack(s) & board->pieces[N]) return true;
+
+    bitboard rook_attacks = rook_attack(s, board->occupancy[both]);
+    if (rook_attacks & (board->pieces[R]|board->pieces[Q])) return true;
+
+    bitboard bishop_attacks = bishop_attack(s, board->occupancy[both]);
+    if (bishop_attacks & (board->pieces[B]|board->pieces[Q])) return true;
+
+    if (pawn_attack(s,black) & board->pieces[P]) return true;
+
+    return king_attack(s) & board->pieces[K];
 }
 
 
@@ -308,7 +337,9 @@ static inline_always bool make_move(board_t* board, move_t move) {
             trailing_zero_count(board->pieces[K]);
     board->stack_ptr++;
 
-    return !is_square_attacked(board, board->side, king_sq);
+    return board->side == white ?
+        !is_square_attacked_white(board, king_sq) :
+        !is_square_attacked_black(board, king_sq);
 }
 
 static inline_always void pop_move(board_t* board) {
