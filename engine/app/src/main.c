@@ -3,6 +3,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <stdalign.h>
+#include <assert.h>
 
 #include "../../core/src/types.h"
 #include "../../core/src/attack_mask.h"
@@ -45,13 +46,11 @@ int main(int argc, char* argv[]) {
     init_attack_table();
     init_zobrist_key();
     init_evaluation_masks();
-    printf(" done\n");
 
     alignas(64) board_t board;
     unsafe_parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
     move_buffer_t buffer1;
     buffer1.index = 0;
-
 
     struct timeval start, end;
     // Use elapsed time not clock time here:

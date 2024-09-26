@@ -126,8 +126,12 @@ typedef bitboard (*move_function)(square s, const bitboard bitboard);
 /** For King and Knight, the move_t function doesn't take into account blockers. */
 typedef bitboard (*no_blocker_move_function)(square s);
 
-
+#ifdef __MINGW32__
+#define inline_always inline
+#else
 #define inline_always inline __attribute__((always_inline))
+#endif
+
 #define align __attribute__((aligned(64)))
 
 #endif
