@@ -50,18 +50,21 @@ static inline_always void generate_piece_move(  piece move_piece,
     while (pieces) {
         square source = get_lsb_and_pop_bit(&pieces);
         bitboard attacks = (move_fn(source, *both) & *not_self);
-        while (attacks) {
-            square target = get_lsb_and_pop_bit(&attacks);
-            move_t mv = is_bit_set(opponent, target)
-                    ? encode_move(source, target, move_piece, 0, 1, 0, 0, 0, 0)
-                    : encode_move(source, target, move_piece, 0, 0, 0, 0, 0, 0);
-            move_buffer->moves[move_buffer->index++] = mv;
+        bitboard captures= attacks & *opponent;
+        bitboard non_captures = attacks & ~*both;
+
+        while (captures) {
+            square target = get_lsb_and_pop_bit(&captures);
+            move_buffer->moves[move_buffer->index++] = encode_move(source, target, move_piece, 0, 1, 0, 0, 0, 0);
+        }
+
+        while (non_captures) {
+            square target = get_lsb_and_pop_bit(&non_captures);
+            move_buffer->moves[move_buffer->index++] = encode_move(source, target, move_piece, 0, 0, 0, 0, 0, 0);
         }
     }
-
 }
 
-void generate_white_pawn_moves(board_t* board, move_buffer_t* move_buffer);
 
 
 

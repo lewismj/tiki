@@ -324,22 +324,19 @@ static inline_always bool make_move(board_t* board, move_t move) {
         board->hash ^= get_piece_key(target, promoted);
     }
 
-    board->castle_flag &= castling_update[source];
-    board->castle_flag &= castling_update[target];
+    board->castle_flag &= (castling_update[source] & castling_update[target]);
     board->hash ^= get_castle_key(board->castle_flag);
 
     board->occupancy[both] = board->occupancy[white] | board->occupancy[black];
     board->side = opponent;
     board->hash ^= get_side_key();
 
-    square king_sq = board->side == white ?
-            trailing_zero_count(board->pieces[k]) :
-            trailing_zero_count(board->pieces[K]);
+    square king_sq = opponent == white ?
+            trailing_zero_count(board->pieces[k]) : trailing_zero_count(board->pieces[K]);
     board->stack_ptr++;
 
-    return board->side == white ?
-        !is_square_attacked_white(board, king_sq) :
-        !is_square_attacked_black(board, king_sq);
+    return opponent == white ?
+        !is_square_attacked_white(board, king_sq) : !is_square_attacked_black(board, king_sq);
 }
 
 static inline_always void pop_move(board_t* board) {

@@ -35,7 +35,7 @@ void full_perft_tests() {
                 unsafe_parse_fen(perft_data[i].position, &board);
                 int num_moves = calc_perft(&board, j+1);
                 if (perft_data[i].values[j] != num_moves) {
-                    printf(" case [%d] failed, depth: %d, actual: %d, expected: %d\n", i, j, num_moves, perft_data[i].values[j]);
+                    printf(" case [%d] failed, depth: %d, actual: %d, expected: %d\n", i, j+1, num_moves, perft_data[i].values[j]);
                 }
                 TEST_ASSERT_EQUAL_INT(perft_data[i].values[j], num_moves);
             }
