@@ -46,10 +46,10 @@ static inline_always void generate_piece_move(  piece move_piece,
                                                 const bitboard* both,
                                                 const move_function move_fn,
                                                 move_buffer_t* move_buffer) {
-    /* n.b. Tested, this is faster than two while loops of captures and non captures. */
+    /* n.b. tested, this is faster than two while loops of captures and non captures. */
     while (pieces) {
         square source = get_lsb_and_pop_bit(&pieces);
-        bitboard attacks = (move_fn(source, *both) & *not_self);
+        bitboard attacks = move_fn(source, *both) & *not_self;
         while (attacks) {
             square target = get_lsb_and_pop_bit(&attacks);
             move_t mv = is_bit_set(opponent, target)

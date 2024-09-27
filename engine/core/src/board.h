@@ -285,7 +285,6 @@ static inline_always bool make_move(board_t* board, move_t move) {
         set_bit(&board->occupancy[board->side], to);
         board->hash ^= get_piece_key(from, rook);
         board->hash ^= get_piece_key(to, rook);
-
     } else if (promoted) {
         /* Here promoted is piece, but if promoted=0, indicated no promotion. */
         int pawn = board->side == white ? P : p;

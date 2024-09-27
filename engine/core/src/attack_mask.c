@@ -3,7 +3,6 @@
 #include "bitboard_ops.h"
 #include "mask_generator.h"
 #include "attack_mask.h"
-#include <stdalign.h>
 
 
 align tiki_attack_mask_t am_instance;
