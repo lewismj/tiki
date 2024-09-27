@@ -148,32 +148,6 @@ static inline_always void recalculate_hash(board_t* board) {
  * @return  true, if square attacked; false otherwise.
  */
 
-/*
-static inline_always bool is_square_attacked(board_t* board, colour c, square s) {
-    bitboard queens = c == white ? board->pieces[Q] : board->pieces[q];
-
-    bitboard rooks = c == white ? board->pieces[R] : board->pieces[r];
-    bitboard rook_attacks = rook_attack(s, board->occupancy[both]);
-    if (rook_attacks & (rooks|queens)) return true;
-
-    bitboard bishops = c == white ? board->pieces[B] : board->pieces[b];
-    bitboard bishop_attacks = bishop_attack(s, board->occupancy[both]);
-    if (bishop_attacks & (bishops|queens)) return true;
-
-    bitboard knights = c == white ? board->pieces[N] : board->pieces[n];
-    if (knight_attack(s) & knights) return true;
-
-    bitboard pawns = c == white ? board->pieces[P] : board->pieces[p];
-    bitboard pawn_attacks = c == white ? pawn_attack(s, black) : pawn_attack(s,white);
-    if (pawn_attacks & pawns) return true;
-
-    bitboard kings = c == white ? board->pieces[K] : board->pieces[k];
-    bitboard king_attacks = king_attack(s);
-    return king_attacks & kings;
-}
- */
-
-
 static inline_always bool is_square_attacked_black(board_t* board, square s) {
     if (knight_attack(s) & board->pieces[n]) return true;
 
