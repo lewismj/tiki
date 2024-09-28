@@ -101,12 +101,12 @@ bitboard create_king_attack_mask(square s) {
     bitboard mask = 0ULL;
     bitboard loc = bitboard_const.square_mask[s];
 
-    if (loc >> 8)  mask |= loc >> 8;                                    /* n.   */
+    if (loc >> 8)  mask |= loc >> 8;                               /* n.   */
     if (loc >> 9 & bitboard_const.not_h_file) mask |= loc >> 9;    /* nw.  */
     if (loc >> 7 & bitboard_const.not_a_file) mask |= loc >> 7;    /* ne.  */
     if (loc >> 1 & bitboard_const.not_h_file) mask |= loc >> 1;    /* w.   */
 
-    if (loc << 8) mask |= loc << 8;                                     /* s.   */
+    if (loc << 8) mask |= loc << 8;                                /* s.   */
     if (loc << 9 & bitboard_const.not_a_file) mask |= loc << 9;    /* sw.  */
     if (loc << 7 & bitboard_const.not_h_file) mask |= loc << 7;    /* se.  */
     if (loc << 1 & bitboard_const.not_a_file) mask |= loc << 1;    /* e.   */

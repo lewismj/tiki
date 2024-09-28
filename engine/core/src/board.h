@@ -10,7 +10,7 @@
 #include "move_encoding.h"
 #include "zobrist_key.h"
 #include "attack_mask.h"
-
+#include <string.h>
 
 /**
  * Structure used for undo-ing moves, note we create a fixed size array and store
@@ -89,16 +89,8 @@ static int castling_update[] = {
  */
 void unsafe_parse_fen(const char* fen, board_t* board);
 
-/**
- *
- * @return
- */
+/** Usually keep board objects on stack. Maybe useful for testing. */
 board_t* new_board();
-
-/**
- *
- * @param board
- */
 void free_board(board_t* board);
 
 /**
@@ -218,52 +210,51 @@ static inline_always bool make_move(board_t* board, move_t move) {
     if (board->en_passant != none_sq) board->hash ^= get_enpassant_key(board->en_passant);
     board->en_passant = none_sq;
 
-    /* Captures. */
-    if (capture_flag) {
-        if (enpassant_flag) {
-            /*
-             * Move is en passant capture.
-             * We've moved the pawn from source to target at the start, but we need to remove the
-             * opposing pawn, since it wasn't at the target square (post capture) in en-passant.
-             */
-            if (board->side == white) {
-                square sq = target + 8;
-                pop_bit(&board->pieces[p], sq);
-                pop_bit(&board->occupancy[opponent], sq);
-                board->hash ^= get_piece_key(sq, p);
-            } else {
-                square sq = target - 8;
-                pop_bit(&board->pieces[P], sq);
-                pop_bit(&board->occupancy[opponent], sq);
-                board->hash ^= get_piece_key(sq, P);
-            }
-        } /* en passant. */
-        else {
-            /* Process capture. Find the piece we're capturing and pop the bit. */
-            int *pieces = board->side == white ? black_pieces : white_pieces;
-            for (int i=0; i<=5; i++) {
-                piece captured_piece = pieces[i];
-                if (!is_bit_set(&board->pieces[captured_piece],target)) continue;
-                board->stack[board->stack_ptr].captured_piece = captured_piece;
-                pop_bit(&board->pieces[captured_piece], target);
-                pop_bit(&board->occupancy[opponent], target);
-                board->hash ^= get_piece_key(target, captured_piece);
-                break;
-            }
-        }
-    }
-
     int double_push_flag = get_double_push_flag(move);
     int king_side_castle_flag = get_king_side_castle_flag(move);
     int queen_side_castle_flag = get_queen_side_castle_flag(move);
     int promoted = get_promoted_piece(move);
+
+
+    /* Captures. */
+    if (capture_flag) {
+        /* Process capture. Find the piece we're capturing and pop the bit. */
+        int *pieces = board->side == white ? black_pieces : white_pieces;
+        for (int i=0; i<=5; i++) {
+            piece captured_piece = pieces[i];
+            if (!is_bit_set(&board->pieces[captured_piece],target)) continue;
+            board->stack[board->stack_ptr].captured_piece = captured_piece;
+            pop_bit(&board->pieces[captured_piece], target);
+            pop_bit(&board->occupancy[opponent], target);
+            board->hash ^= get_piece_key(target, captured_piece);
+            break;
+        }
+    }
 
     /* Double push of pawn. */
     if (double_push_flag) {
         square sq = board->side == white ? target + 8 : target - 8;
         board->en_passant = sq;
         board->hash ^= get_enpassant_key(sq);
-    } else if (king_side_castle_flag) {
+    }
+    else if (enpassant_flag) {
+        /*
+         * We've moved the pawn from source to target at the start, but we need to remove the
+         * opposing pawn, since it wasn't at the target square (post capture) in en-passant.
+         */
+        if (board->side == white) {
+            square sq = target + 8;
+            pop_bit(&board->pieces[p], sq);
+            pop_bit(&board->occupancy[opponent], sq);
+            board->hash ^= get_piece_key(sq, p);
+        } else {
+            square sq = target - 8;
+            pop_bit(&board->pieces[P], sq);
+            pop_bit(&board->occupancy[opponent], sq);
+            board->hash ^= get_piece_key(sq, P);
+        }
+    } /* en passant. */
+    else if (king_side_castle_flag) {
         /* King side castling. */
         int rook = board->side == white ? R : r;
         int from = target +1;

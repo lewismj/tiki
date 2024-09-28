@@ -68,6 +68,8 @@ typedef uint32_t move_t;
  */
 typedef enum { P, N, B, R, Q, K, p, n, b, r, q, k, none } piece;
 
+typedef enum { Pawn, Knight, Rook, Queen, King } piece_type;
+
 static int black_pieces[] = { p, n, b, r, q, k};
 static int white_pieces[] = { P, N, B, R, Q, K };
 

@@ -1,9 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
-#include <time.h>
-#include <sys/time.h>
 #include <stdalign.h>
-#include <assert.h>
+#include <sys/time.h>
 
 #include "../../core/src/types.h"
 #include "../../core/src/attack_mask.h"
@@ -11,7 +9,7 @@
 #include "../../core/src/board.h"
 #include "../../core/src/move_generator.h"
 #include "../../core/src/evaluation/evaluation_mask.h"
-
+#include "../../core/src/evaluation/evaluation.h"
 
 static int perft(board_t* b, int depth) {
     if (depth == 0 ) return 1;
@@ -22,10 +20,6 @@ static int perft(board_t* b, int depth) {
     buffer.index = 0;
     generate_moves(b, &buffer);
     for (int i=0; i<buffer.index; i++) {
-
-        square source = get_source_square(buffer.moves[i]);
-        square target = get_target_square(buffer.moves[i]);
-
         int num_moves = 0;
         if (make_move(b, buffer.moves[i])) {
             num_moves += perft(b, depth - 1);
@@ -46,11 +40,15 @@ int main(int argc, char* argv[]) {
     init_attack_table();
     init_zobrist_key();
     init_evaluation_masks();
+    printf("... done\n");
+
 
     alignas(64) board_t board;
+    //unsafe_parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
     unsafe_parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
     move_buffer_t buffer1;
     buffer1.index = 0;
+
 
     struct timeval start, end;
     // Use elapsed time not clock time here:
