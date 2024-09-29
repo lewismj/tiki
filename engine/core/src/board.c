@@ -40,7 +40,7 @@ board_t* new_board() {
     board->castle_flag = 0;
     board->side = white;
     board->half_move = 0;
-    board->full_move = 0;
+    board->fifty_move = 0;
     board->stack_ptr = 0;
     return board;
 }
@@ -52,7 +52,7 @@ void reset_board(board_t* board) {
     board->castle_flag = 0;
     board->side = white;
     board->half_move = 0;
-    board->full_move = 0;
+    board->fifty_move = 0;
     board->stack_ptr = 0;
 }
 
@@ -114,7 +114,7 @@ void unsafe_parse_fen(const char* fen, board_t* board) {
      */
     board->half_move = atoi(ptr); ptr++;
     while (*ptr++ != ' ') ;
-    board->full_move = atoi(ptr);
+    board->fifty_move = atoi(ptr);
 
     board->occupancy[both] |= board->occupancy[white];
     board->occupancy[both] |= board->occupancy[black];
@@ -158,7 +158,7 @@ void print_board(board_t* board, showable options) {
             }
             printf("\n");
             printf("Half move:\t%d\n", board->half_move);
-            printf("Full move:\t%d\n", board->full_move);
+            printf("Full move:\t%d\n", board->fifty_move);
             printf("\n");
         }
     }

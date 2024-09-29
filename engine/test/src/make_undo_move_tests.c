@@ -129,7 +129,7 @@ void test_undo_restores_state1() {
             TEST_ASSERT_EQUAL_INT(original.castle_flag, board.castle_flag);
             TEST_ASSERT_EQUAL_INT(original.en_passant, board.en_passant);
             TEST_ASSERT_EQUAL_INT(original.half_move, board.half_move);
-            TEST_ASSERT_EQUAL_INT(original.full_move, board.full_move);
+            TEST_ASSERT_EQUAL_INT(original.fifty_move, board.fifty_move);
         }
     }
 }

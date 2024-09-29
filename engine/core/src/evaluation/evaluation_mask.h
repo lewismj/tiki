@@ -6,14 +6,13 @@
 
 
 typedef struct {
-    bitboard rank_mask[64];
-    bitboard file_mask[64];
-    bitboard isolated_pawn_mask[64];
-    bitboard passed_pawn_mask[2][64];
+    const bitboard rank_masks[8];
+    const bitboard file_masks[8];
+    const bitboard inv_isolated_file_mask[8];
+    const bitboard passed_pawn_mask[2][64];
 } evaluation_mask_t;
+extern const evaluation_mask_t evaluation_mask_instance;
 
-
-void init_evaluation_masks();
 
 
 #endif

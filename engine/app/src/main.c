@@ -39,12 +39,19 @@ int main(int argc, char* argv[]) {
     printf("Initializing tables ...");
     init_attack_table();
     init_zobrist_key();
-    init_evaluation_masks();
     printf("... done\n");
 
 
+//    alignas(64) board_t board;
+//    unsafe_parse_fen("8/p7/p7/8/4P3/P7/P7/8 w - - 0 1", &board);
+
+//    int score = evaluate(&board);
+//    printf("Game phase score: %f\n",(float) score);
+//
+
+
+
     alignas(64) board_t board;
-    //unsafe_parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
     unsafe_parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
     move_buffer_t buffer1;
     buffer1.index = 0;

@@ -175,68 +175,57 @@ bitboard file_mask[64] = {
         0x8080808080808080
 };
 
-void generate_isolated_and_passed_pawn_masks() {
-    bitboard isolated_pawns[64];
-    bitboard passed_pawns[2][64];
 
-    for (int sq = 0; sq < 64; sq++) {
-        bitboard isolated_pawn_mask = 0ULL;
-        bitboard passed_pawn_mask = 0ULL;
-
-        int file = sq % 8;
-
-        passed_pawn_mask |= file_mask[sq];
-        if (file == 0) {
-            isolated_pawn_mask |= file_mask[sq + 1];
-            passed_pawn_mask |= file_mask[sq + 1];
-        }
-        else if (file == 7) {
-            isolated_pawn_mask |= file_mask[sq - 1];
-            passed_pawn_mask |= file_mask[sq - 1];
-        } else
-        {
-            isolated_pawn_mask |= file_mask[sq + 1];
-            isolated_pawn_mask |= file_mask[sq - 1];
-            passed_pawn_mask |= file_mask[sq + 1];
-            passed_pawn_mask |= file_mask[sq - 1];
-        }
-        isolated_pawns[sq] = isolated_pawn_mask;
-        passed_pawns[white][sq] = passed_pawn_mask;
-        passed_pawns[black][sq] = passed_pawn_mask;
-    }
-    for (int rank = 0; rank < 8; rank++)
-    {
-        for (int file = 0; file < 8; file++)
-        {
-            square sq = rank * 8 + file;
-            for (int i = 0; i < 8 - rank; i++)
-                passed_pawns[white][sq] &= ~rank_mask[(7 - i) * 8 + file];
-
-            for (int i = 0; i < rank + 1; i++)
-                passed_pawns[black][sq] &= ~rank_mask[i * 8 + file];
-        }
-    }
-
-    printf("\nisolated_pawns\n");
-    for (int sq=0; sq<64; sq++) {
-        printf("0x%" PRIx64 ",\n", isolated_pawns[sq]);
-    }
-
-    printf("\npassed pawns:\n");
-    printf("{\n");
-    for (int i = 0; i < 2; i++) {
-        printf("    {");
-        for (int j = 0; j < 64; j++) {
-            printf("0x%" PRIx64, passed_pawns[i][j]);
-            if (j < 63) {
-                printf(", ");  // Add a comma between elements
-            }
-        }
-        printf("}");
-        if (i < 1) {
-            printf(",\n");
-        }
-    }
-
-    printf("\n};\n");
-}
+//void init_evaluation_masks() {
+//    /* Calculate rank and file masks per square. */
+//    bitboard file_mask[64];
+//    bitboard rank_mask[64];
+//
+//    /* Rank/File masks per square. */
+//    for (int sq = 0; sq < 64; sq++) {
+//        bitboard rank_b = 0ULL;
+//        bitboard file_b = 0ULL;
+//
+//        int rank = sq / 8;
+//        int file = sq % 8;
+//
+//        for (int i = 0; i < 8; i++) {
+//            rank_b |= 1ULL << (rank * 8 + i);
+//            file_b |= 1ULL << (i * 8 + file);
+//        }
+//        rank_mask[sq] = rank_b;
+//        file_mask[sq] = file_b;
+//    }
+//
+//    for (int sq = 0; sq < 64; sq++) {
+//        bitboard isolated_pawn_mask = 0ULL;
+//        bitboard passed_pawn_mask = 0ULL;
+//
+//        int file = sq % 8;
+//
+//        passed_pawn_mask |= file_mask[sq];
+//        if (file == 0) {
+//            passed_pawn_mask |= file_mask[sq + 1];
+//        }
+//        else if (file == 7) {
+//            passed_pawn_mask |= file_mask[sq - 1];
+//        } else {
+//            passed_pawn_mask |= file_mask[sq + 1];
+//            passed_pawn_mask |= file_mask[sq - 1];
+//        }
+//        evaluation_mask_instance.passed_pawn_mask[white][sq] = passed_pawn_mask;
+//        evaluation_mask_instance.passed_pawn_mask[black][sq] = passed_pawn_mask;
+//    }
+//    for (int rank = 0; rank < 8; rank++) {
+//        for (int file = 0; file < 8; file++) {
+//            square sq = rank * 8 + file;
+//            for (int i = 0; i < 8 - rank; i++) {
+//                evaluation_mask_instance.passed_pawn_mask[white][sq] &= ~rank_mask[ (7 - i) * 8 + file];
+//            }
+//
+//            for (int i = 0; i < rank + 1; i++) {
+//                evaluation_mask_instance.passed_pawn_mask[black][sq] &= ~rank_mask[i * 8 + file];
+//            }
+//        }
+//    }
+//}

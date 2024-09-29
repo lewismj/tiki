@@ -4,13 +4,14 @@
 #include <stdalign.h>
 #include <inttypes.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include "types.h"
 #include "bitboard_ops.h"
 #include "move_encoding.h"
 #include "zobrist_key.h"
 #include "attack_mask.h"
-#include <string.h>
+
 
 /**
  * Structure used for undo-ing moves, note we create a fixed size array and store
@@ -23,7 +24,7 @@ typedef struct  {
     int castle_flag;
     int en_passant;
     int half_move;
-    int full_move;
+    int fifty_move;
     uint64_t hash;
 } undo_meta_t;
 
@@ -40,7 +41,7 @@ typedef struct {
     square en_passant;
     colour side;
     int half_move;
-    int full_move;
+    int fifty_move;
     uint64_t hash;
     /* Used for applying/undo moves to a board. */
     undo_meta_t stack[MAX_DEPTH];
@@ -178,7 +179,7 @@ static inline_always bool make_move(board_t* board, move_t move) {
     board->stack[board->stack_ptr].castle_flag = board->castle_flag;
     board->stack[board->stack_ptr].en_passant = board->en_passant;
     board->stack[board->stack_ptr].half_move = board->half_move;
-    board->stack[board->stack_ptr].full_move = board->full_move;
+    board->stack[board->stack_ptr].fifty_move = board->fifty_move;
     board->stack[board->stack_ptr].hash = board->hash;
 
     /* Retrieve move properties. */
@@ -370,7 +371,7 @@ static inline_always void pop_move(board_t* board) {
     board->castle_flag = undo_element->castle_flag;
     board->en_passant = undo_element->en_passant;
     board->half_move = undo_element->half_move;
-    board->full_move = undo_element->full_move;
+    board->fifty_move = undo_element->fifty_move;
     board->hash = undo_element->hash;
 
     board->occupancy[both] = board->occupancy[white] | board->occupancy[black];

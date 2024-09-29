@@ -1,9 +1,22 @@
 #ifndef TIKI_TYPES_H
 #define TIKI_TYPES_H
 
-#include <stdint.h>
-#include <stdbool.h>
-#include <stdalign.h>
+#if defined __linux__ || defined __MINGW32__
+    #include <stdint.h>
+    #include <stdbool.h>
+    #include <stdalign.h>
+#else
+    #define uint32_t int
+    #define uint64_t unsigned long long
+#endif
+
+#ifdef __linux__
+#define inline_always inline __attribute__((always_inline))
+#else
+#define inline_always inline
+#endif
+
+#define align __attribute__((aligned(64)))
 
 #ifndef bool
     #define bool	_Bool
@@ -68,24 +81,11 @@ typedef uint32_t move_t;
  */
 typedef enum { P, N, B, R, Q, K, p, n, b, r, q, k, none } piece;
 
-typedef enum { Pawn, Knight, Rook, Queen, King } piece_type;
-
 static int black_pieces[] = { p, n, b, r, q, k};
 static int white_pieces[] = { P, N, B, R, Q, K };
 
-static char* piece_to_str[] = {  "P",
-                                "N",
-                                "B",
-                                "R",
-                                "Q",
-                                "K",
-                                "p",
-                                "n",
-                                "b",
-                                "r",
-                                "q",
-                                "k",
-                                "none"};
+static char* piece_to_char = "PNBRQKpnbrqk-";
+
 
 static int char_to_piece[] = {  ['P'] = P,
                                 ['N'] = N,
@@ -127,13 +127,5 @@ typedef bitboard (*move_function)(square s, const bitboard bitboard);
 
 /** For King and Knight, the move_t function doesn't take into account blockers. */
 typedef bitboard (*no_blocker_move_function)(square s);
-
-#ifdef __MINGW32__
-#define inline_always inline
-#else
-#define inline_always inline __attribute__((always_inline))
-#endif
-
-#define align __attribute__((aligned(64)))
 
 #endif
