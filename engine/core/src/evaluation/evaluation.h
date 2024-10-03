@@ -218,14 +218,22 @@ static inline_always void evaluate0(const board_t* const board, weight_type* eva
     }
 }
 
+
 static inline_always weight_type evaluate(const board_t* const board) {
+    weight_type phases[2] = {6192, 518};
     weight_type score[3] = {0, 0, 0};
     evaluate0(board, score);
     eval_pawn_mobility(board, white_pawns, 1, score);
     eval_pawn_mobility(board, black_pawns, -1, score);
-    printf("game phase: %d, open: %d, end: %d\n",score[0], score[1], score[2]);
 
-    return score[0];
+    /* this can be generalized, but not worth it, the handcrafted eval approach is
+     * nowadays only useful for testing search, not for actual gameplay. */
+    int res;
+    if (score[0] > phases[0]) res = score[1];
+    else if (score[0] < phases[1]) res = score[2];
+    else res = score[1] + (score[0] - phases[0]) * (score[2] - score[1]) / (phases[1] - phases[0]);
+
+    return board->side == white ? res : -res;
 }
 
 #endif
