@@ -17,6 +17,8 @@ int main(int argc, char* argv[]) {
     generate_rank_masks();
     printf("\nfile masks:\n");
     generate_file_masks();
+    printf("\neval masks:\n");
+    generate_eval_masks();
 
     return EXIT_SUCCESS;
 }

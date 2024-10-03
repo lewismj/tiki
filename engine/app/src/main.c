@@ -10,6 +10,7 @@
 #include "../../core/src/move_generator.h"
 #include "../../core/src/evaluation/evaluation.h"
 
+
 static int perft(board_t* b, int depth) {
     if (depth == 0 ) return 1;
 
@@ -40,10 +41,9 @@ int main(int argc, char* argv[]) {
     init_zobrist_key();
     printf("... done\n");
 
-
     alignas(64) board_t board;
-    //unsafe_parse_fen("5q2/pp2n3/3p3p/b1N5/6N1/3Q3B/P5PN/8 w - - 0 1", &board);
-    unsafe_parse_fen("5q2/pp2n3/3p3p/b1N5/6N1/3Q3B/P5P1/8 w - - 0 1",&board);
+   // unsafe_parse_fen("8/ppp2p2/8/PP6/8/8/8/8 w - - 0 1", &board);
+    unsafe_parse_fen("8/ppp5/8/PP6/8/8/5p2/8 w - - 0 1", &board);
     int score = evaluate(&board);
     printf("Game phase score: %f\n",(float) score);
 
@@ -52,8 +52,8 @@ int main(int argc, char* argv[]) {
 //    unsafe_parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
 //    move_buffer_t buffer1;
 //    buffer1.index = 0;
-
-
+//
+//
 //    struct timeval start, end;
 //    // Use elapsed time not clock time here:
 //    printf("Starting Perft.\n");

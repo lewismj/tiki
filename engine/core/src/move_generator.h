@@ -61,6 +61,4 @@ static inline_always void generate_piece_move(  piece move_piece,
 }
 
 
-
-
 #endif
