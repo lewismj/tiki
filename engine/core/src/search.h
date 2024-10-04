@@ -2,6 +2,10 @@
 #define TIKI_SEARCH_H
 
 #include <stdio.h>
+#include <assert.h>
+#include <execinfo.h>
+#include <signal.h>
+#include <unistd.h>
 
 #include "types.h"
 #include "board.h"
@@ -35,12 +39,12 @@ static inline_always int score_move(move_t move, board_t* board, search_state_t*
         }
         return search_const.mvv_lva[source_piece][target_piece] + 10000;
     } else {
-        if (search_state->killer_moves[0][search_state->ply] == move) return 9000;
-        else if (search_state->killer_moves[1][search_state->ply] == move) return 8000;
-        else return search_state->history_moves[source_piece][target_sq];
+        return 0;
+//        if (search_state->killer_moves[0][search_state->ply] == move) return 9000;
+//        else if (search_state->killer_moves[1][search_state->ply] == move) return 8000;
+//        else return search_state->history_moves[source_piece][target_sq];
 
     }
-    return 0;
 }
 
 static inline_always void sort_move_buffer(move_buffer_t* buffer, board_t* board, search_state_t* search_state) {
@@ -51,36 +55,51 @@ static inline_always void sort_move_buffer(move_buffer_t* buffer, board_t* board
     sort_moves_by_scores(buffer->moves, scores, buffer->index);
 }
 
+
 static inline_always int quiescence(int alpha,
                                     int beta,
                                     board_t* board,
                                     search_state_t* search_state) {
-    search_state->nodes_visited++;
-    int eval = evaluation(board);
 
+
+    if (search_state->ply > 6) return evaluation(board);
+    search_state->nodes_visited++;
+
+    int eval = evaluation(board);
     if (eval >= beta) return beta;
     if (eval > alpha) alpha = eval;
 
-    move_buffer_t move_buffer;
-    move_buffer.index = 0;
-    generate_moves(board, &move_buffer);
-    sort_move_buffer(&move_buffer, board, search_state);
+    move_buffer_t buffer;
+    buffer.index = 0;
+    generate_moves(board, &buffer);
+    sort_move_buffer(&buffer, board, search_state);
 
-    for (int i=0; i < move_buffer.index; i++) {
-        
+    for (int i=0; i< buffer.index; i++) {
+        if (get_capture_flag(buffer.moves[i])) {
+            search_state->ply++;
+            if (make_move(board, buffer.moves[i])) {
+                int score = -quiescence(-beta, -alpha, board, search_state);
+                search_state->ply--;
+                pop_move(board);
+                if (score >= beta) return beta;
+                if (score > alpha) alpha = score;
+            } else {
+                search_state->ply--;
+                pop_move(board);
+            }
+        }
     }
 
+    return alpha;
 }
 
-
-/* negamax0 no optimisations, no quiescence, no move ordering etc. */
 static inline_always int negamax0(int alpha,
                                   int beta,
                                   int depth,
                                   board_t* board,
                                   search_state_t* search_state) {
 
-    if (depth == 0) return evaluation(board);
+    if (depth == 0) return quiescence(alpha, beta, board, search_state); //evaluation(board);
     search_state->nodes_visited++;
     int current_alpha = alpha;
     move_t best_move_so_far;
@@ -88,10 +107,48 @@ static inline_always int negamax0(int alpha,
     align move_buffer_t buffer;
     buffer.index = 0;
     generate_moves(board, &buffer);
+
     for (int i=0; i<buffer.index; i++) {
         if (make_move(board,buffer.moves[i])) {
             search_state->ply++;
             int score = -negamax0(-beta, -alpha, depth-1, board, search_state);
+            search_state->ply--;
+            pop_move(board);
+            if (score >= beta) {
+                return beta;
+            }
+            if (score > alpha) {
+                alpha = score;
+                if (search_state->ply == 0) best_move_so_far = buffer.moves[i];
+            }
+        } else {
+            pop_move(board);
+        }
+    }
+    if (current_alpha != alpha) search_state->best_move = best_move_so_far;
+
+    return alpha;
+}
+
+static inline_always int negamax1(int alpha,
+                                  int beta,
+                                  int depth,
+                                  board_t* board,
+                                  search_state_t* search_state) {
+
+    if (depth == 0) return quiescence(alpha, beta, board, search_state); //evaluation(board);
+    search_state->nodes_visited++;
+    int current_alpha = alpha;
+    move_t best_move_so_far;
+
+    align move_buffer_t buffer;
+    buffer.index = 0;
+    generate_moves(board, &buffer);
+
+    for (int i=0; i<buffer.index; i++) {
+        if (make_move(board,buffer.moves[i])) {
+            search_state->ply++;
+            int score = -negamax1(-beta, -alpha, depth-1, board, search_state);
             search_state->ply--;
             pop_move(board);
             if (score >= beta) {
@@ -119,6 +176,7 @@ static move_t inline_always find_best_move( board_t* board,
     search.ply = 0;
     search.best_move = 0;
     int score = negamax0(-50000, 50000, depth, board, &search);
+    printf("nodes visited: %ld\n", search.nodes_visited);
     return search.best_move;
 }
 

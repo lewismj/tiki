@@ -26,6 +26,7 @@ static int perft(board_t* b, int depth) {
             num_moves += perft(b, depth - 1);
         }
         pop_move(b);
+
         sum += num_moves;
     }
 
@@ -45,6 +46,9 @@ int main(int argc, char* argv[]) {
     alignas(64) board_t board;
     unsafe_parse_fen("rnbqkb1r/pp1p1pPp/8/2p1pP2/1P1P4/3P3P/P1P1P3/RNBQKBNR w KQkq e6 0 1",&board);
     print_board(&board, min);
+
+
+
     volatile int cancel_flag = 0;
 
     struct timeval start, end;
@@ -58,11 +62,11 @@ int main(int argc, char* argv[]) {
     printf("Elapsed time: %.3f sec\n", elapsed / 1000);
 
 
-    //unsafe_parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
+//    unsafe_parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
 //    move_buffer_t buffer1;
 //    buffer1.index = 0;
-
-
+//
+//
 //    struct timeval start, end;
 //    // Use elapsed time not clock time here:
 //    printf("Starting Perft.\n");
