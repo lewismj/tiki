@@ -26,4 +26,8 @@ typedef struct align {
  */
 extern const search_const_t search_const;
 
+#define infinity    50000
+#define mate_value  49000
+#define mate_score  48000
+
 #endif

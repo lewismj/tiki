@@ -22,8 +22,8 @@ typedef struct {
     bitboard pext_rook_base[64];
     bitboard pext_bishop_base[64];
 #endif
-} tiki_attack_mask_t;
-extern tiki_attack_mask_t am_instance;
+} attack_mask_t;
+extern attack_mask_t am_instance;
 
 /**
  * This function needs to be called before we can invoke any of the 'attack' functions,

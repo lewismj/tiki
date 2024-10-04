@@ -5,7 +5,7 @@
 #include "attack_mask.h"
 
 
-align tiki_attack_mask_t am_instance;
+align attack_mask_t am_instance;
 
 void set_blocker_masks(bitboard* mask_array, mask_function f) {
     for (int sq=0; sq<64; sq++) {
