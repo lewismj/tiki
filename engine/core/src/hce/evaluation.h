@@ -1,5 +1,5 @@
-#ifndef TIKI_EVALUATION_H
-#define TIKI_EVALUATION_H
+#ifndef TIKI_HCE_EVALUATION_H
+#define TIKI_HCE_EVALUATION_H
 
 #include "../types.h"
 #include "../board.h"
@@ -136,7 +136,6 @@ static inline_always void evaluate0(const board_t* const board, weight_type* eva
                         eval_items[2] -= double_or_isolated_pawn_penalty[1];
                     }
                     if (!(board->pieces[P] & evaluation_mask_instance.passed_pawn_mask[black][sq])) {
-                        printf("passed pawn bonus: %s, %d\n", square_to_str[sq], passed_pawn_bonus[rank_of_square[mapped_sq]]);
                         eval_items[1] -= passed_pawn_bonus[rank_of_square[mapped_sq]];
                         eval_items[2] -= passed_pawn_bonus[rank_of_square[mapped_sq]];
                     }
@@ -219,7 +218,7 @@ static inline_always void evaluate0(const board_t* const board, weight_type* eva
 }
 
 
-static inline_always weight_type evaluate(const board_t* const board) {
+static inline_always weight_type eval_hce(const board_t* const board) {
     weight_type phases[2] = {6192, 518};
     weight_type score[3] = {0, 0, 0};
     evaluate0(board, score);

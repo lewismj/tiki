@@ -16,7 +16,8 @@ set (SOURCES
         src/zobrist_key.c
         src/board.c
         src/move_generator.c
-        src/evaluation/evaluation_mask.c)
+        src/hce/evaluation_mask.c
+        src/search_constants.c)
 
 add_library(${PROJECT_NAME} ${SOURCES})
 set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC ${PROJECT_SOURCE_DIR}/include)
