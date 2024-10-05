@@ -128,7 +128,7 @@ void free_board(board_t* board) {
     }
 }
 
-void print_board(board_t* board, showable options) {
+void print_board(board_t* board, showable_t options) {
     if (options & (show|min) ) {
         for (int rank = 0; rank < 8; rank++) {
             for (int file = 0; file < 8; file++) {

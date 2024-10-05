@@ -11,7 +11,7 @@
  * @param b the bitboard.
  * @param options   the print options, select one or more flags.
  */
-void print_bitboard(const bitboard* b, showable options);
+void print_bitboard(const bitboard* b, showable_t options);
 
 /**
  * Return true if the bit represent square s is set on the bitboard.

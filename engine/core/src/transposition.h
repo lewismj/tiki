@@ -12,59 +12,76 @@
  * The size must be configurable as UCI parameter.
  */
 
+
+/**
+ * Flag to encode the entry type. Given that we use 24 bits to encode a move in move_t (uint32_t),
+ * we can use bits 25-26 to encode the entry type, without having to introduce new variable,
+ * that would increase the memory requirement.
+ *
+ * i.e.
+ * to encode: move_and_type = move |= (hash_flag << 25)
+ * to decode: hash_flag = (move_encoding & 0x6000000) >> 25;
+ */
 typedef enum {
-    hash_flag_exact = 0x0,      /* Entry in t_table is exact evaluation.     */
-    hash_flag_alpha = 0x2,      /* Entry in t_table, is alpha lower bound.   */
-    hash_flag_beta  = 0x4       /* Entry in t_table, is beta upper bound.    */
+    tt_exact    = 0x1,
+    tt_alpha    = 0x2,
+    tt_beta     = 0x4
 } hash_flag_t;
 
 typedef struct align {
     uint64_t position_hash;
-    move_t best_move;
-    int depth;
+    uint32_t move_and_type;
+    uint8_t depth;
     int score;
-    hash_flag_t hash_flag;
 } transposition_node_t;
 
 extern transposition_node_t* t_table;
 extern size_t tt_size;
 
+#define TT_NOT_FOUND 999999
+
 /** Create the transposition table, specify maximum size in mega bytes. */
 void init_transposition_table(unsigned short mb);
 
-static inline_always bool try_find_score(const uint64_t position_hash_key,
-                                         const int depth,
-                                         const int alpha,
-                                         const int beta,
-                                         const int ply,
-                                         move_t* best_move,
-                                         int* score) {
-    const size_t index = position_hash_key % tt_size;
-    if (position_hash_key == t_table[index].position_hash) {
-        if (depth == t_table[index].depth) {
+static inline_always int tt_probe(const uint64_t position_hash,
+                                  const int depth,
+                                  int alpha,
+                                  int beta,
+                                  move_t* best_move) {
 
+    const size_t index = position_hash % tt_size;
+    if (position_hash == t_table[index].position_hash) {
+        *best_move = t_table[index].move_and_type;
+        if (depth == t_table[index].depth) {
+            int score = t_table[index].score;
+            if ((t_table[index].move_and_type & 0x6000000) >> 25 & tt_exact) {
+                return score;
+            }
+            if ( ((t_table[index].move_and_type & 0x6000000) >> 25 & tt_alpha) && score <= alpha) {
+                return alpha;
+            }
+            if ( ((t_table[index].move_and_type & 0x6000000) >> 25 & tt_beta) && score >= beta) {
+                return beta;
+            }
         }
-        *best_move = t_table[index].best_move;
     }
-    return false;
+    return TT_NOT_FOUND;
 }
 
-static inline_always void insert_position(const uint64_t hash_key,
-                                          const hash_flag_t hash_flag,
-                                          const move_t move,
-                                          const int depth,
-                                          int score,
-                                          const int ply) {
+static inline_always void tt_save(const uint64_t position_hash,
+                                  const hash_flag_t hash_flag,
+                                  const move_t move,
+                                  const int depth,
+                                  int score)
+                                  {
 
-    if (score < -mate_score) score -= ply;
-    else if (score > mate_score) score += ply;
+    const size_t index = position_hash % tt_size;
+    if (position_hash == t_table[index].position_hash && t_table[index].depth > depth) return;
 
-    transposition_node_t* node = &t_table[hash_key % tt_size];
-    node->position_hash = hash_key;
-    node->best_move = move;
-    node->depth = depth;
-    node->hash_flag = hash_flag;
-    node->score = score;
+    t_table[index].position_hash = position_hash;
+    t_table[index].move_and_type = move | (hash_flag << 25);
+    t_table[index].depth = depth;
+    t_table[index].score = score;
 }
 
 #endif

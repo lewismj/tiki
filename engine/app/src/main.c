@@ -10,6 +10,7 @@
 #include "../../core/src/move_generator.h"
 #include "../../core/src/hce/evaluation.h"
 #include "../../core/src/search.h"
+#include "../../core/src/transposition.h"
 
 
 static int perft(board_t* b, int depth) {
@@ -41,10 +42,14 @@ int main(int argc, char* argv[]) {
     printf("Initializing tables ...");
     init_attack_table();
     init_zobrist_key();
+    init_transposition_table(128);
     printf("... done\n");
 
+
+
     alignas(64) board_t board;
-    unsafe_parse_fen("rnbqkb1r/pp1p1pPp/8/2p1pP2/1P1P4/3P3P/P1P1P3/RNBQKBNR w KQkq e6 0 1",&board);
+    //unsafe_parse_fen("rnbqkb1r/pp1p1pPp/8/2p1pP2/1P1P4/3P3P/P1P1P3/RNBQKBNR w KQkq e6 0 1",&board);
+    unsafe_parse_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", &board);
     print_board(&board, min);
 
 
@@ -53,7 +58,7 @@ int main(int argc, char* argv[]) {
 
     struct timeval start, end;
     gettimeofday(&start, NULL);
-    move_t best_move = find_best_move(&board, 5, &cancel_flag);
+    move_t best_move = find_best_move(&board, 8, &cancel_flag);
     gettimeofday(&end, NULL);
     print_move(best_move, show);
     long seconds = end.tv_sec - start.tv_sec;

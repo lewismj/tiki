@@ -37,7 +37,7 @@ typedef enum {
     show = 0x01,      /*  Display full bitboard as square matrix. */
     hex  = 0x02,      /*  Display the hexadecimal value of the bitboard(s). */
     min  = 0x04,      /*  On board, display just the board, no other information, e.g. castle rights etc. */
-} showable;
+} showable_t;
 
 /**
  * The chessboard squares.

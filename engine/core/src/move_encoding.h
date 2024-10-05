@@ -54,7 +54,7 @@ static inline_always square get_target_square(move_t m) {
     return (m & 0xfc0) >> 6;
 }
 
-static inline_always piece get_move_piece(move_t m) {
+static inline_always piece get_piece_moved(move_t m) {
     return (m & 0xf000) >> 12;
 }
 
@@ -84,6 +84,6 @@ static inline_always int get_queen_side_castle_flag(move_t m) {
 
 
 
-void print_move(move_t m, showable options);
+void print_move(move_t m, showable_t options);
 
 #endif

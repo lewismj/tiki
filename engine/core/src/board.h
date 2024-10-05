@@ -99,7 +99,7 @@ void free_board(board_t* board);
  * @param board
  * @param options
  */
-void print_board(board_t* board, showable options);
+void print_board(board_t* board, showable_t options);
 
 /**
  * Recomputes the Zobrist hash of the board state.
@@ -174,7 +174,7 @@ static inline_always void pop_move(board_t* board) {
     undo_meta_t* undo_element = &board->stack[board->stack_ptr];
     move_t undo_move = undo_element->move;
 
-    piece undo_piece = get_move_piece(undo_move);
+    piece undo_piece = get_piece_moved(undo_move);
     colour old_side_index = board->side == white ? black : white;
 
     square undo_source = get_source_square(undo_move);
@@ -258,7 +258,7 @@ static inline_always bool make_move(board_t* board, move_t move) {
     /* Retrieve move properties. */
     square source = get_source_square(move);
     square target = get_target_square(move);
-    int move_piece = get_move_piece(move);
+    int move_piece = get_piece_moved(move);
     int capture_flag = get_capture_flag(move);
     int enpassant_flag = get_enpassant_flag(move);
     int opponent = board->side == white ? black : white;
@@ -370,7 +370,7 @@ static inline_always bool make_move(board_t* board, move_t move) {
     board->hash ^= get_side_key();
 
     square king_sq = opponent == white ?
-            trailing_zero_count(board->pieces[k]) : trailing_zero_count(board->pieces[K]);
+                     trailing_zero_count(board->pieces[k]) : trailing_zero_count(board->pieces[K]);
     board->stack_ptr++;
 
     return opponent == white ?

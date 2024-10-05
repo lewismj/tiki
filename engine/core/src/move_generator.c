@@ -163,6 +163,7 @@ void generate_black_castling_moves(board_t* board, move_buffer_t* move_buffer) {
 }
 
 void generate_moves(board_t* board, move_buffer_t* move_buffer) {
+    move_buffer->index =0;
     bitboard all = board->occupancy[both];
 
     if (board->side == white) {

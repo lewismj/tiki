@@ -6,7 +6,7 @@
 /**
  * Print bitboard to standard output.
  */
-void print_bitboard(const bitboard* b, showable options) {
+void print_bitboard(const bitboard* b, showable_t options) {
     if (options & show || options & min) {
         for (int rank=0; rank <8; rank++) {
             for (int file=0; file <8; file++) {

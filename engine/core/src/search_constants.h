@@ -4,6 +4,7 @@
 #include "types.h"
 
 /**
+ * TODO - these values need to be scaled with average evaluation scores.
  *
  * Most valuable victim, least valuable attacker.
  * Heuristic used to sort captures.
@@ -26,8 +27,9 @@ typedef struct align {
  */
 extern const search_const_t search_const;
 
-#define infinity    50000
-#define mate_value  49000
-#define mate_score  48000
+#define INF 50000
+#define MATE_VALUE 49000
+#define MATE_SCORE 48000
+#define MAX_PLY 64
 
 #endif
