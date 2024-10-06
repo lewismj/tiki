@@ -21,6 +21,12 @@
         non zero = piece, N, B, R or Q (white) or n, b, r or q.
 **/
 
+/*
+ * We define a special 'null' move' this is used by the search/make_move functions.
+ * This is move no piece but flip the player to move. Used in null move pruning.
+ */
+
+#define NULL_MOVE 0
 
 /**
  * Encode move_t information to move_t type (uint32_t).
@@ -81,8 +87,6 @@ static inline_always int get_king_side_castle_flag(move_t m) {
 static inline_always int get_queen_side_castle_flag(move_t m) {
     return (int) m & 0x1000000;
 }
-
-
 
 void print_move(move_t m, showable_t options);
 

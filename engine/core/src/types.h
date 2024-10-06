@@ -125,7 +125,5 @@ typedef bitboard (*mask_function)(square sq);
  */
 typedef bitboard (*move_function)(square s, const bitboard bitboard);
 
-/** For King and Knight, the move_t function doesn't take into account blockers. */
-typedef bitboard (*no_blocker_move_function)(square s);
 
 #endif

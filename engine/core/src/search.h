@@ -105,21 +105,38 @@ static inline_always int negamax(int alpha,
                                  search_state_t* search_state) {
     move_t best_move_so_far;
 
+    /* transposition table: if the evaluation is in the tt, return it. */
     int cached_score = tt_probe(board->hash, depth, alpha, beta,&best_move_so_far);
     if (cached_score != TT_NOT_FOUND) return cached_score;
 
-
+    /* quiescence. */
     if (depth == 0) return quiescence(alpha, beta, board, search_state);
 
     search_state->nodes_visited++;
 
+    bool isin_check = board->side == white ?
+                        is_square_attacked_black(board, trailing_zero_count(board->pieces[K]))
+                      : is_square_attacked_white(board, trailing_zero_count(board->pieces[k]));
+
+    bool legal_moves = false;
+
+    /* null move pruning. */
+    if (depth >= NULL_MOVE_DEPTH_BOUND && !isin_check && search_state->ply) {
+        /*
+         * Could have a special NULL_MOVE and have make_move/pop_move handle it?
+         * We end up with extra if statements for every make_move, pop_move.
+         */
+    }
 
     move_buffer_t buffer;
     generate_moves(board, &buffer);
+
+    /* move ordering. */
     sort_move_buffer(&buffer, board, search_state);
 
     for (int i=0; i<buffer.index; i++) {
-        if (make_move(board,buffer.moves[i])) { /* Valid move. */
+        if (make_move(board,buffer.moves[i])) { /* legal move. */
+            legal_moves = true;
             search_state->ply++;
             int score = -negamax(-beta, -alpha, depth - 1, board, search_state);
             search_state->ply--;
@@ -140,6 +157,10 @@ static inline_always int negamax(int alpha,
             /* Generate move resulted in an invalid position, in our case leaving player in check. */
             pop_move(board);
         }
+    }
+
+    if (!legal_moves) { /* no legal moves implies checkmate or stalemate. */
+        return isin_check ? 0 : -MATE_VALUE - search_state->ply;
     }
 
     search_state->best_move = best_move_so_far;

@@ -174,24 +174,30 @@ static inline_always void pop_move(board_t* board) {
     undo_meta_t* undo_element = &board->stack[board->stack_ptr];
     move_t undo_move = undo_element->move;
 
+    if (undo_move == NULL_MOVE) {
+        board->hash = undo_element->hash;
+        board->side ^= 1;
+        return;
+    }
+
     piece undo_piece = get_piece_moved(undo_move);
-    colour old_side_index = board->side == white ? black : white;
+    colour previous_side = board->side ^ 1;
 
     square undo_source = get_source_square(undo_move);
     square undo_target = get_target_square(undo_move);
 
     /* First move the piece back, before replacing any capture etc. */
     set_bit(&board->pieces[undo_piece], undo_source);
-    set_bit(&board->occupancy[old_side_index], undo_source);
+    set_bit(&board->occupancy[previous_side], undo_source);
     pop_bit(&board->pieces[undo_piece], undo_target);
-    pop_bit(&board->occupancy[old_side_index], undo_target);
+    pop_bit(&board->occupancy[previous_side], undo_target);
 
     int capture_flag = get_capture_flag(undo_move);
     int enpassant_flag = get_enpassant_flag(undo_move);
 
     if (capture_flag) {
         if (enpassant_flag) {
-            if (old_side_index == white) {
+            if (previous_side == white) {
                 int target = undo_target + 8;
                 set_bit(&board->pieces[p], target);
                 set_bit(&board->occupancy[black], target);
@@ -212,24 +218,24 @@ static inline_always void pop_move(board_t* board) {
     int promoted_piece = get_promoted_piece(undo_move); /* 0 indicates no promotion. */
 
     if (king_side_castle_flag) {
-        piece rook = old_side_index == white ? R : r;
+        piece rook = previous_side == white ? R : r;
         int from = undo_target + 1;
         int to = undo_target - 1;
         set_bit(&board->pieces[rook], from);
-        set_bit(&board->occupancy[old_side_index], from);
+        set_bit(&board->occupancy[previous_side], from);
         pop_bit(&board->pieces[rook], to);
-        pop_bit(&board->occupancy[old_side_index], to);
+        pop_bit(&board->occupancy[previous_side], to);
     } else if (queen_side_castle_flag) {
-        piece rook = old_side_index == white ? R : r;
+        piece rook = previous_side == white ? R : r;
         int from = undo_target - 2;
         int to = undo_target + 1;
         set_bit(&board->pieces[rook], from);
-        set_bit(&board->occupancy[old_side_index], from);
+        set_bit(&board->occupancy[previous_side], from);
         pop_bit(&board->pieces[rook], to);
-        pop_bit(&board->occupancy[old_side_index], to);
+        pop_bit(&board->occupancy[previous_side], to);
     } else if (promoted_piece) {
         pop_bit(&board->pieces[promoted_piece], undo_target);
-        pop_bit(&board->occupancy[old_side_index], undo_target);
+        pop_bit(&board->occupancy[previous_side], undo_target);
     }
 
     /* Reset flags and counters. */
@@ -238,9 +244,16 @@ static inline_always void pop_move(board_t* board) {
     board->half_move = undo_element->half_move;
     board->fifty_move = undo_element->fifty_move;
     board->hash = undo_element->hash;
-
     board->occupancy[both] = board->occupancy[white] | board->occupancy[black];
-    board->side = board->side == white ? black : white;
+    board->side ^= 1;
+}
+
+static inline_always bool make_null_move(board_t* board) {
+    board->stack[board->stack_ptr].move = NULL_MOVE;
+    board->stack[board->stack_ptr].hash = board->hash;
+    board->stack[board->stack_ptr].en_passant = board->en_passant;
+    board->stack_ptr++;
+    return true;
 }
 
 static inline_always bool make_move(board_t* board, move_t move) {
@@ -261,7 +274,7 @@ static inline_always bool make_move(board_t* board, move_t move) {
     int move_piece = get_piece_moved(move);
     int capture_flag = get_capture_flag(move);
     int enpassant_flag = get_enpassant_flag(move);
-    int opponent = board->side == white ? black : white;
+    unsigned int opponent = board->side ^1;
 
     /* Move the piece from the source square to the target square. */
     pop_bit(&board->pieces[move_piece], source);
@@ -288,7 +301,6 @@ static inline_always bool make_move(board_t* board, move_t move) {
     int king_side_castle_flag = get_king_side_castle_flag(move);
     int queen_side_castle_flag = get_queen_side_castle_flag(move);
     int promoted = get_promoted_piece(move);
-
 
     /* Captures. */
     if (capture_flag) {
