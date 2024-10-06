@@ -27,12 +27,12 @@ typedef struct align {
  */
 extern const search_const_t search_const;
 
-
 #define INF 50000
 #define MATE_VALUE 49000
 #define MATE_SCORE 48000
 
-#define MAX_PLY 64              /* Maximum ply we can search.                           */
-#define NULL_MOVE_DEPTH_BOUND 3 /* Lower bound for depth to enable null move pruning.   */
+#define MAX_PLY 64              /* Maximum ply we can search.                                               */
+#define NULL_MOVE_DEPTH_BOUND 3 /* Lower bound for depth to enable null move pruning.                       */
+#define LMR_DEPTH_BOUND 3       /* Lower bound for depth to enable late move reduction.                     */
 
 #endif

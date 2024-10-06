@@ -23,7 +23,7 @@ set (SOURCES
 add_library(${PROJECT_NAME} ${SOURCES})
 set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
-# Use PEXT if available.
+# Copy these PEXT settings to executable definition.
 set(CMAKE_REQUIRED_FLAGS "-mbmi2")
 check_c_source_compiles("
 #include <immintrin.h>
@@ -33,7 +33,6 @@ int main() {
     return 0;
 }" PEXT_SUPPORTED)
 
-# Conditionally add USE_PEXT macro and -mbmi2 compiler option if PEXT is supported
 if(PEXT_SUPPORTED)
     message(STATUS "PEXT instruction is supported.")
     target_compile_definitions(${PROJECT_NAME} PRIVATE USE_PEXT)
@@ -42,6 +41,7 @@ if(PEXT_SUPPORTED)
 else()
     message(STATUS "PEXT instruction is not supported.")
 endif()
+
 
 if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
     message("Clang C compiler is being used.")

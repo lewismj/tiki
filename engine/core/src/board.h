@@ -174,12 +174,6 @@ static inline_always void pop_move(board_t* board) {
     undo_meta_t* undo_element = &board->stack[board->stack_ptr];
     move_t undo_move = undo_element->move;
 
-    if (undo_move == NULL_MOVE) {
-        board->hash = undo_element->hash;
-        board->side ^= 1;
-        return;
-    }
-
     piece undo_piece = get_piece_moved(undo_move);
     colour previous_side = board->side ^ 1;
 
@@ -248,10 +242,25 @@ static inline_always void pop_move(board_t* board) {
     board->side ^= 1;
 }
 
+static inline_always void pop_null_move(board_t* board) {
+    if (--board->stack_ptr == -1) return;
+    undo_meta_t* undo_element = &board->stack[board->stack_ptr];
+    move_t undo_move = undo_element->move;
+    if (undo_move == NULL_MOVE) {
+        board->hash = undo_element->hash;
+        board->en_passant = undo_element->en_passant;
+        board->side ^= 1;
+        return;
+    }
+}
+
 static inline_always bool make_null_move(board_t* board) {
     board->stack[board->stack_ptr].move = NULL_MOVE;
     board->stack[board->stack_ptr].hash = board->hash;
     board->stack[board->stack_ptr].en_passant = board->en_passant;
+    board->side ^=1;
+    if (board->en_passant != none_sq) board->hash ^= get_enpassant_key(board->en_passant);
+    board->hash ^= get_side_key();
     board->stack_ptr++;
     return true;
 }

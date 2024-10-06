@@ -75,7 +75,7 @@ bitboard create_knight_attack_mask(square s);
  */
 bitboard create_pawn_attack_mask(square s, colour c);
 
-/** */
+/** Generate relevant bit combinations.*/
 bitboard set_occupancy_variation(unsigned int index, unsigned int num_relevant_bits, bitboard mask);
 
 

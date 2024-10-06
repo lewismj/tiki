@@ -158,7 +158,6 @@ void print_board(board_t* board, showable_t options) {
             }
             printf("\n");
             printf("Half move:\t%d\n", board->half_move);
-            printf("Full move:\t%d\n", board->fifty_move);
             printf("\n");
         }
     }
