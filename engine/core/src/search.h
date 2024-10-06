@@ -17,6 +17,11 @@
 
 
 typedef struct align {
+    /*
+     * pv_table, use to store the principal variation, we use 64.64
+     * array rather than a vector (triangular matrix), the indexing
+     * is simplified using a matrix.
+     */
     uint32_t pv_table[MAX_PLY][MAX_PLY];
     int32_t history_moves[12][64];
     uint32_t killer_moves[2][MAX_PLY];
@@ -38,7 +43,18 @@ static inline_always int score_move(move_t move, board_t* board, search_state_t*
      *
      * Since these scores are passed into a sort method, we just apply a constant
      * offset to ensure the ordering of the three categories.
+     *
+     * However, if we are using principal variation search and following principal variation line,
+     * the mark that move as the most important (i.e. give it some integer so its before the 3
+     * categories above).
+     *
      */
+
+    if (search_state->score_pv && search_state->pv_table[0][search_state->ply] == move) {
+        search_state->score_pv = false;
+        return 40000;
+    }
+
     if (get_capture_flag(move)) {
         square target = get_target_square(move);
         piece piece = get_piece_moved(move);
@@ -113,6 +129,16 @@ static inline_hint int quiescence(int alpha,
     return alpha;
 }
 
+static inline_always void set_follow_pv_flags(move_buffer_t* buffer, search_state_t* search_state) {
+    search_state->follow_pv = false;
+    for (int i=0; i< buffer->index; i++) {
+        if (search_state->pv_table[0][search_state->ply] == buffer->moves[i]) {
+            search_state->score_pv = true;
+            search_state->follow_pv = true;
+            break;
+        }
+    }
+}
 
 static inline_hint int negamax(int alpha,
                                  int beta,
@@ -139,7 +165,7 @@ static inline_hint int negamax(int alpha,
 
     int legal_moves = 0;
 
-#ifdef FEATURE_NULL_MOVE_PRUNING
+    /* Null move pruning. */
     if (depth > NULL_MOVE_DEPTH_BOUND && !isin_check && search_state->ply) {
         make_null_move(board);
         search_state->ply++;
@@ -148,10 +174,11 @@ static inline_hint int negamax(int alpha,
         pop_null_move(board);
         if (score >= beta) return beta;
     }
-#endif
 
     move_buffer_t buffer;
     generate_moves(board, &buffer);
+    if (search_state->follow_pv) set_follow_pv_flags(&buffer, search_state);
+
     sort_move_buffer(&buffer, board, search_state);     /* move ordering. */
 
     for (int i=0; i<buffer.index; i++) {
@@ -159,18 +186,18 @@ static inline_hint int negamax(int alpha,
         if (make_move(board,mv)) {
             ++legal_moves;
 
-#ifdef FEATURE_LATE_MOVE_REDUCTION
             search_state->ply++;
-            int score;
 
+            int score;
             if (legal_moves == 1) { /* evaluate first ordered move at full depth. */
                 score = -negamax(-beta, -alpha, depth - 1, board, search_state);
             }
             else {
-                if (depth > LMR_DEPTH_BOUND &&          /* we are at sufficient depth.          */
-                    !isin_check &&                      /* we are not in check.                 */
-                    !get_capture_flag(mv) &&            /* move is a quiet move, not capture.   */
-                    !get_promoted_piece(mv)             /* move is not pawn promotion.          */
+                /* Late move reduction & PVS. */
+                if (depth > LMR_DEPTH_BOUND &&      /* we are at sufficient depth.          */
+                    !isin_check &&                  /* we are not in check.                 */
+                    !get_capture_flag(mv) &&    /* move is a quiet move, not capture.   */
+                    !get_promoted_piece(mv)     /* move is not pawn promotion.          */
                 ) {
                     score = -negamax(-alpha-1, -alpha, depth  - 2, board, search_state);
                 } else {
@@ -179,13 +206,12 @@ static inline_hint int negamax(int alpha,
 
                 if (score > alpha) {
                     score = -negamax(-alpha-1, -alpha, depth-1, board, search_state);
-                    if ((score >alpha) && (score <beta)) score = -negamax(-beta, -alpha, depth-1, board, search_state);
+                    if ((score >alpha) && (score <beta)) {
+                        score = -negamax(-beta, -alpha, depth - 1, board, search_state);
+                    }
                 }
             }
-#else
-            search_state->ply++;
-            int score = -negamax(-beta, -alpha, depth - 1, board, search_state);
-#endif
+
             search_state->ply--;
             pop_move(board);
 
@@ -195,6 +221,12 @@ static inline_hint int negamax(int alpha,
                 }
                 alpha = score;
                 best_move_so_far = mv;
+                int ply = search_state->ply;
+                search_state->pv_table[ply][ply] = mv;
+                for (int j=ply+1; j<search_state->pv_length[ply+1];j++)
+                    search_state->pv_table[ply][j] = search_state->pv_table[ply+1][j];
+                search_state->pv_length[ply] = search_state->pv_length[ply+1];
+
                 if (search_state->ply == 0) search_state->best_move = best_move_so_far;
                 if (score >= beta) {
                     if (!get_capture_flag(mv)) {
@@ -225,13 +257,17 @@ static inline_hint int negamax(int alpha,
 
 static move_t inline_always find_best_move(board_t* board,
                                            int depth,
-                                           volatile int* cancel_flag) {
+                                           const volatile int* cancel_flag) {
     search_state_t search;
 
     /* Initialize search parameters. */
     search.nodes_visited = 0;
     search.best_move = NULL_MOVE;
     search.ply = 0;
+    search.score_pv = false;
+    search.follow_pv = true;
+    memset(search.pv_table, 0, sizeof(search.pv_table));
+    memset(search.pv_length, 0, sizeof(search.pv_length));
     memset(search.history_moves, 0, sizeof (search.history_moves));
     memset(search.killer_moves, 0, sizeof (search.killer_moves));
 

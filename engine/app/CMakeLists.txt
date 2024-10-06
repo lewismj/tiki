@@ -26,13 +26,6 @@ else()
     message(STATUS "PEXT instruction is not supported.")
 endif()
 
-# Search features to switch on/off during testing.
-message("Search optimizations:")
-message("Null move pruning switched on.")
-target_compile_definitions(${PROJECT_NAME} PRIVATE FEATURE_NULL_MOVE_PRUNING)
-message("Late move reduction switched on.")
-target_compile_definitions(${PROJECT_NAME} PRIVATE FEATURE_LATE_MOVE_REDUCTION)
-
 
 if (CMAKE_BUILD_TYPE MATCHES "^[Rr]elease")
     message(STATUS "Optimisation on.")
