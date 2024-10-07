@@ -3,7 +3,6 @@
 
 #include <stdio.h>
 #include <assert.h>
-#include <execinfo.h>
 #include <signal.h>
 #include <unistd.h>
 
@@ -27,7 +26,6 @@ typedef struct align {
     uint32_t killer_moves[2][MAX_PLY];
     uint8_t pv_length[MAX_PLY];
     uint64_t nodes_visited;
-    uint32_t best_move;
     uint8_t ply;
     bool follow_pv;
     bool score_pv;
@@ -154,11 +152,13 @@ static inline_hint int negamax(int alpha,
     /* quiescence. */
     if (depth == 0) return quiescence(alpha, beta, board, search_state);
 
+
+    search_state->pv_length[search_state->ply] = search_state->ply;
     search_state->nodes_visited++;
 
     bool isin_check = board->side == white ?
-                        is_square_attacked_black(board, trailing_zero_count(board->pieces[K]))
-                      : is_square_attacked_white(board, trailing_zero_count(board->pieces[k]));
+                      is_square_attacked_by_black(board, trailing_zero_count(board->pieces[K]))
+                      : is_square_attacked_by_white(board, trailing_zero_count(board->pieces[k]));
 
     /* increment depth if position is in check. */
     if (isin_check) ++depth;
@@ -185,7 +185,6 @@ static inline_hint int negamax(int alpha,
         move_t mv = buffer.moves[i];
         if (make_move(board,mv)) {
             ++legal_moves;
-
             search_state->ply++;
 
             int score;
@@ -221,13 +220,13 @@ static inline_hint int negamax(int alpha,
                 }
                 alpha = score;
                 best_move_so_far = mv;
+
                 int ply = search_state->ply;
                 search_state->pv_table[ply][ply] = mv;
                 for (int j=ply+1; j<search_state->pv_length[ply+1];j++)
                     search_state->pv_table[ply][j] = search_state->pv_table[ply+1][j];
                 search_state->pv_length[ply] = search_state->pv_length[ply+1];
 
-                if (search_state->ply == 0) search_state->best_move = best_move_so_far;
                 if (score >= beta) {
                     if (!get_capture_flag(mv)) {
                         search_state->killer_moves[1][search_state->ply] = search_state->killer_moves[0][search_state->ply];
@@ -236,7 +235,9 @@ static inline_hint int negamax(int alpha,
                     tt_save(board->hash, tt_beta, mv, depth, score);
                     return beta;
                 }
-                tt_save(board->hash, tt_alpha, mv, depth, score);
+                else {
+                    tt_save(board->hash, tt_exact, mv, depth, score);
+                }
             }
 
         } else {
@@ -246,10 +247,9 @@ static inline_hint int negamax(int alpha,
     }
 
     if (!legal_moves) { /* No legal moves implies checkmate or stalemate. */
-        return isin_check ? 0 : -MATE_VALUE - search_state->ply;
+        return isin_check ?  -MATE_VALUE - search_state->ply : 0;
     }
 
-    search_state->best_move = best_move_so_far;
     tt_save(board->hash, tt_alpha, best_move_so_far, depth, alpha);
     return alpha;
 }
@@ -257,25 +257,46 @@ static inline_hint int negamax(int alpha,
 
 static move_t inline_always find_best_move(board_t* board,
                                            int depth,
+                                           bool show_pv,
                                            const volatile int* cancel_flag) {
     search_state_t search;
 
     /* Initialize search parameters. */
     search.nodes_visited = 0;
-    search.best_move = NULL_MOVE;
     search.ply = 0;
     search.score_pv = false;
-    search.follow_pv = true;
+    search.follow_pv = false;
     memset(search.pv_table, 0, sizeof(search.pv_table));
     memset(search.pv_length, 0, sizeof(search.pv_length));
     memset(search.history_moves, 0, sizeof (search.history_moves));
     memset(search.killer_moves, 0, sizeof (search.killer_moves));
 
+    /* Iterative deepening. */
+    int alpha = -INF;
+    int beta = INF;
 
-    int score = negamax(-50000, 50000, depth, board, &search);
-    printf("score: %d\n", score);
-    printf("nodes visited: %ld, depth: %d\n", search.nodes_visited, depth);
-    return search.best_move;
+    int score;
+    for (int i=1; i<=depth; i++) {
+        if (*cancel_flag) break;
+        search.follow_pv = true;
+        score = negamax(alpha, beta, i, board, &search);
+        if (score <= alpha || score >= beta) {
+            /* If we fall outside the search window, widen the search *and*
+             * re-search the same depth, don't 'continue' to the next depth. */
+            alpha = -INF;
+            beta = INF;
+            printf("retry depth: %d\n",i);
+            score = negamax(alpha, beta, i, board, &search);
+        }
+        alpha = score - ASPIRATION_WINDOW;
+        beta = score + ASPIRATION_WINDOW;
+    }
+
+
+    printf("nodes evaluated:%ld\n",search.nodes_visited);
+    printf("score=%d\n",score);
+    printf("pv length: %d\n",search.pv_length[0]);
+    return search.pv_table[0][0];
 }
 
 #endif

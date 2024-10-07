@@ -141,7 +141,7 @@ static inline_always void recalculate_hash(board_t* board) {
  * @return  true, if square attacked; false otherwise.
  */
 
-static inline_always bool is_square_attacked_black(board_t* board, square s) {
+static inline_always bool is_square_attacked_by_black(board_t* board, square s) {
     if (knight_attack(s) & board->pieces[n]) return true;
 
     bitboard rook_attacks = rook_attack(s, board->occupancy[both]);
@@ -155,7 +155,7 @@ static inline_always bool is_square_attacked_black(board_t* board, square s) {
     return king_attack(s) & board->pieces[k];
 }
 
-static inline_always bool is_square_attacked_white(board_t* board, square s) {
+static inline_always bool is_square_attacked_by_white(board_t* board, square s) {
     if (knight_attack(s) & board->pieces[N]) return true;
 
     bitboard rook_attacks = rook_attack(s, board->occupancy[both]);
@@ -240,29 +240,6 @@ static inline_always void pop_move(board_t* board) {
     board->hash = undo_element->hash;
     board->occupancy[both] = board->occupancy[white] | board->occupancy[black];
     board->side ^= 1;
-}
-
-static inline_always void pop_null_move(board_t* board) {
-    if (--board->stack_ptr == -1) return;
-    undo_meta_t* undo_element = &board->stack[board->stack_ptr];
-    move_t undo_move = undo_element->move;
-    if (undo_move == NULL_MOVE) {
-        board->hash = undo_element->hash;
-        board->en_passant = undo_element->en_passant;
-        board->side ^= 1;
-        return;
-    }
-}
-
-static inline_always bool make_null_move(board_t* board) {
-    board->stack[board->stack_ptr].move = NULL_MOVE;
-    board->stack[board->stack_ptr].hash = board->hash;
-    board->stack[board->stack_ptr].en_passant = board->en_passant;
-    board->side ^=1;
-    if (board->en_passant != none_sq) board->hash ^= get_enpassant_key(board->en_passant);
-    board->hash ^= get_side_key();
-    board->stack_ptr++;
-    return true;
 }
 
 static inline_always bool make_move(board_t* board, move_t move) {
@@ -395,9 +372,27 @@ static inline_always bool make_move(board_t* board, move_t move) {
     board->stack_ptr++;
 
     return opponent == white ?
-        !is_square_attacked_white(board, king_sq) : !is_square_attacked_black(board, king_sq);
+           !is_square_attacked_by_white(board, king_sq) : !is_square_attacked_by_black(board, king_sq);
 }
 
+static inline_always void pop_null_move(board_t* board) {
+    --board->stack_ptr;
+    undo_meta_t* undo_element = &board->stack[board->stack_ptr];
+    board->hash = undo_element->hash;
+    board->en_passant = undo_element->en_passant;
+    board->side ^= 1;
+}
+
+static inline_always bool make_null_move(board_t* board) {
+    board->stack[board->stack_ptr].hash = board->hash;
+    board->hash ^= get_side_key();
+    board->stack[board->stack_ptr].en_passant = board->en_passant;
+    if (board->en_passant != none_sq) board->hash ^= get_enpassant_key(board->en_passant);
+    board->en_passant = none_sq;
+    board->side ^=1;
+    board->stack_ptr++;
+    return true;
+}
 
 
 #endif

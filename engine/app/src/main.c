@@ -57,8 +57,9 @@ int main(int argc, char* argv[]) {
 
     struct timeval start, end;
     gettimeofday(&start, NULL);
-    move_t best_move = find_best_move(&board, 6, &cancel_flag);
+    move_t best_move = find_best_move(&board, 8, true, &cancel_flag);
     gettimeofday(&end, NULL);
+    printf("best move:\n");
     print_move(best_move, show);
     printf("move=%d\n",best_move);
     long seconds = end.tv_sec - start.tv_sec;

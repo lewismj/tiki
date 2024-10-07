@@ -119,8 +119,8 @@ void generate_white_castling_moves(board_t* board, move_buffer_t* move_buffer) {
     if (board->castle_flag & white_king_side) {
         /* f1 & g1 = 0x6000000000000000ULL  */
         if (!(board->occupancy[both] & 0x6000000000000000ULL) &&
-            !is_square_attacked_black(board, e1) &&
-            !is_square_attacked_black(board,f1)) {
+            !is_square_attacked_by_black(board, e1) &&
+            !is_square_attacked_by_black(board, f1)) {
 
             move_buffer->moves[move_buffer->index++] =
                     encode_move(e1, g1, K, 0, 0, 0, 0, 1, 0);
@@ -129,8 +129,8 @@ void generate_white_castling_moves(board_t* board, move_buffer_t* move_buffer) {
     if (board->castle_flag & white_queen_side) {
         /* d1, c1, b1 = 0xe00000000000000 */
         if (!(board->occupancy[both] & 0xe00000000000000) &&
-            !is_square_attacked_black(board, e1) &&
-            !is_square_attacked_black(board, d1)) {
+            !is_square_attacked_by_black(board, e1) &&
+            !is_square_attacked_by_black(board, d1)) {
 
             move_buffer->moves[move_buffer->index++] =
                     encode_move(e1, c1, K, 0, 0, 0, 0, 0, 1);
@@ -142,8 +142,8 @@ void generate_black_castling_moves(board_t* board, move_buffer_t* move_buffer) {
     if (board->castle_flag & black_king_side) {
         /* f8, g8 = 0x60 */
         if (!(board->occupancy[both] & 0x60) &&
-            !is_square_attacked_white(board, e8) &&
-            !is_square_attacked_white(board, f8))
+            !is_square_attacked_by_white(board, e8) &&
+            !is_square_attacked_by_white(board, f8))
         {
             move_buffer->moves[move_buffer->index++] =
                     encode_move(e8, g8, k, 0, 0, 0, 0, 1, 0);
@@ -153,8 +153,8 @@ void generate_black_castling_moves(board_t* board, move_buffer_t* move_buffer) {
     if (board->castle_flag & black_queen_side) {
         /* d8, c8, b8 = 0xe */
         if (!(board->occupancy[both] & 0xe) &&
-            !is_square_attacked_white(board, e8) &&
-            !is_square_attacked_white(board, d8)) {
+            !is_square_attacked_by_white(board, e8) &&
+            !is_square_attacked_by_white(board, d8)) {
 
             move_buffer->moves[move_buffer->index++] =
                     encode_move(e8, c8, k, 0, 0, 0, 0, 0, 1);

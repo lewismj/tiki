@@ -76,8 +76,7 @@ static inline_always void tt_save(const uint64_t position_hash,
                                   {
 
     const size_t index = position_hash % tt_size;
-    if (position_hash == t_table[index].position_hash && t_table[index].depth > depth) return;
-
+    if (position_hash == t_table[index].position_hash && t_table[index].depth >= depth) return;
     t_table[index].position_hash = position_hash;
     t_table[index].move_and_type = move | (hash_flag << 25);
     t_table[index].depth = depth;
