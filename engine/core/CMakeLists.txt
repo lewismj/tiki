@@ -18,7 +18,8 @@ set (SOURCES
         src/move_generator.c
         src/hce/evaluation_mask.c
         src/search_constants.c
-        src/transposition.c)
+        src/transposition.c
+        src/parallel.c)
 
 add_library(${PROJECT_NAME} ${SOURCES})
 set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC ${PROJECT_SOURCE_DIR}/include)
@@ -41,6 +42,8 @@ if(PEXT_SUPPORTED)
 else()
     message(STATUS "PEXT instruction is not supported.")
 endif()
+
+target_link_libraries(${PROJECT_NAME} PRIVATE atomic)
 
 
 if(CMAKE_C_COMPILER_ID STREQUAL "Clang")

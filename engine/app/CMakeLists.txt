@@ -1,6 +1,7 @@
 project(tiki_app)
 
 set(CMAKE_C_STANDARD 23)
+find_package(Threads REQUIRED)
 
 
 add_executable(${PROJECT_NAME} src/main.c)
@@ -26,7 +27,6 @@ else()
     message(STATUS "PEXT instruction is not supported.")
 endif()
 
-
 if (CMAKE_BUILD_TYPE MATCHES "^[Rr]elease")
     message(STATUS "Optimisation on.")
     target_compile_options(${PROJECT_NAME} PRIVATE "-O3")
@@ -34,7 +34,6 @@ endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/../core/include)
 
-
-target_link_libraries(${PROJECT_NAME} tiki_engine_core)
+target_link_libraries(${PROJECT_NAME} tiki_engine_core Threads::Threads)
 
 install (TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

@@ -2,7 +2,7 @@
 #define TIKI_TRANSPOSITION_H
 
 #include <stddef.h>
-
+#include <stdatomic.h>
 #include "types.h"
 #include "search_constants.h"
 
@@ -23,16 +23,16 @@
  * to decode: hash_flag = (move_encoding & 0x6000000) >> 25;
  */
 typedef enum {
-    tt_exact    = 0x1,
-    tt_alpha    = 0x2,
-    tt_beta     = 0x4
+    tt_exact,
+    tt_alpha,
+    tt_beta
 } hash_flag_t;
 
 typedef struct align {
-    uint64_t position_hash;
-    uint32_t move_and_type;
-    uint8_t depth;
-    int score;
+    _Atomic uint64_t position_hash;
+    _Atomic uint32_t move_and_type;
+    _Atomic uint8_t depth;
+    _Atomic int8_t score;
 } transposition_node_t;
 
 extern transposition_node_t* t_table;
@@ -48,39 +48,58 @@ static inline_always int tt_probe(const uint64_t position_hash,
                                   int alpha,
                                   int beta,
                                   move_t* best_move) {
-
     const size_t index = position_hash % tt_size;
-    if (position_hash == t_table[index].position_hash) {
-        *best_move = t_table[index].move_and_type;
-        if (depth == t_table[index].depth) {
-            int score = t_table[index].score;
-            if ((t_table[index].move_and_type & 0x6000000) >> 25 & tt_exact) {
-                return score;
-            }
-            if ( ((t_table[index].move_and_type & 0x6000000) >> 25 & tt_alpha) && score <= alpha) {
-                return alpha;
-            }
-            if ( ((t_table[index].move_and_type & 0x6000000) >> 25 & tt_beta) && score >= beta) {
-                return beta;
-            }
-        }
+
+    uint64_t current_position_hash = atomic_load(&t_table[index].position_hash);
+    /* Don't worry too much about read hash, write depth/read depth inconsistency. */
+    uint8_t current_depth = atomic_load(&t_table[index].depth);
+
+    if (position_hash == current_position_hash && depth == current_depth) {
+        *best_move = atomic_load(&t_table[index].move_and_type);
+        int score = atomic_load(&t_table[index].score);
+        if ((*best_move & 0x6000000) >> 25 == tt_exact) return score;
+        if (((*best_move & 0x6000000) >> 25 == tt_alpha) && score <= alpha) return alpha;
+        if (((*best_move & 0x6000000) >> 25 == tt_beta) && score >= beta) return beta;
     }
+
     return TT_NOT_FOUND;
 }
+
 
 static inline_always void tt_save(const uint64_t position_hash,
                                   const hash_flag_t hash_flag,
                                   const move_t move,
                                   const int depth,
-                                  int score)
-                                  {
-
+                                  int score) {
     const size_t index = position_hash % tt_size;
-    if (position_hash == t_table[index].position_hash && t_table[index].depth >= depth) return;
-    t_table[index].position_hash = position_hash;
-    t_table[index].move_and_type = move | (hash_flag << 25);
-    t_table[index].depth = depth;
-    t_table[index].score = score;
+    uint64_t current_position_hash = atomic_load(&t_table[index].position_hash);
+    uint8_t current_depth = atomic_load(&t_table[index].depth);
+
+    if (position_hash == current_position_hash && current_depth >= depth) return;
+
+    transposition_node_t new_node = {
+            .position_hash = position_hash,
+            .move_and_type = move | (hash_flag << 25),
+            .depth = depth,
+            .score = score
+    };
+
+    if (atomic_compare_exchange_strong(&t_table[index].position_hash,
+                                       &current_position_hash,
+                                       position_hash)) {
+        atomic_store(&t_table[index].move_and_type, new_node.move_and_type);
+        atomic_store(&t_table[index].depth, new_node.depth);
+        atomic_store(&t_table[index].score, new_node.score);
+    } else {
+        current_position_hash = atomic_load(&t_table[index].position_hash);
+        current_depth = atomic_load(&t_table[index].depth);
+
+        if (position_hash == current_position_hash && current_depth < depth) {
+            atomic_store(&t_table[index].move_and_type, new_node.move_and_type);
+            atomic_store(&t_table[index].depth, new_node.depth);
+            atomic_store(&t_table[index].score, new_node.score);
+        }
+    }
 }
 
 #endif

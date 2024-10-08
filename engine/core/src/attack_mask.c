@@ -14,23 +14,20 @@ void set_blocker_masks(bitboard* mask_array, mask_function f) {
 }
 
 void set_attack_table(bool init_rook_table) {
-    bitboard*  mask_array = 0;
+    bitboard* mask_array = 0ULL;
     const unsigned int* relevant_bit_array;
     const bitboard* magic_numbers;
     move_function f;
-    int sz;
 
     if (init_rook_table) {
         mask_array = am_instance.rook_blocker_masks;
         relevant_bit_array = bitboard_const.rook_relevant_bits;
         magic_numbers = bitboard_const.rook_magic_numbers;
-        sz = 4096;
         f = create_rook_attack_mask;
     } else {
         mask_array = am_instance.bishop_blocker_masks;
         relevant_bit_array = bitboard_const.bishop_relevant_bits;
         magic_numbers = bitboard_const.bishop_magic_numbers;
-        sz = 412;
         f = create_bishop_attack_mask;
     }
 
