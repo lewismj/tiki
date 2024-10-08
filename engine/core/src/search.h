@@ -292,7 +292,6 @@ static move_t inline_always find_best_move(board_t* board,
         beta = score + ASPIRATION_WINDOW;
     }
 
-
     printf("nodes evaluated:%ld\n",search.nodes_visited);
     printf("score=%d\n",score);
     printf("pv length: %d\n",search.pv_length[0]);

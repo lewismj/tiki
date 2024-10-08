@@ -141,6 +141,42 @@ static inline_always void recalculate_hash(board_t* board) {
  * @return  true, if square attacked; false otherwise.
  */
 
+static inline_always bool are_squares_attacked_by_black(board_t* board, square s1, square s2) {
+    // Check knight attacks
+    if ((knight_attack(s1) & board->pieces[n]) || (knight_attack(s2) & board->pieces[n])) {
+        return true; // Early termination if either square is attacked by knight
+    }
+
+    // Check rook attacks
+    bitboard rook_attacks_s1 = rook_attack(s1, board->occupancy[both]);
+    bitboard rook_attacks_s2 = rook_attack(s2, board->occupancy[both]);
+    if ((rook_attacks_s1 & (board->pieces[r] | board->pieces[q])) ||
+        (rook_attacks_s2 & (board->pieces[r] | board->pieces[q]))) {
+        return true; // Early termination if either square is attacked by rook
+    }
+
+    // Check bishop attacks
+    bitboard bishop_attacks_s1 = bishop_attack(s1, board->occupancy[both]);
+    bitboard bishop_attacks_s2 = bishop_attack(s2, board->occupancy[both]);
+    if ((bishop_attacks_s1 & (board->pieces[b] | board->pieces[q])) ||
+        (bishop_attacks_s2 & (board->pieces[b] | board->pieces[q]))) {
+        return true; // Early termination if either square is attacked by bishop
+    }
+
+    // Check pawn attacks
+    if ((pawn_attack(s1, white) & board->pieces[p]) || (pawn_attack(s2, white) & board->pieces[p])) {
+        return true; // Early termination if either square is attacked by pawn
+    }
+
+    // Check king attacks
+    if ((king_attack(s1) & board->pieces[k]) || (king_attack(s2) & board->pieces[k])) {
+        return true; // Early termination if either square is attacked by king
+    }
+
+    return false; // Neither square is attacked
+}
+
+
 static inline_always bool is_square_attacked_by_black(board_t* board, square s) {
     if (knight_attack(s) & board->pieces[n]) return true;
 
@@ -394,5 +430,29 @@ static inline_always bool make_null_move(board_t* board) {
     return true;
 }
 
+static inline_always void copy_position(board_t* src, board_t* dest) {
+    /*
+     * N.B. We do not use copy-make in the move generation, this is used to copy
+     * position data at the start of iterative deepening. Each thread has
+     * it own position copy to mutate. There is no need to copy the undo stack
+     * as it is always empty at the start of the search.
+     */
+    memcpy(dest->pieces, src->pieces, 12 * sizeof(bitboard));
+    memcpy(dest->occupancy, src->occupancy, 3*sizeof(bitboard));
+    dest->castle_flag = src->castle_flag;
+    dest->en_passant = src->en_passant;
+    dest->side = src->side;
+    dest->half_move = src->half_move;
+    dest->fifty_move = src->fifty_move;
+    dest->hash = src->hash;
+    /*
+     * Uncomment below for full copy-make. In benchmarking, it is consistently slower
+     * than make-undo in perft tests. Though the difference in start-pos to depth of
+     * 6 is about 100ms.
+     *      dest->stack_ptr = src->stack_ptr;
+     *      memcpy(dest->stack, src->stack, sizeof(src->stack));
+     */
+
+}
 
 #endif

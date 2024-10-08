@@ -37,6 +37,11 @@ void generate_white_pawn_moves(board_t* board, move_buffer_t* move_buffer) {
         bitboard attacks = pawn_attack(source, white) & board->occupancy[black];
         while (attacks) {
             int attack_sq = get_lsb_and_pop_bit(&attacks);
+            /*
+             * Note:
+             *  The if statement here is fine, making it branch-less and potentially overwriting elements
+             *  in the buffer is slower than having an if statement.
+             */
             if (source >= a7 && source <=h7) {
                 /* capture with promotion. */
                 move_buffer->moves[move_buffer->index++] = encode_move(source, attack_sq, P, Q, 1, 0, 0, 0, 0);
@@ -92,6 +97,11 @@ void generate_black_pawn_moves(board_t* board, move_buffer_t* move_buffer) {
         bitboard attacks = pawn_attack(source, black) & board->occupancy[white];
         while (attacks) {
             int attack_sq = get_lsb_and_pop_bit(&attacks);
+            /*
+             * Note:
+             *  The if statement here is fine, making it branch-less and potentially overwriting elements
+             *  in the buffer is slower than having an if statement.
+             */
             if (source >= a2 && source <=h2) {
                 /* capture with promotion. */
                 move_buffer->moves[move_buffer->index++] = encode_move(source, attack_sq, p, q, 1, 0, 0, 0, 0);
@@ -117,9 +127,10 @@ void generate_black_pawn_moves(board_t* board, move_buffer_t* move_buffer) {
 
 void generate_white_castling_moves(board_t* board, move_buffer_t* move_buffer) {
     if (board->castle_flag & white_king_side) {
-        /* f1 & g1 = 0x6000000000000000ULL  */
+        /* g1 & f1= 0x6000000000000000ULL  */
         if (!(board->occupancy[both] & 0x6000000000000000ULL) &&
             !is_square_attacked_by_black(board, e1) &&
+            !is_square_attacked_by_black(board, g1) &&
             !is_square_attacked_by_black(board, f1)) {
 
             move_buffer->moves[move_buffer->index++] =
@@ -128,8 +139,9 @@ void generate_white_castling_moves(board_t* board, move_buffer_t* move_buffer) {
     }
     if (board->castle_flag & white_queen_side) {
         /* d1, c1, b1 = 0xe00000000000000 */
-        if (!(board->occupancy[both] & 0xe00000000000000) &&
+        if (!(board->occupancy[both] & 0xe00000000000000ULL) &&
             !is_square_attacked_by_black(board, e1) &&
+            !is_square_attacked_by_black(board, c1) &&
             !is_square_attacked_by_black(board, d1)) {
 
             move_buffer->moves[move_buffer->index++] =
@@ -141,8 +153,9 @@ void generate_white_castling_moves(board_t* board, move_buffer_t* move_buffer) {
 void generate_black_castling_moves(board_t* board, move_buffer_t* move_buffer) {
     if (board->castle_flag & black_king_side) {
         /* f8, g8 = 0x60 */
-        if (!(board->occupancy[both] & 0x60) &&
+        if (!(board->occupancy[both] & 0x60ULL) &&
             !is_square_attacked_by_white(board, e8) &&
+            !is_square_attacked_by_white(board, g8) &&
             !is_square_attacked_by_white(board, f8))
         {
             move_buffer->moves[move_buffer->index++] =
@@ -152,8 +165,9 @@ void generate_black_castling_moves(board_t* board, move_buffer_t* move_buffer) {
 
     if (board->castle_flag & black_queen_side) {
         /* d8, c8, b8 = 0xe */
-        if (!(board->occupancy[both] & 0xe) &&
+        if (!(board->occupancy[both] & 0xeULL) &&
             !is_square_attacked_by_white(board, e8) &&
+            !is_square_attacked_by_white(board, c8) &&
             !is_square_attacked_by_white(board, d8)) {
 
             move_buffer->moves[move_buffer->index++] =
