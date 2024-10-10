@@ -8,15 +8,22 @@
  * these have -1 for the 6th element (so test should ignore).
  */
 typedef struct {
-    const char *position;
+    char* position;
     int values[6];
-} perf_data_t;
+} perft_data_t;
 
+
+/**
+ * Unity doesn't allow passing parameters to test functions,
+ * So, for running the full perft tests (reading flat file from path),
+ * the main function just sets this global.
+ */
+extern char* g_perft_file;
 
 /**
  * The perft tests.
  */
-static  perf_data_t perft_data[] = {
+static perft_data_t perft_data[] = {
         { "8/8/8/8/8/8/6k1/4K2R w K - 0 1", { 12, 38, 564, 2219, 37735, 185867 }},
         { "8/8/8/8/8/8/1k6/R3K3 w Q - 0 1", { 15, 65, 1018, 4573, 80619, 413018 }},
         { "4k3/8/8/8/8/8/8/4K2R w K - 0 1", { 15, 66, 1197, 7059, 133987, 764643 }},
@@ -121,8 +128,7 @@ static  perf_data_t perft_data[] = {
         { "3k4/3pp3/8/8/8/8/3PP3/3K4 w - - 0 1", {7,49,378,2902,24122,199002}}
 };
 
-static int num_perft_positions = 102;
-
-void full_perft_tests();
+void perft_tests();
+void full_perft_test();
 
 #endif
