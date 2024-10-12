@@ -11,7 +11,7 @@ static bitboard king_attack_wrapper(square s, bitboard ) {
     return king_attack(s);
 }
 
-void generate_white_pawn_moves1(board_t* board, move_buffer_t* move_buffer) {
+void generate_white_pawn_moves(board_t* board, move_buffer_t* move_buffer) {
     bitboard white_pawns = board->pieces[P];
     /*
      * pawn, non-capturing moves.
@@ -95,62 +95,6 @@ void generate_white_pawn_moves1(board_t* board, move_buffer_t* move_buffer) {
     }
 }
 
-void generate_white_pawn_moves(board_t* board, move_buffer_t* move_buffer) {
-    /* pawn, non-capturing moves. */
-    bitboard b = board->pieces[P];
-    while (b) {
-        square source = get_lsb_and_pop_bit(&b);
-        int target_sq = source - 8;
-        if (target_sq >= a8 && !is_bit_set(&board->occupancy[both], target_sq)) {
-            if (source >= a7 && source <= h7) {
-                /* pawn promotion with no capture. */
-                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, P, Q, 0, 0, 0, 0, 0);
-                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, P, R, 0, 0, 0, 0, 0);
-                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, P, B, 0, 0, 0, 0, 0);
-                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, P, N, 0, 0, 0, 0, 0);
-            } else {
-                /* No capture, single square move. */
-                move_buffer->moves[move_buffer->index++] = encode_move(source, target_sq, P, 0, 0, 0, 0, 0, 0);
-
-                /* Check to see if we can add a double push. */
-                int double_push_sq = source - 16;
-                if (source >= a2 && source <= h2 && !is_bit_set(&board->occupancy[both], double_push_sq)) {
-                    move_buffer->moves[move_buffer->index++] = encode_move(source, double_push_sq, P, 0, 0, 1, 0, 0, 0);
-                }
-            }
-        }
-
-        /* pawn captures. */
-        bitboard attacks = pawn_attack(source, white) & board->occupancy[black];
-        while (attacks) {
-            int attack_sq = get_lsb_and_pop_bit(&attacks);
-            /*
-             * Note:
-             *  The if statement here is fine, making it branch-less and potentially overwriting elements
-             *  in the buffer is slower than having an if statement.
-             */
-            if (source >= a7 && source <=h7) {
-                /* capture with promotion. */
-                move_buffer->moves[move_buffer->index++] = encode_move(source, attack_sq, P, Q, 1, 0, 0, 0, 0);
-                move_buffer->moves[move_buffer->index++] = encode_move(source, attack_sq, P, R, 1, 0, 0, 0, 0);
-                move_buffer->moves[move_buffer->index++] = encode_move(source, attack_sq, P, B, 1, 0, 0, 0, 0);
-                move_buffer->moves[move_buffer->index++] = encode_move(source, attack_sq, P, N, 1, 0, 0, 0, 0);
-            } else {
-                /* capture. */
-                move_buffer->moves[move_buffer->index++] = encode_move(source, attack_sq, P, 0, 1, 0, 0, 0, 0);
-            }
-        }
-
-        /* check for en passant. */
-        if (board->en_passant == none_sq) continue;
-        bitboard ep = pawn_attack(source, white) & (1ULL << board->en_passant);
-        if (ep) {
-            square index = trailing_zero_count(ep);
-            move_buffer->moves[move_buffer->index++] =
-                    encode_move(source, index, P, 0, 1, 0, 1, 0, 0);
-        }
-    }
-}
 
 void generate_black_pawn_moves(board_t* board, move_buffer_t* move_buffer) {
     /*
@@ -294,7 +238,7 @@ void generate_moves(board_t* board, move_buffer_t* move_buffer) {
         bitboard not_self = ~board->occupancy[white];
         bitboard opponent = board->occupancy[black];
 
-        generate_white_pawn_moves1(board, move_buffer);
+        generate_white_pawn_moves(board, move_buffer);
         generate_white_castling_moves(board, move_buffer);
         generate_piece_move(N, board->pieces[N], &not_self, &opponent, &all, knight_attack_wrapper, move_buffer);
         generate_piece_move(B, board->pieces[B], &not_self, &opponent, &all, bishop_attack, move_buffer);
