@@ -7,11 +7,12 @@
 #include "../../core/src/attack_mask.h"
 #include "../../core/src/zobrist_key.h"
 #include "../../core/src/board.h"
+#include "../../core/src/bitboard_ops.h"
 #include "../../core/src/move_generator.h"
 #include "../../core/src/hce/evaluation.h"
 #include "../../core/src/search.h"
 #include "../../core/src/transposition.h"
-#include "../../core/src/parallel.h"
+
 
 static int perft(board_t* b, int depth) {
     if (depth == 0 ) return 1;
@@ -26,41 +27,12 @@ static int perft(board_t* b, int depth) {
         if (make_move(b, buffer.moves[i])) {
             num_moves += perft(b, depth - 1);
         }
-       pop_move(b);
-
-        sum += num_moves;
-    }
-
-    return sum;
-}
-
-static int perft_debug(board_t* b, int depth) {
-    if (depth == 0 ) return 1;
-
-    int sum = 0;
-
-    align move_buffer_t buffer;
-    buffer.index = 0;
-    generate_moves(b, &buffer);
-
-    for (int i=0; i<buffer.index; i++) {
-        int num_moves = 0;
-        if (make_move(b, buffer.moves[i])) {
-            num_moves += perft(b, depth - 1);
-        }
-
-//        if ( depth == 2) {
-//            print_move(buffer.moves[i], min);
-//            printf(" nodes: %d\n", num_moves);
-//        }
         pop_move(b);
-
         sum += num_moves;
     }
 
     return sum;
 }
-
 
 
 
@@ -74,15 +46,10 @@ int main(int argc, char* argv[]) {
     init_transposition_table(128);
     printf("... done\n");
 
-    //perft check position [88]: r3k2r/8/8/8/8/8/8/R3K1R1 w Qkq - 0 1  case [88] failed, depth: 2, actual: 546, expected: 547
-
-    ///mnt/c/Users/lewis/projects/tiki/engine/test/src/tiki_test_runner.c:40:full_perft_tests:FAIL: Expected 547 Was 546
-
-
     alignas(64) board_t board;
 
 
-//    //unsafe_parse_fen("rnbqkb1r/pp1p1pPp/8/2p1pP2/1P1P4/3P3P/P1P1P3/RNBQKBNR w KQkq e6 0 1",&board);
+//    unsafe_parse_fen("rnbqkb1r/pp1p1pPp/8/2p1pP2/1P1P4/3P3P/P1P1P3/RNBQKBNR w KQkq e6 0 1",&board);
 //    unsafe_parse_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", &board);
 //    print_board(&board, min );
 //
@@ -102,10 +69,7 @@ int main(int argc, char* argv[]) {
 //    printf("Elapsed time: %.3f sec\n", elapsed / 1000);
 
 
-    unsafe_parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
-    move_buffer_t buffer1;
-    buffer1.index = 0;
-
+    unsafe_parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",&board);
     struct timeval start, end;
     // Use elapsed time not clock time here:
     printf("Starting Perft.\n");
@@ -122,6 +86,7 @@ int main(int argc, char* argv[]) {
         printf("Elapsed time: %.3f sec\n", elapsed / 1000);
     }
     printf("Average elapsed time: %.3f sec\n", sum/10);
+
 
     return EXIT_SUCCESS;
 }

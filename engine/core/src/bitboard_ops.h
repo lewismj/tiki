@@ -50,9 +50,8 @@ static inline_always void pop_bit(bitboard* b, square s) {
  * @param b the bitboard.
  * @return  the number of trailing zeros.
  */
-static inline_always int trailing_zero_count(bitboard b) {
-    if (b == 0ULL) return 64;
-    return __builtin_ctzll(b);
+static inline_always int trailing_zero_count(uint64_t b) {
+    return __builtin_ctzll(b | (b == 0ULL) * ~0ULL);
 }
 
 /**

@@ -23,7 +23,7 @@
  * to decode: hash_flag = (move_encoding & 0x6000000) >> 25;
  */
 typedef enum {
-    tt_exact,
+    tt_exact = 1,
     tt_alpha,
     tt_beta
 } hash_flag_t;

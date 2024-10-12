@@ -18,8 +18,7 @@ set (SOURCES
         src/move_generator.c
         src/hce/evaluation_mask.c
         src/search_constants.c
-        src/transposition.c
-        src/parallel.c)
+        src/transposition.c)
 
 add_library(${PROJECT_NAME} ${SOURCES})
 set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC ${PROJECT_SOURCE_DIR}/include)

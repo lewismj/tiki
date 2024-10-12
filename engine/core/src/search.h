@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <signal.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "types.h"
 #include "board.h"
@@ -13,6 +14,7 @@
 #include "search_constants.h"
 #include "search.h"
 #include "transposition.h"
+
 
 
 typedef struct align {
@@ -31,6 +33,26 @@ typedef struct align {
     bool score_pv;
 } search_state_t;
 
+
+typedef struct {
+    search_state_t* search_state;
+    board_t* board;
+    int depth;
+    const volatile int* cancel_flag;
+    move_t* best_move;
+} thread_params_t;
+
+
+static inline_always void init_search(search_state_t* search_state) {
+    search_state->nodes_visited = 0;
+    search_state->ply = 0;
+    search_state->score_pv = false;
+    search_state->follow_pv = true;
+    memset(search_state->pv_table, 0, sizeof(search_state->pv_table));
+    memset(search_state->pv_length, 0, sizeof(search_state->pv_length));
+    memset(search_state->history_moves, 0, sizeof (search_state->history_moves));
+    memset(search_state->killer_moves, 0, sizeof (search_state->killer_moves));
+}
 
 static inline_always int score_move(move_t move, board_t* board, search_state_t* search_state) {
     /*
@@ -254,48 +276,83 @@ static inline_hint int negamax(int alpha,
     return alpha;
 }
 
+static move_t find_move(search_state_t* search_state, board_t* board, int depth, atomic_bool cancel_flag) {
+    init_search(search_state);
+    int score = negamax(-INF, INF, depth, board, search_state);
+    return score;
+}
+
+void* thread_find_move(void* arg) {
+    thread_params_t* params = (thread_params_t*)arg;
+    *params->best_move = find_move(params->search_state, params->board, params->depth, *params->cancel_flag);
+    return NULL;
+}
+
 
 static move_t inline_always find_best_move(board_t* board,
                                            int depth,
                                            bool show_pv,
                                            const volatile int* cancel_flag) {
-    search_state_t search;
-
-    /* Initialize search parameters. */
-    search.nodes_visited = 0;
-    search.ply = 0;
-    search.score_pv = false;
-    search.follow_pv = false;
-    memset(search.pv_table, 0, sizeof(search.pv_table));
-    memset(search.pv_length, 0, sizeof(search.pv_length));
-    memset(search.history_moves, 0, sizeof (search.history_moves));
-    memset(search.killer_moves, 0, sizeof (search.killer_moves));
+    search_state_t search_state;
+    init_search(&search_state);
 
     /* Iterative deepening. */
     int alpha = -INF;
     int beta = INF;
 
     int score;
-    for (int i=1; i<=depth; i++) {
-        if (*cancel_flag) break;
-        search.follow_pv = true;
-        score = negamax(alpha, beta, i, board, &search);
-        if (score <= alpha || score >= beta) {
-            /* If we fall outside the search window, widen the search *and*
-             * re-search the same depth, don't 'continue' to the next depth. */
-            alpha = -INF;
-            beta = INF;
-            printf("retry depth: %d\n",i);
-            score = negamax(alpha, beta, i, board, &search);
-        }
-        alpha = score - ASPIRATION_WINDOW;
-        beta = score + ASPIRATION_WINDOW;
+
+    board_t boards[depth-1];
+    search_state_t search_states[depth-1];
+    move_t moves[depth-1];
+    pthread_t workers[depth-1];
+    thread_params_t params[depth-1];
+    for (int i=0; i<depth-1; i++) {
+        copy_position(board,&boards[i]);
+        init_search(&search_states[i]);
+        thread_params_t param = {
+                .search_state = &search_states[i],
+                .board = &boards[i],
+                .depth = i+2,
+                .cancel_flag = cancel_flag,
+                .best_move = &moves[i]
+        };
+        params[i] = param;
+        pthread_create(&workers[i], NULL, thread_find_move, (void *)&params[i]);
+    }
+    score = negamax(alpha, beta, 1, board, &search_state);
+
+
+    for(int i=0; i<depth-1; i++) {
+        pthread_join(workers[i], NULL);
     }
 
-    printf("nodes evaluated:%ld\n",search.nodes_visited);
+    printf("nodes evaluated:%ld\n", search_states[depth-2].nodes_visited);
     printf("score=%d\n",score);
-    printf("pv length: %d\n",search.pv_length[0]);
-    return search.pv_table[0][0];
+    printf("pv length: %d\n", search_states[depth-2].pv_length[0]);
+    return search_states[depth-2].pv_table[0][0];
+
+
+//    for (int i=1; i<=depth; i++) {
+//        if (*cancel_flag) break;
+//        search_state.follow_pv = true;
+//        score = negamax(alpha, beta, i, board, &search_state);
+//        if (score <= alpha || score >= beta) {
+//            /* If we fall outside the search_state window, widen the search_state *and*
+//             * re-search_state the same depth, don't 'continue' to the next depth. */
+//            alpha = -INF;
+//            beta = INF;
+//            printf("retry depth: %d\n",i);
+//            score = negamax(alpha, beta, i, board, &search_state);
+//        }
+//        alpha = score - ASPIRATION_WINDOW;
+//        beta = score + ASPIRATION_WINDOW;
+//    }
+//
+//    printf("nodes evaluated:%ld\n", search_state.nodes_visited);
+//    printf("score=%d\n",score);
+//    printf("pv length: %d\n", search_state.pv_length[0]);
+//    return search_state.pv_table[0][0];
 }
 
 #endif

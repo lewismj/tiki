@@ -21,6 +21,7 @@
         non zero = piece, N, B, R or Q (white) or n, b, r or q.
 **/
 
+#define NULL_MOVE = 0;
 
 /**
  * Encode move_t information to move_t type (uint32_t).

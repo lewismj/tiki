@@ -11,6 +11,8 @@ typedef struct align {
     const bitboard square_mask[64];
     const unsigned int bishop_relevant_bits[64];
     const unsigned int rook_relevant_bits[64];
+    const bitboard rank_masks[8];
+    const bitboard file_masks[8];
     const bitboard not_a_file;
     const bitboard not_h_file;
     const bitboard not_ab_file;

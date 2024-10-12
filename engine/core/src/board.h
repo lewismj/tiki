@@ -445,10 +445,13 @@ static inline_always void copy_position(board_t* src, board_t* dest) {
     dest->half_move = src->half_move;
     dest->fifty_move = src->fifty_move;
     dest->hash = src->hash;
+
+    dest->stack_ptr = 0;
+    memset(dest->stack,0, sizeof(src->stack));
     /*
      * Uncomment below for full copy-make. In benchmarking, it is consistently slower
      * than make-undo in perft tests. Though the difference in start-pos to depth of
-     * 6 is about 100ms.
+     * 6 is about 100ms (slower), make-undo is faster than copy-make.
      *      dest->stack_ptr = src->stack_ptr;
      *      memcpy(dest->stack, src->stack, sizeof(src->stack));
      */
