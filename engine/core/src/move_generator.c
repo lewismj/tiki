@@ -48,7 +48,7 @@ void generate_white_pawn_moves1(board_t* board, move_buffer_t* move_buffer) {
     bitboard up_right = (pawns_on_rank7 >> 7 & bitboard_const.not_a_file) & board->occupancy[black];
     while (up_right) {
         square target = get_lsb_and_pop_bit(&up_right);
-        square source = target - 7;
+        square source = target + 7;
         move_buffer->moves[move_buffer->index++] = encode_move(source, target, P, Q, 1, 0, 0, 0, 0);
         move_buffer->moves[move_buffer->index++] = encode_move(source, target, P, R, 1, 0, 0, 0, 0);
         move_buffer->moves[move_buffer->index++] = encode_move(source, target, P, B, 1, 0, 0, 0, 0);
@@ -81,7 +81,7 @@ void generate_white_pawn_moves1(board_t* board, move_buffer_t* move_buffer) {
     up_right = (pawns_not_on_rank7 >> 7 & bitboard_const.not_a_file) & board->occupancy[black];
     while (up_right) {
         square target = get_lsb_and_pop_bit(&up_right);
-        square source = target - 7;
+        square source = target + 7;
         move_buffer->moves[move_buffer->index++] = encode_move(source, target, P, 0, 1, 0, 0, 0, 0);
     }
 
@@ -294,7 +294,7 @@ void generate_moves(board_t* board, move_buffer_t* move_buffer) {
         bitboard not_self = ~board->occupancy[white];
         bitboard opponent = board->occupancy[black];
 
-        generate_white_pawn_moves(board, move_buffer);
+        generate_white_pawn_moves1(board, move_buffer);
         generate_white_castling_moves(board, move_buffer);
         generate_piece_move(N, board->pieces[N], &not_self, &opponent, &all, knight_attack_wrapper, move_buffer);
         generate_piece_move(B, board->pieces[B], &not_self, &opponent, &all, bishop_attack, move_buffer);

@@ -26,6 +26,7 @@ typedef struct align {
  * @param move_buffer the move_t buffer.
  */
 void generate_moves(board_t* board, move_buffer_t* move_buffer);
+
 /**
  * Update the move buffer with all the moves (if possible) of a specified piece type.
  * Used for bishop, rook, queen.
