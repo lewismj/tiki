@@ -86,7 +86,7 @@ static inline_always void eval_pawn_mobility(const board_t* const board,
      * approach.
      */
     for (int file = 0; file < 8; file++) {
-        bitboard pawns_on_file = board->pieces[pt] & evaluation_mask_instance.file_masks[file];
+        bitboard pawns_on_file = board->pieces[pt] & bitboard_const.file_masks[file];
         if ( pawns_on_file ) {
             int num_pawns_on_file = pop_count(pawns_on_file);
             eval_items[1] += multiplier * num_pawns_on_file * double_or_isolated_pawn_penalty[0];
@@ -158,8 +158,8 @@ static inline_always void evaluate0(const board_t* const board, weight_type* eva
                      * are usually fewer rooks than files on the board, so we can perform corresponding
                      * fewer number of bitboard comparisons.
                      */
-                    if (!(board->pieces[P] & evaluation_mask_instance.file_masks[rank_of_square[sq]])) {
-                        if (!(board->pieces[p] & evaluation_mask_instance.file_masks[rank_of_square[sq]])) {
+                    if (!(board->pieces[P] & bitboard_const.file_masks[rank_of_square[sq]])) {
+                        if (!(board->pieces[p] & bitboard_const.file_masks[rank_of_square[sq]])) {
                             /* Open file bonus. */
                             eval_items[0] += open_file_bonus;
                             eval_items[1] += open_file_bonus;
@@ -172,8 +172,8 @@ static inline_always void evaluate0(const board_t* const board, weight_type* eva
                 }
                 break;
                 case r: {
-                    if (!(board->pieces[p] & evaluation_mask_instance.file_masks[rank_of_square[sq]])) {
-                        if (!(board->pieces[P] & evaluation_mask_instance.file_masks[rank_of_square[sq]])) {
+                    if (!(board->pieces[p] & bitboard_const.file_masks[rank_of_square[sq]])) {
+                        if (!(board->pieces[P] & bitboard_const.file_masks[rank_of_square[sq]])) {
                             /* Open file bonus. */
                             eval_items[0] += open_file_bonus;
                             eval_items[1] += open_file_bonus;

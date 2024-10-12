@@ -7,7 +7,7 @@
 #include "../../core/src/board.h"
 #include "../../core/src/move_generator.h"
 
-#define MAX_TEST_THREADS 16
+#define MAX_TEST_THREADS 4
 #define MAX_LINE_LENGTH 512
 char* g_perft_file = NULL;
 

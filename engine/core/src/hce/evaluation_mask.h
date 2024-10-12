@@ -6,8 +6,6 @@
 
 
 typedef struct {
-    const bitboard rank_masks[8];
-    const bitboard file_masks[8];
     const bitboard isolated_file_mask[64];
     const bitboard passed_pawn_mask[2][64];
 } evaluation_mask_t;
