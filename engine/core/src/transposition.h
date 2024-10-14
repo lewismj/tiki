@@ -39,9 +39,11 @@ static int tt_num_reads = 0;
 static inline_always int tt_probe(const uint64_t position_hash, const int depth, int alpha, int beta) {
     const size_t index = position_hash % tt_size;
     if (t_table[index].position_hash == position_hash && t_table[index].depth >= depth) {
+        ++tt_num_reads;
         if (t_table[index].entry_type == tt_exact) return t_table[index].score;
         if (t_table[index].entry_type == tt_alpha && t_table[index].score <= alpha) return alpha;
         if (t_table[index].entry_type == tt_beta && t_table[index].score >= beta) return beta;
+        --tt_num_reads;
     }
     return TT_NOT_FOUND;
 }

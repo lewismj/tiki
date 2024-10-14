@@ -132,6 +132,8 @@ static inline_hint int quiescence(int alpha, int beta, board_t* board, search_st
     return alpha;
 }
 
+
+
 static inline int negamax(int alpha, int beta, int depth, board_t* board, search_state_t* search_state) {
     /* At depth 0, just return the quiescence search. */
     if (depth == 0) return quiescence(alpha, beta, board, search_state);
@@ -196,6 +198,8 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
                     }
                 }
             }
+
+            /* decrement the ply & pop the move from the board. */
             --search_state->ply;
             pop_move(board);
 
@@ -203,6 +207,10 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
                 best_score = score;
                 best_move = mv;
                 if (score >= beta) {
+                    search_state->killer_moves[1][search_state->ply] =
+                            search_state->killer_moves[0][search_state->ply];
+                    search_state->killer_moves[0][search_state->ply] = best_move;
+
                     tt_save(board->hash, tt_beta, best_move, depth, best_score);
                     return best_score;
                 }
@@ -210,13 +218,13 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
                     alpha = score;
                 }
             }
+
             ++num_moves_searched;
         } else {
+            /* pop the invalid move from the board, e.g. moving into check, castling through check etc. */
             pop_move(board);
         }
     }
-
-
 
 
     if (best_score > alpha) {
@@ -224,12 +232,14 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
     } else {
         tt_save(board->hash, tt_alpha, best_move, depth, alpha);
     }
+
+
     if (best_move != NULL_MOVE) {
         search_state->pv_table[0][0] = best_move;
     }
 
-
-    return best_score;
+    alpha = best_score;
+    return alpha;
 }
 
 
