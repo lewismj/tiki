@@ -18,7 +18,9 @@ set (SOURCES
         src/move_generator.c
         src/hce/evaluation_mask.c
         src/search_constants.c
-        src/transposition.c)
+        src/transposition.c
+        src/uci.c
+        src/parallel.c)
 
 add_library(${PROJECT_NAME} ${SOURCES})
 set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC ${PROJECT_SOURCE_DIR}/include)
@@ -58,6 +60,8 @@ if (CMAKE_BUILD_TYPE MATCHES "^[Rr]elease")
     target_compile_options(${PROJECT_NAME} PRIVATE "-O3")
 endif()
 
+
+target_include_directories(${PROJECT_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 install(TARGETS ${PROJECT_NAME}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
