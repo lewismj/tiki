@@ -16,7 +16,8 @@
 /**
  * Multithreading choice - pack/unpack the entry so that we can use an Atomic __uint128_t and
  * have atomic load/store. Or, use r/w lock. It isn't 100% that we would have any speed advantage by
- * making structure lock-less.
+ * making structure lock-less. Also relying on non-determinism (spawning threads for each depth when
+ * iterative deepening may not yield any results?).
  */
 
 typedef enum {
@@ -57,6 +58,7 @@ static inline_always int tt_probe(const uint64_t position_hash, const int depth,
 static inline_always
 void tt_save(const uint64_t position_hash, const tt_entry_type hash_flag, const int depth, int score) {
     const size_t index = position_hash % tt_size;
+
     t_table[index].position_hash = position_hash;
     t_table[index].entry_type = hash_flag;
     t_table[index].score = score;

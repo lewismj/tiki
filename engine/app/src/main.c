@@ -45,7 +45,7 @@ int main(int argc, char* argv[]) {
         struct timeval start, end;
         gettimeofday(&start, NULL);
 
-        move_t best_move = find_best_move(&board, 9, true, &cancel_flag);
+        move_t best_move = find_best_move(&board, 9,  &cancel_flag);
 
         gettimeofday(&end, NULL);
         printf("best move:\n");
@@ -73,7 +73,7 @@ int main(int argc, char* argv[]) {
 //        sum+=elapsed/1000;
 //        printf("Elapsed time: %.3f sec\n", elapsed / 1000);
 //    }
-//    printf("Average elapsed time: %.3f sec\n", sum/10);
+    printf("Average elapsed time: %.3f sec\n", sum/10);
 
 
 
