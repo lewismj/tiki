@@ -22,5 +22,4 @@ void init_transposition_table(unsigned short mb) {
     if ( t_table == NULL) {
         printf("Tiki error, could not allocate %dMB for transposition table.\n", mb);
     }
-    if (t_table != NULL) atexit(free_transposition_table);
 }

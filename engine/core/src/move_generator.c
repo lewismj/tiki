@@ -3,11 +3,11 @@
 #include "move_generator.h"
 
 
-static bitboard knight_attack_wrapper(square s, bitboard ) {
+static inline_always bitboard knight_attack_wrapper(square s, bitboard ) {
     return knight_attack(s);
 }
 
-static bitboard king_attack_wrapper(square s, bitboard ) {
+static inline_always bitboard king_attack_wrapper(square s, bitboard ) {
     return king_attack(s);
 }
 

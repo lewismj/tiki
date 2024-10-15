@@ -51,10 +51,7 @@ static inline_always void generate_piece_move(  piece move_piece,
         bitboard attacks = move_fn(source, *both) & *not_self;
         while (attacks) {
             square target = get_lsb_and_pop_bit(&attacks);
-            move_t mv = is_bit_set(opponent, target)
-                        ? encode_move(source, target, move_piece, 0, 1, 0, 0, 0, 0)
-                        : encode_move(source, target, move_piece, 0, 0, 0, 0, 0, 0);
-            move_buffer->moves[move_buffer->index++] = mv;
+            move_buffer->moves[move_buffer->index++] = encode_move(source, target, move_piece, 0, is_bit_set(opponent, target), 0, 0, 0, 0);
         }
     }
 }

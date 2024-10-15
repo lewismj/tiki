@@ -176,34 +176,31 @@ static inline_always bool are_squares_attacked_by_black(board_t* board, square s
     return false; // Neither square is attacked
 }
 
-
 static inline_always bool is_square_attacked_by_black(board_t* board, square s) {
-    if (knight_attack(s) & board->pieces[n]) return true;
-
+    uint64_t knight_attack_mask = knight_attack(s) & board->pieces[n];
     bitboard rook_attacks = rook_attack(s, board->occupancy[both]);
-    if (rook_attacks & (board->pieces[r]|board->pieces[q])) return true;
-
+    uint64_t rook_attack_mask = rook_attacks & (board->pieces[r] | board->pieces[q]);
     bitboard bishop_attacks = bishop_attack(s, board->occupancy[both]);
-    if (bishop_attacks & (board->pieces[b]|board->pieces[q])) return true;
+    uint64_t bishop_attack_mask = bishop_attacks & (board->pieces[b] | board->pieces[q]);
+    uint64_t pawn_attack_mask = pawn_attack(s, white) & board->pieces[p];
+    uint64_t king_attack_mask = king_attack(s) & board->pieces[k];
 
-    if (pawn_attack(s,white) & board->pieces[p]) return true;
-
-    return king_attack(s) & board->pieces[k];
+    return (knight_attack_mask | rook_attack_mask | bishop_attack_mask | pawn_attack_mask | king_attack_mask) != 0;
 }
+
 
 static inline_always bool is_square_attacked_by_white(board_t* board, square s) {
-    if (knight_attack(s) & board->pieces[N]) return true;
-
+    uint64_t knight_attack_mask = knight_attack(s) & board->pieces[N];
     bitboard rook_attacks = rook_attack(s, board->occupancy[both]);
-    if (rook_attacks & (board->pieces[R]|board->pieces[Q])) return true;
-
+    uint64_t rook_attack_mask = rook_attacks & (board->pieces[R] | board->pieces[Q]);
     bitboard bishop_attacks = bishop_attack(s, board->occupancy[both]);
-    if (bishop_attacks & (board->pieces[B]|board->pieces[Q])) return true;
+    uint64_t bishop_attack_mask = bishop_attacks & (board->pieces[B] | board->pieces[Q]);
+    uint64_t pawn_attack_mask = pawn_attack(s, black) & board->pieces[P];
+    uint64_t king_attack_mask = king_attack(s) & board->pieces[K];
 
-    if (pawn_attack(s,black) & board->pieces[P]) return true;
-
-    return king_attack(s) & board->pieces[K];
+    return (knight_attack_mask | rook_attack_mask | bishop_attack_mask | pawn_attack_mask | king_attack_mask) != 0;
 }
+
 
 static inline_always void pop_move(board_t* board) {
     if (--board->stack_ptr == -1) return;

@@ -9,7 +9,7 @@
  * Flip squares, when evaluating from black perspective, the positional weights.
  * that are defined from white perspective.
  */
-const int square_map[128] = {
+static const int square_map[128] = {
         a1, b1, c1, d1, e1, f1, g1, h1,
         a2, b2, c2, d2, e2, f2, g2, h2,
         a3, b3, c3, d3, e3, f3, g3, h3,
@@ -26,7 +26,7 @@ const int square_map[128] = {
  * Material weights: P, N, B, R, Q, K, p, n, b, r, q, k weight by game phase.
  * sz = num_phases * 12 = 24
  */
-const weight_type material_weights[24] = {
+static const weight_type material_weights[24] = {
         82, 337, 365, 477, 1025, 12000, -82, -337, -365, -477, -1025, -12000,
 
         // endgame material score
@@ -42,7 +42,7 @@ const weight_type material_weights[24] = {
  * sz = num_phases * 6 * 64 =
  */
 
-const weight_type positional_weights[768] = {
+static const weight_type positional_weights[768] = {
         //pawn
         0,   0,   0,   0,   0,   0,  0,   0,
         98, 134,  61,  95,  68, 126, 34, -11,
