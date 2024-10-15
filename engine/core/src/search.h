@@ -133,7 +133,6 @@ static inline_hint int quiescence(int alpha, int beta, board_t* board, search_st
 }
 
 
-
 static inline int negamax(int alpha, int beta, int depth, board_t* board, search_state_t* search_state) {
     /* At depth 0, just return the quiescence search. */
     if (depth == 0) return quiescence(alpha, beta, board, search_state);
@@ -172,13 +171,14 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
     int best_score = -INF;
     int score;
     move_t best_move = NULL_MOVE;
-    int num_moves_searched = 0;
+    bool searched_first_move = false;
+
 
     for (int i = 0; i < buffer.index; i++) {
         move_t mv = buffer.moves[i];
         if (make_move(board, mv)) {
             ++search_state->ply;
-            if (num_moves_searched == 0) {
+            if (!searched_first_move) {
                 score = -negamax(-beta, -alpha, depth - 1, board, search_state);
             } else {
                 if (depth > LMR_DEPTH_BOUND &&
@@ -206,7 +206,17 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
             if (score > best_score) {
                 best_score = score;
                 best_move = mv;
-                if (score >= beta) {
+
+                /* Update the pv table for 'display'. */
+                search_state->pv_table[search_state->ply][0] = mv;
+                memcpy(
+                        &search_state->pv_table[search_state->ply][1],
+                        &search_state->pv_table[search_state->ply + 1][0],
+                        search_state->pv_length[search_state->ply + 1] * sizeof(move_t)
+                );
+                search_state->pv_length[search_state->ply] = search_state->pv_length[search_state->ply + 1] + 1;
+
+                if (score >= beta) { /* beta cut-off. */
                     search_state->killer_moves[1][search_state->ply] =
                             search_state->killer_moves[0][search_state->ply];
                     search_state->killer_moves[0][search_state->ply] = best_move;
@@ -219,13 +229,17 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
                 }
             }
 
-            ++num_moves_searched;
+            searched_first_move = true;
         } else {
             /* pop the invalid move from the board, e.g. moving into check, castling through check etc. */
             pop_move(board);
         }
     }
 
+    if (!searched_first_move) { /* Couldn't search a single move, check for checkmate or stalemate. */
+        if (isin_check) return -MATE_VALUE + search_state->ply;
+        else return 0;
+    }
 
     if (best_score > alpha) {
         tt_save(board->hash, tt_exact, best_move, depth, best_score);
@@ -233,13 +247,10 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
         tt_save(board->hash, tt_alpha, best_move, depth, alpha);
     }
 
-
-    if (best_move != NULL_MOVE) {
+    if (best_move != NULL_MOVE)
         search_state->pv_table[0][0] = best_move;
-    }
 
-    alpha = best_score;
-    return alpha;
+    return best_score;
 }
 
 
@@ -270,7 +281,6 @@ static move_t inline_always find_best_move(board_t* board, int depth, bool show_
              * re-search_state the same depth, don't 'continue' to the next depth. */
             alpha = -INF;
             beta = INF;
-            printf("retry depth: %d\n",i);
             score = negamax(alpha, beta, i, board, &search_state);
         }
         alpha = score - ASPIRATION_WINDOW;

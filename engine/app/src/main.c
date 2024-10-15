@@ -32,7 +32,7 @@ int main(int argc, char* argv[]) {
     setbuf(stdout, 0); // Jetbrains debug need zero buffer.
     printf("Tiki Chess\n\n");
     printf("Initializing tables ...");
-    on_startup(1);
+    on_startup(9);
     printf("... done\n");
     alignas(64) board_t board;
 
@@ -40,18 +40,18 @@ int main(int argc, char* argv[]) {
    // unsafe_parse_fen("4k3/p7/8/8/8/8/8/4K3 w - - 0 1", &board);
     unsafe_parse_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", &board);
 
+    printf("number of thread initialized: %ld\n",par_instance.num_search_threads);
 
 
-//
-//    /* Arrays for the tasks and search states for each depth. */
-//    for (int i=0; i <3; i++) {
+    /* Arrays for the tasks and search states for each depth. */
+
 //        struct timeval start, end;
 //        gettimeofday(&start, NULL);
-//        search_task_t tasks[9];
-//        search_state_t search_states[9];
-//        board_t boards[9];
+//        search_task_t tasks[16];
+//        search_state_t search_states[16];
+//        board_t boards[16];
 //
-//        for (int depth = 1; depth <= 9; depth++) {
+//        for (int depth = 1; depth <= 16; depth++) {
 //            init_search(&search_states[depth - 1]);
 //            search_states[depth - 1].follow_pv = true;
 //            copy_position(&board, &boards[depth - 1]);
@@ -66,39 +66,40 @@ int main(int argc, char* argv[]) {
 //            while (!submit_task(thread_num, &tasks[depth - 1])) sched_yield();
 //            thread_num = (thread_num + 1) % par_instance.num_search_threads;
 //        }
-//        for (int j = 0; j < 9; j++) {
+//        for (int j = 0; j < 16; j++) {
 //            while (atomic_load(&tasks[j].is_complete) == false) sched_yield();
 //            print_move(tasks[j].search_state->pv_table[0][0], min);
 //        }
 //        gettimeofday(&end, NULL);
-//        printf("(%d) ",tasks[8].search_state->pv_table[0][0]);
+//        printf("(%d) ",tasks[15].search_state->pv_table[0][0]);
 //        print_move(tasks[8].search_state->pv_table[0][0], min);
 //        long seconds = end.tv_sec - start.tv_sec;
 //        long microseconds = end.tv_usec - start.tv_usec;
 //        double elapsed = seconds * 1000.0 + microseconds / 1000.0;
 //        printf("Elapsed time: %.3f sec\n", elapsed / 1000);
+//        printf("TT hits: %d\n",tt_num_reads);
+
+
+
+
+    printf("***********************************************\n");
+//    for (int i=0; i<4; i++) {
+//        volatile int cancel_flag = 0;
+//        struct timeval start, end;
+//        gettimeofday(&start, NULL);
+//
+//        move_t best_move = find_best_move(&board, 9, true, &cancel_flag);
+//
+//        gettimeofday(&end, NULL);
+//        printf("best move:\n");
+//        print_move(best_move, show);
+//        printf("move=%d\n", best_move);
+//        long seconds = end.tv_sec - start.tv_sec;
+//        long microseconds = end.tv_usec - start.tv_usec;
+//        double elapsed = seconds * 1000.0 + microseconds / 1000.0;
+//        printf("Elapsed time: %.3f sec\n", elapsed / 1000);
+//        printf("TT hits: %d\n",tt_num_reads);
 //    }
-
-
-
-
-    for (int i=0; i<4; i++) {
-        volatile int cancel_flag = 0;
-        struct timeval start, end;
-        gettimeofday(&start, NULL);
-
-        move_t best_move = find_best_move(&board, 10, true, &cancel_flag);
-
-        gettimeofday(&end, NULL);
-        printf("best move:\n");
-        print_move(best_move, show);
-        printf("move=%d\n", best_move);
-        long seconds = end.tv_sec - start.tv_sec;
-        long microseconds = end.tv_usec - start.tv_usec;
-        double elapsed = seconds * 1000.0 + microseconds / 1000.0;
-        printf("Elapsed time: %.3f sec\n", elapsed / 1000);
-        printf("TT hits: %d\n",tt_num_reads);
-    }
 
 
 //    unsafe_parse_fen("rnbqkb1r/pp1p1pPp/8/2p1pP2/1P1P4/3P3P/P1P1P3/RNBQKBNR w KQkq e6 0 1",&board);
