@@ -21,5 +21,7 @@ void init_transposition_table(unsigned short mb) {
     t_table = (transposition_node_t*) calloc(tt_size, sizeof(transposition_node_t));
     if ( t_table == NULL) {
         printf("Tiki error, could not allocate %dMB for transposition table.\n", mb);
+    } else {
+        pthread_rwlock_init(&t_table->lock, NULL);
     }
 }

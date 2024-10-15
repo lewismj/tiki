@@ -172,16 +172,18 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
     int score;
     move_t best_move = NULL_MOVE;
     bool searched_first_move = false;
-
+    int moves_searched = 0;
 
     for (int i = 0; i < buffer.index; i++) {
         move_t mv = buffer.moves[i];
         if (make_move(board, mv)) {
             ++search_state->ply;
+            ++moves_searched;
             if (!searched_first_move) {
                 score = -negamax(-beta, -alpha, depth - 1, board, search_state);
             } else {
-                if (depth > LMR_DEPTH_BOUND &&
+                if ( moves_searched > LMR_DEPTH_BOUND && /* Late move reduction use same bound for moves/depth. */
+                    depth > LMR_DEPTH_BOUND &&
                     !isin_check &&
                     !get_capture_flag(mv)&&
                     !get_promoted_piece(mv)) {
@@ -191,7 +193,7 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
                         score = -negamax(-beta, -alpha, depth - 1, board, search_state);
                     }
                 }
-                else {
+                else { /* Principal variation search. */
                     score = -negamax(-alpha - 1, -alpha, depth - 1, board, search_state);
                     if (score > alpha && score < beta) {
                         score = -negamax(-beta, -alpha, depth - 1, board, search_state);
@@ -221,7 +223,7 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
                             search_state->killer_moves[0][search_state->ply];
                     search_state->killer_moves[0][search_state->ply] = best_move;
 
-                    tt_save(board->hash, tt_beta, best_move, depth, best_score);
+                    tt_save(board->hash, tt_beta, depth, best_score);
                     return best_score;
                 }
                 if (score > alpha) {
@@ -242,18 +244,13 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
     }
 
     if (best_score > alpha) {
-        tt_save(board->hash, tt_exact, best_move, depth, best_score);
+        tt_save(board->hash, tt_exact, depth, best_score);
     } else {
-        tt_save(board->hash, tt_alpha, best_move, depth, alpha);
+        tt_save(board->hash, tt_alpha, depth, alpha);
     }
-
-    if (best_move != NULL_MOVE)
-        search_state->pv_table[0][0] = best_move;
 
     return best_score;
 }
-
-
 
 
 static move_t find_move(search_state_t* search_state, board_t* board, int depth, atomic_bool cancel_flag) {
