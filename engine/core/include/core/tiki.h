@@ -11,6 +11,5 @@
 #include "../../core/src/hce/evaluation.h"
 #include "../../core/src/search.h"
 #include "../../core/src/transposition.h"
-#include "../../core/src/parallel.h"
 
 #endif

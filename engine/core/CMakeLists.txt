@@ -20,7 +20,7 @@ set (SOURCES
         src/search_constants.c
         src/transposition.c
         src/uci.c
-        src/parallel.c)
+)
 
 add_library(${PROJECT_NAME} ${SOURCES})
 set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC ${PROJECT_SOURCE_DIR}/include)
