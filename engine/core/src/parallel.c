@@ -48,10 +48,7 @@ void* search_thread(void* arg) {
             if (search_task != NULL) {
                 negamax(-INF,INF,search_task->depth, search_task->board, search_task->search_state);
                 if (search_task->search_state->pv_table[0][0] == NULL_MOVE) {
-                    printf("null move:\n");
-                    printf("depth: %d\n", search_task->depth);
-                    printf("board:\n");
-                    print_board(search_task->board, show|hex);
+                    exit(EXIT_FAILURE);
                 }
                 atomic_store(&search_task->is_complete, true);
             }
