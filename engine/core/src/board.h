@@ -80,19 +80,6 @@ static int castling_update[] = {
         13, 15, 15, 15, 12, 15, 15, 14
 };
 
-/**
- * unsafe in this context means no validation.
- * Engine is assuming client validates any FEN strings.
- *
- * @param fen
- * @param board
- * @return
- */
-void unsafe_parse_fen(const char* fen, board_t* board);
-
-/** Usually keep board objects on stack. Maybe useful for testing. */
-board_t* new_board();
-void free_board(board_t* board);
 
 /**
  *

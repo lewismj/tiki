@@ -120,16 +120,16 @@ static inline_hint int quiescence(int alpha, int beta, board_t* board, search_st
         move_t mv = buffer.moves[i];
         /* Just look at captures in quiescence. */
         if (get_capture_flag(mv)) {
-            search_state->ply++;
+            ++search_state->ply;
             /* Make move will return false if player is left in check. */
             if (make_move(board, mv)) {
                 int score = -quiescence(-beta, -alpha, board, search_state);
-                search_state->ply--;
+                --search_state->ply;
                 pop_move(board);
                 if (score >= beta) return beta;
                 if (score > alpha) alpha = score;
             } else {
-                search_state->ply--;
+                --search_state->ply;
                 pop_move(board);
             }
         }
@@ -140,6 +140,7 @@ static inline_hint int quiescence(int alpha, int beta, board_t* board, search_st
 
 static inline int negamax(int alpha, int beta, int depth, board_t* board, search_state_t* search_state) {
     /* At depth 0, just return the quiescence search. */
+    if (search_state->ply && contains_repetition(search_state, board->hash)) return 0;
     if (depth == 0) return quiescence(alpha, beta, board, search_state);
 
     /* Check the position in the transposition table. */
@@ -158,9 +159,11 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
     /* Null move pruning. */
     if (depth > NULL_MOVE_DEPTH_BOUND && !isin_check && search_state->ply) {
         make_null_move(board);
-        search_state->ply++;
+        search_state->repetiton_check[++search_state->repetition_index] = board->hash;
+        ++search_state->ply;
         int score = -negamax(-beta, -beta + 1, depth - NULL_MOVE_DEPTH_BOUND - 1, board, search_state);
-        search_state->ply--;
+        --search_state->ply;
+        --search_state->repetition_index;
         pop_null_move(board);
         if (score >= beta) return beta;
     }
@@ -180,6 +183,8 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
     for (int i = 0; i < buffer.index; i++) {
         move_t mv = buffer.moves[i];
         if (make_move(board, mv)) {
+            search_state->repetiton_check[++search_state->repetition_index] = board->hash;
+
             ++search_state->ply;
             ++moves_searched;
             if (!searched_first_move) {
@@ -207,6 +212,7 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
 
             /* decrement the ply & pop the move from the board. */
             --search_state->ply;
+            --search_state->repetition_index;
             pop_move(board);
 
             if (score > best_score) {

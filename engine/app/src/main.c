@@ -5,7 +5,6 @@
 
 #include <core/tiki.h>
 
-
 static int perft(board_t* b, int depth) {
     if (depth == 0 ) return 1;
 
@@ -37,9 +36,14 @@ int main(int argc, char* argv[]) {
     alignas(64) board_t board;
 
 
-   // unsafe_parse_fen("4k3/p7/8/8/8/8/8/4K3 w - - 0 1", &board);
-    unsafe_parse_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", &board);
+    struct timeval start, end;
+    gettimeofday(&start, NULL);
 
+
+   // parse_fen("4k3/p7/8/8/8/8/8/4K3 w - - 0 1", &board);
+    //    parse_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", &board);
+    //parse_fen("2r3k1/R7/8/1R6/8/8/P4KPP/8 w - - 0 40", &board);
+    parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
     for (int i=0; i<4; i++) {
         volatile int cancel_flag = 0;
         struct timeval start, end;
@@ -57,7 +61,7 @@ int main(int argc, char* argv[]) {
         printf("Elapsed time: %.3f sec\n", elapsed / 1000);
     }
 
-//    unsafe_parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",&board);
+//    parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",&board);
 //    struct timeval start, end;
 //    // Use elapsed time not clock time here:
 //    printf("Starting Perft.\n");
@@ -73,7 +77,7 @@ int main(int argc, char* argv[]) {
 //        sum+=elapsed/1000;
 //        printf("Elapsed time: %.3f sec\n", elapsed / 1000);
 //    }
-    printf("Average elapsed time: %.3f sec\n", sum/10);
+//    printf("Average elapsed time: %.3f sec\n", sum/10);
 
 
 
