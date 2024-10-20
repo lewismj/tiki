@@ -16,10 +16,11 @@ set (SOURCES
         src/zobrist_key.c
         src/board.c
         src/move_generator.c
-        src/hce/evaluation_mask.c
         src/search_constants.c
         src/transposition.c
         src/uci.c
+        src/nnue/misc.c
+        src/nnue/nnue.c
 )
 
 add_library(${PROJECT_NAME} ${SOURCES})

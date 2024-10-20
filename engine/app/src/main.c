@@ -4,6 +4,7 @@
 #include <sys/time.h>
 
 #include <core/tiki.h>
+#include "../src/nnue/nnue.h"
 
 static int perft(board_t* b, int depth) {
     if (depth == 0 ) return 1;
@@ -33,6 +34,9 @@ int main(int argc, char* argv[]) {
     printf("Initializing tables ...");
     on_startup();
     printf("... done\n");
+    nnue_init("/home/lewismj/bbc/src/bbc_nnue/nn-eba324f53044.nnue");
+
+
     alignas(64) board_t board;
 
 
@@ -44,12 +48,11 @@ int main(int argc, char* argv[]) {
     //    parse_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", &board);
     //parse_fen("2r3k1/R7/8/1R6/8/8/P4KPP/8 w - - 0 40", &board);
     parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
-    for (int i=0; i<4; i++) {
+//    for (int i=0; i<4; i++) {
         volatile int cancel_flag = 0;
-        struct timeval start, end;
         gettimeofday(&start, NULL);
 
-        move_t best_move = find_best_move(&board, 9,  &cancel_flag);
+        move_t best_move = search_at_depth(&board, 3,  &cancel_flag);
 
         gettimeofday(&end, NULL);
         printf("best move:\n");
@@ -59,7 +62,7 @@ int main(int argc, char* argv[]) {
         long microseconds = end.tv_usec - start.tv_usec;
         double elapsed = seconds * 1000.0 + microseconds / 1000.0;
         printf("Elapsed time: %.3f sec\n", elapsed / 1000);
-    }
+//    }
 
 //    parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",&board);
 //    struct timeval start, end;

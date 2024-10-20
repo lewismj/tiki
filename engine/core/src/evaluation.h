@@ -4,10 +4,10 @@
 #include "types.h"
 #include "board.h"
 
-#include "hce/evaluation.h" /* Use HCE for testing. */
+#include "nnue/evaluation.h"
 
 static inline_always int evaluation(const board_t* const board) {
-    return eval_hce(board);
+    return eval_nnue(board);
 }
 
 #endif

@@ -261,6 +261,15 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
     return best_score;
 }
 
+static move_t inline_always search_at_depth(board_t* board, int depth, const volatile int* cancel_flag) {
+    search_state_t search_state;
+    init_search(&search_state);
+    search_state.follow_pv = true;
+    int score = negamax(-INF, INF, depth, board, &search_state);
+    printf("score=%d, num. nodes: %ld\n", score, search_state.nodes_visited);
+    return search_state.pv_table[0][0];
+}
+
 static move_t inline_always find_best_move(board_t* board, int depth, const volatile int* cancel_flag) {
     search_state_t search_state;
     init_search(&search_state);
@@ -283,6 +292,7 @@ static move_t inline_always find_best_move(board_t* board, int depth, const vola
         alpha = score - ASPIRATION_WINDOW;
         beta = score + ASPIRATION_WINDOW;
     }
+
 
     return search_state.pv_table[0][0];
 }
