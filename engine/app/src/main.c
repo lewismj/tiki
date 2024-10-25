@@ -49,13 +49,12 @@ int main(int argc, char* argv[]) {
     gettimeofday(&start, NULL);
 
 
-    parse_fen(start_position, &board);
-   // parse_fen("rnbqkb1r/pp1p1pPp/8/2p1pP2/1P1P4/3P3P/P1P1P3/RNBQKBNR w KQkq e6 0 1",&board);
-//    for (int i=0; i<4; i++) {
+    parse_fen(cmk_position, &board);
+    for (int i=0; i<1; i++) {
         volatile int cancel_flag = 0;
         gettimeofday(&start, NULL);
 
-        move_t best_move = search_at_depth(&board, 6,  &cancel_flag);
+        move_t best_move = search_at_depth(&board, 6, &cancel_flag);
 
         gettimeofday(&end, NULL);
         printf("best move:\n");
@@ -65,7 +64,7 @@ int main(int argc, char* argv[]) {
         long microseconds = end.tv_usec - start.tv_usec;
         double elapsed = seconds * 1000.0 + microseconds / 1000.0;
         printf("Elapsed time: %.3f sec\n", elapsed / 1000);
-//    }
+    }
 
 //    parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",&board);
 //    struct timeval start, end;

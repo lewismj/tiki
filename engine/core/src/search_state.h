@@ -21,7 +21,6 @@ typedef struct align {
     uint8_t repetition_index;
     bool follow_pv;
     bool score_pv;
-    move_t best_move;
 } search_state_t;
 
 static inline_always bool contains_repetition(search_state_t* search_state, const uint64_t position_hash) {

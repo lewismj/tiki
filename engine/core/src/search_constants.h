@@ -27,9 +27,9 @@ typedef struct align {
  */
 extern const search_const_t search_const;
 
-#define INF 50000
-#define MATE_VALUE 49000
-#define MATE_SCORE 48000
+#define INF 90000
+#define MATE_VALUE 89000
+#define MATE_SCORE 88000
 
 #define MAX_MOVES 1024          /* Maximum number of moves in the game.                                     */
 #define MAX_PLY 64              /* Maximum ply we can search.                                               */

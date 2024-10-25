@@ -30,7 +30,7 @@ typedef struct align {
     uint64_t            position_hash;      /* board hash value.                */
     uint32_t            move_and_type;      /* packed move and entry type.      */
     uint8_t             depth;              /* depth.                           */
-    uint8_t             score;              /* score.                           */
+    int                 score;              /* score.                           */
 } transposition_node_t;
 
 extern transposition_node_t* t_table;
