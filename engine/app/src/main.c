@@ -6,6 +6,11 @@
 #include <core/tiki.h>
 #include "../src/nnue/nnue.h"
 
+#define start_position "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+#define tricky_position "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1"
+#define killer_position "rnbqkb1r/pp1p1pPp/8/2p1pP2/1P1P4/3P3P/P1P1P3/RNBQKBNR w KQkq e6 0 1"
+#define cmk_position "r2q1rk1/ppp2ppp/2n1bn2/2b1p3/3pP3/3P1NPP/PPP1NPB1/R1BQ1RK1 b - - 0 9"
+
 static int perft(board_t* b, int depth) {
     if (depth == 0 ) return 1;
 
@@ -44,15 +49,13 @@ int main(int argc, char* argv[]) {
     gettimeofday(&start, NULL);
 
 
-   // parse_fen("4k3/p7/8/8/8/8/8/4K3 w - - 0 1", &board);
-    //    parse_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", &board);
-    //parse_fen("2r3k1/R7/8/1R6/8/8/P4KPP/8 w - - 0 40", &board);
-    parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
+    parse_fen(start_position, &board);
+   // parse_fen("rnbqkb1r/pp1p1pPp/8/2p1pP2/1P1P4/3P3P/P1P1P3/RNBQKBNR w KQkq e6 0 1",&board);
 //    for (int i=0; i<4; i++) {
         volatile int cancel_flag = 0;
         gettimeofday(&start, NULL);
 
-        move_t best_move = search_at_depth(&board, 3,  &cancel_flag);
+        move_t best_move = search_at_depth(&board, 6,  &cancel_flag);
 
         gettimeofday(&end, NULL);
         printf("best move:\n");

@@ -16,9 +16,8 @@
 #include "transposition.h"
 
 
-
 static inline_always void init_search(search_state_t* search_state) {
-    search_state->nodes_visited = 0;
+    search_state->nodes = 0;
     search_state->ply = 0;
     search_state->score_pv = false;
     search_state->follow_pv = true;
@@ -106,7 +105,7 @@ static inline_always void set_follow_pv_flags(move_buffer_t* buffer, search_stat
 }
 
 static inline_hint int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state) {
-    search_state->nodes_visited++;
+    search_state->nodes++;
 
     int eval = evaluation(board);
     if (eval >= beta) return beta;
@@ -118,10 +117,8 @@ static inline_hint int quiescence(int alpha, int beta, board_t* board, search_st
 
     for (int i=0; i< buffer.index; i++) {
         move_t mv = buffer.moves[i];
-        /* Just look at captures in quiescence. */
         if (get_capture_flag(mv)) {
             ++search_state->ply;
-            /* Make move will return false if player is left in check. */
             if (make_move(board, mv)) {
                 int score = -quiescence(-beta, -alpha, board, search_state);
                 --search_state->ply;
@@ -137,136 +134,112 @@ static inline_hint int quiescence(int alpha, int beta, board_t* board, search_st
     return alpha;
 }
 
-
 static inline int negamax(int alpha, int beta, int depth, board_t* board, search_state_t* search_state) {
-    /* At depth 0, just return the quiescence search. */
-    if (search_state->ply && contains_repetition(search_state, board->hash)) return 0;
+    search_state->pv_length[search_state->ply] = search_state->ply;
+
     if (depth == 0) return quiescence(alpha, beta, board, search_state);
 
-    /* Check the position in the transposition table. */
-    int cached_eval = tt_probe(board->hash, depth, alpha, beta);
-    if (cached_eval != TT_NOT_FOUND) return cached_eval;
+    bool in_check = board->side == white ?
+                    is_square_attacked_by_black(board, trailing_zero_count(board->pieces[K])) :
+                    is_square_attacked_by_white(board, trailing_zero_count(board->pieces[k]));
 
-    search_state->pv_length[search_state->ply] = search_state->ply;
-    search_state->nodes_visited++;
-
-    bool isin_check = board->side == white ?
-                        is_square_attacked_by_black(board, trailing_zero_count(board->pieces[K]))
-                      : is_square_attacked_by_white(board, trailing_zero_count(board->pieces[k]));
-
-    if (isin_check) ++depth;
+    if (in_check) ++depth;
 
     /* Null move pruning. */
-    if (depth > NULL_MOVE_DEPTH_BOUND && !isin_check && search_state->ply) {
+    if (depth >= NULL_MOVE_DEPTH_BOUND && !in_check) {
         make_null_move(board);
-        search_state->repetiton_check[++search_state->repetition_index] = board->hash;
+        search_state->repetition_check[++search_state->repetition_index] = board->hash;
         ++search_state->ply;
-        int score = -negamax(-beta, -beta + 1, depth - NULL_MOVE_DEPTH_BOUND - 1, board, search_state);
+        int score = -negamax(-beta, -beta + 1, depth - NULL_MOVE_DEPTH_BOUND, board, search_state);
         --search_state->ply;
         --search_state->repetition_index;
         pop_null_move(board);
         if (score >= beta) return beta;
     }
 
-    /* Generate & sort moves. */
+    ++search_state->nodes;
+
     move_buffer_t buffer;
     generate_moves(board, &buffer);
     if (search_state->follow_pv) set_follow_pv_flags(&buffer, search_state);
     sort_move_buffer(&buffer, board, search_state);
 
-    int best_score = -INF;
-    int score;
-    move_t best_move = NULL_MOVE;
-    bool searched_first_move = false;
-    int moves_searched = 0;
-
-    for (int i = 0; i < buffer.index; i++) {
+    bool has_legal_moves = false;
+    int num_moves_searched = 0;
+    for (int i=0; i < buffer.index; i++) {
         move_t mv = buffer.moves[i];
-        if (make_move(board, mv)) {
-            search_state->repetiton_check[++search_state->repetition_index] = board->hash;
-
-            ++search_state->ply;
-            ++moves_searched;
-            if (!searched_first_move) {
-                score = -negamax(-beta, -alpha, depth - 1, board, search_state);
-            } else {
-
-                if ( moves_searched > LMR_DEPTH_BOUND && /* Late move reduction use same bound for moves/depth. */
-                    depth > LMR_DEPTH_BOUND &&
-                    !isin_check &&
-                    !get_capture_flag(mv)&&
-                    !get_promoted_piece(mv)) {
-
-                    score = -negamax(-alpha - 1, -alpha, depth - 2, board, search_state);
-                    if (score > alpha) {
-                        score = -negamax(-beta, -alpha, depth - 1, board, search_state);
-                    }
-                }
-                else { /* Principal variation search. */
-                    score = -negamax(-alpha - 1, -alpha, depth - 1, board, search_state);
-                    if (score > alpha && score < beta) {
-                        score = -negamax(-beta, -alpha, depth - 1, board, search_state);
-                    }
-                }
-            }
-
-            /* decrement the ply & pop the move from the board. */
-            --search_state->ply;
-            --search_state->repetition_index;
+        bool is_capture = get_capture_flag(mv);
+        if (!make_move(board,mv)) {
             pop_move(board);
+            continue;
+        }
+        has_legal_moves = true;
 
-            if (score > best_score) {
-                best_score = score;
-                best_move = mv;
-
-                /* Update the pv table for 'display'. */
-                search_state->pv_table[search_state->ply][0] = mv;
-                memcpy(
-                        &search_state->pv_table[search_state->ply][1],
-                        &search_state->pv_table[search_state->ply + 1][0],
-                        search_state->pv_length[search_state->ply + 1] * sizeof(move_t)
-                );
-                search_state->pv_length[search_state->ply] = search_state->pv_length[search_state->ply + 1] + 1;
-
-                if (score >= beta) { /* beta cut-off. */
-                    search_state->killer_moves[1][search_state->ply] =
-                            search_state->killer_moves[0][search_state->ply];
-                    search_state->killer_moves[0][search_state->ply] = best_move;
-
-                    tt_save(board->hash, tt_beta, depth, best_score);
-                    return best_score;
-                }
-                if (score > alpha) {
-                    alpha = score;
-                }
-            }
-            searched_first_move = true;
+        ++search_state->ply;
+        int score;
+        if (num_moves_searched == 0 ) {
+            score = -negamax(-beta, -alpha, depth-1, board, search_state);
         } else {
-            /* pop the invalid move from the board, e.g. moving into check, castling through check etc. */
-            pop_move(board);
+            bool is_promoted = get_promoted_piece(mv);
+            if ( num_moves_searched >= LMR_DEPTH_BOUND && depth >= LMR_DEPTH_BOUND && !in_check && !is_capture && !is_promoted) {
+                score = -negamax(-alpha - 1, -alpha, depth - 2, board, search_state);
+                if (score > alpha) {
+                    score = -negamax(-beta, -alpha, depth - 1, board, search_state);
+                }
+            }
+            else { /* Principal variation search. */
+                score = -negamax(-alpha - 1, -alpha, depth - 1, board, search_state);
+                if (score > alpha && score < beta) {
+                    score = -negamax(-beta, -alpha, depth - 1, board, search_state);
+                }
+            }
+        }
+        ++num_moves_searched;
+        --search_state->ply;
+        pop_move(board);
+
+        if (score > alpha) {
+
+            search_state->pv_table[search_state->ply][search_state->ply] = mv;
+            for (int j=search_state->ply+1; j < search_state->ply+1; j++) {
+                search_state->pv_table[search_state->ply][j] = search_state->pv_table[search_state->ply+1][j];
+            }
+
+            if (!is_capture) {
+                search_state->history_moves[get_piece_moved(mv)][get_target_square(mv)] += depth;
+            }
+
+
+            alpha = score;
+
+            if (score >= beta) {
+                if (!is_capture) {
+                    search_state->killer_moves[1][search_state->ply] = search_state->killer_moves[0][search_state->ply];
+                    search_state->killer_moves[0][search_state->ply] = mv;
+                }
+                return beta;
+            }
         }
     }
 
-    if (!searched_first_move) { /* Couldn't search a single move, check for checkmate or stalemate. */
-        if (isin_check) return -MATE_VALUE + search_state->ply;
-        else return 0;
-    }
 
-    if (best_score > alpha) {
-        tt_save(board->hash, tt_exact, depth, best_score);
-    } else {
-        tt_save(board->hash, tt_alpha, depth, alpha);
-    }
-
-    return best_score;
+    return has_legal_moves ? alpha : in_check ? -MATE_VALUE + search_state->ply : 0;
 }
+
+
 
 static move_t inline_always search_at_depth(board_t* board, int depth, const volatile int* cancel_flag) {
     search_state_t search_state;
     init_search(&search_state);
     search_state.follow_pv = true;
     int score = negamax(-INF, INF, depth, board, &search_state);
-    printf("score=%d, num. nodes: %ld\n", score, search_state.nodes_visited);
+    printf("\nscore=%d, num. nodes: %ld\n", score, search_state.nodes);
+    print_move(search_state.best_move, min);
+    printf("\n pv table:");
+    print_move(search_state.pv_table[0][0],min);
+    printf("\n");
+
+    //return search_state.best_move;
     return search_state.pv_table[0][0];
 }
 
@@ -293,8 +266,6 @@ static move_t inline_always find_best_move(board_t* board, int depth, const vola
         beta = score + ASPIRATION_WINDOW;
     }
 
-
     return search_state.pv_table[0][0];
 }
-
 #endif

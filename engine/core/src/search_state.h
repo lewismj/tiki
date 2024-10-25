@@ -11,21 +11,22 @@ typedef struct align {
      * array rather than a vector (triangular matrix), the indexing
      * is simplified using a matrix.
      */
-    uint64_t repetiton_check[MAX_MOVES];
+    uint64_t repetition_check[MAX_MOVES];
     uint32_t pv_table[MAX_PLY][MAX_PLY];
     int32_t history_moves[12][64];
     uint32_t killer_moves[2][MAX_PLY];
     uint8_t pv_length[MAX_PLY];
-    uint64_t nodes_visited;
+    uint64_t nodes;
     uint8_t ply;
     uint8_t repetition_index;
     bool follow_pv;
     bool score_pv;
+    move_t best_move;
 } search_state_t;
 
 static inline_always bool contains_repetition(search_state_t* search_state, const uint64_t position_hash) {
     for (int i=search_state->repetition_index-1; i>0; i--) {
-        if (search_state->repetiton_check[i] == position_hash) return true;
+        if (search_state->repetition_check[i] == position_hash) return true;
     }
     return false;
 }

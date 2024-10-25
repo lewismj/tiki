@@ -27,10 +27,10 @@ typedef enum {
 } tt_entry_type;
 
 typedef struct align {
-    uint64_t            position_hash;
-    uint8_t             depth;
-    tt_entry_type       entry_type;
-    uint8_t             score;
+    uint64_t            position_hash;      /* board hash value.                */
+    uint32_t            move_and_type;      /* packed move and entry type.      */
+    uint8_t             depth;              /* depth.                           */
+    uint8_t             score;              /* score.                           */
 } transposition_node_t;
 
 extern transposition_node_t* t_table;
@@ -43,26 +43,53 @@ void init_transposition_table(unsigned short mb);
 void free_transposition_table();
 
 
-static inline_always int tt_probe(const uint64_t position_hash, const int depth, int alpha, int beta) {
+static inline_always int tt_probe(const uint64_t position_hash,
+                                  const int depth,
+                                  const int ply,
+                                  int alpha,
+                                  int beta,
+                                  move_t* best_move) {
     const size_t index = position_hash % tt_size;
 
-    if (t_table[index].position_hash == position_hash && t_table[index].depth >= depth) {
-        if (t_table[index].entry_type == tt_exact) return t_table[index].score;
-        if (t_table[index].entry_type == tt_alpha && t_table[index].score <= alpha) return alpha;
-        if (t_table[index].entry_type == tt_beta && t_table[index].score >= beta) return beta;
+    uint64_t current_position_hash = t_table[index].position_hash;
+    uint8_t current_depth =t_table[index].depth;
+
+    if (position_hash == current_position_hash && depth == current_depth) {
+        *best_move = t_table[index].move_and_type;
+        int score = t_table[index].score;
+
+        if (score < -MATE_SCORE) score -= ply;
+        if (score > MATE_SCORE) score += ply;
+
+        if ((*best_move & 0x6000000) >> 25 == tt_exact) return score;
+        if (((*best_move & 0x6000000) >> 25 == tt_alpha) && score <= alpha) return alpha;
+        if (((*best_move & 0x6000000) >> 25 == tt_beta) && score >= beta) return beta;
     }
+
     return TT_NOT_FOUND;
 }
 
 
-static inline_always
-void tt_save(const uint64_t position_hash, const tt_entry_type hash_flag, const int depth, int score) {
+static inline_always void tt_save(const uint64_t position_hash,
+                                  const tt_entry_type hash_flag,
+                                  const move_t move,
+                                  const int depth,
+                                  const int ply,
+                                  int score) {
+
     const size_t index = position_hash % tt_size;
+    uint64_t current_position_hash = t_table[index].position_hash;
+    uint8_t current_depth = t_table[index].depth;
+
+    if (position_hash == current_position_hash && current_depth >= depth) return;
+
+    if (score < -MATE_SCORE) score -= ply;
+    if (score > MATE_SCORE) score += ply;
 
     t_table[index].position_hash = position_hash;
-    t_table[index].entry_type = hash_flag;
-    t_table[index].score = score;
+    t_table[index].move_and_type = move | (hash_flag << 25);
     t_table[index].depth = depth;
+    t_table[index].score = score;
 }
 
 
