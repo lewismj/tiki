@@ -44,21 +44,28 @@ void init_transposition_table(unsigned short mb);
 void free_transposition_table();
 
 
-static inline_always int tt_probe(const uint64_t position_hash, const int depth, int alpha, int beta) {
+static inline_always int tt_probe(const uint64_t position_hash, const int depth, const int ply, int alpha, int beta) {
     const size_t index = position_hash % tt_size;
 
     if (t_table[index].position_hash == position_hash && t_table[index].depth >= depth) {
-        if (t_table[index].entry_type == tt_exact) return t_table[index].score;
-        if (t_table[index].entry_type == tt_alpha && t_table[index].score <= alpha) return alpha;
-        if (t_table[index].entry_type == tt_beta && t_table[index].score >= beta) return beta;
+        int score = t_table[index].score;
+        if (score < -MATE_SCORE) score -= ply;
+        if (score > MATE_SCORE) score += ply;
+
+        if (t_table[index].entry_type == tt_exact) return score;
+        if (t_table[index].entry_type == tt_alpha && score <= alpha) return alpha;
+        if (t_table[index].entry_type == tt_beta && score >= beta) return beta;
     }
     return TT_NOT_FOUND;
 }
 
 
 static inline_always
-void tt_save(const uint64_t position_hash, const tt_entry_type hash_flag, const int depth, int score) {
+void tt_save(const uint64_t position_hash, const tt_entry_type hash_flag, const int depth, const int ply, int score) {
     const size_t index = position_hash % tt_size;
+
+    if (score < -MATE_SCORE) score -= ply;
+    if (score > MATE_SCORE) score += ply;
 
     t_table[index].position_hash = position_hash;
     t_table[index].entry_type = hash_flag;
