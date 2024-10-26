@@ -31,7 +31,6 @@ void reset_board(board_t* board) {
     board->en_passant = none_sq;
     board->castle_flag = 0;
     board->side = white;
-    board->half_move = 0;
     board->fifty_move = 0;
     board->stack_ptr = 0;
 }
@@ -88,13 +87,12 @@ void parse_fen(const char* fen, board_t* board) {
     }
     ptr++;
 
-    /*
-     * half-move & full-move counters.
-     * Don't use 'strtol' engine shouldn't validate, clients do.
-     */
-    board->half_move = atoi(ptr); ptr++;
-    while (*ptr++ != ' ') ;
-    board->fifty_move = atoi(ptr);
+    /* half-move & full-move counters. Don't use 'strtol' engine shouldn't validate, GUI clients do. */
+    board->fifty_move = atoi(ptr); ptr++;
+
+    /* Skip the full move counter. */
+    /*  while (*ptr++ != ' ') ;
+        board->fifty_move = atoi(ptr); */
 
     board->occupancy[both] |= board->occupancy[white];
     board->occupancy[both] |= board->occupancy[black];
@@ -107,10 +105,6 @@ void uci_main() {
     board_t board;
     search_state_t search_state;
     const volatile int cancel_flag;
-
-    
-
-
 
 
 }

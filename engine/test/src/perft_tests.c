@@ -6,6 +6,8 @@
 #include "perf_tests.h"
 #include "../../core/src/board.h"
 #include "../../core/src/move_generator.h"
+#include "../../core/src/uci.h"
+
 
 #define MAX_TEST_THREADS 4
 #define MAX_LINE_LENGTH 512
@@ -53,7 +55,7 @@ void perft_tests() {
         for (int j=0; j<6; j++) {
             if (perft_data[i].values[j] !=-1) {
                 board_t board;
-                unsafe_parse_fen(perft_data[i].position, &board);
+                parse_fen(perft_data[i].position, &board);
                 int num_moves = calc_perft(&board, j+1);
                 if (perft_data[i].values[j] != num_moves) {
                     printf(" case [%d] failed, depth: %d, actual: %d, expected: %d\n", i, j+1, num_moves, perft_data[i].values[j]);
@@ -84,7 +86,7 @@ void* worker_thread(void* args) {
             if (thread_args->buff[i].values[j] !=-1) {
                 //(" %d ", thread_args->buff[i].values[j]);
                 board_t board;
-                unsafe_parse_fen(thread_args->buff[i].position, &board);
+                parse_fen(thread_args->buff[i].position, &board);
                 int num_moves = calc_perft(&board, j+1);
                 if (thread_args->buff[i].values[j] != num_moves) {
                     printf(" case [%d] failed, j: %d, actual: %d, expected: %d\n", i, j+1, num_moves, thread_args->buff[i].values[j]);

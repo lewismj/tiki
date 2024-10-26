@@ -16,17 +16,6 @@
 #include "transposition.h"
 
 
-static inline_always void init_search(search_state_t* search_state) {
-    search_state->nodes = 0;
-    search_state->ply = 0;
-    search_state->score_pv = false;
-    search_state->follow_pv = true;
-    memset(search_state->pv_table, 0, sizeof(search_state->pv_table));
-    memset(search_state->pv_length, 0, sizeof(search_state->pv_length));
-    memset(search_state->history_moves, 0, sizeof (search_state->history_moves));
-    memset(search_state->killer_moves, 0, sizeof (search_state->killer_moves));
-}
-
 static inline_always int score_move(move_t move, board_t* board, search_state_t* search_state) {
 
     /*
@@ -142,10 +131,11 @@ static inline_hint int quiescence(int alpha, int beta, board_t* board, search_st
 static inline int negamax(int alpha, int beta, int depth, board_t* board, search_state_t* search_state) {
     search_state->pv_length[search_state->ply] = search_state->ply;
 
-    bool is_pv_node = beta - alpha >1;
+    if ((search_state->ply && contains_repetition(search_state, board->hash)) || board->fifty_move > 100)
+        return 0;
+
     int cached_eval = tt_probe(board->hash, depth, search_state->ply, alpha, beta);
     if (cached_eval != TT_NOT_FOUND) return cached_eval;
-
 
     if (depth == 0) return quiescence(alpha, beta, board, search_state);
 
@@ -186,8 +176,9 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
             continue;
         }
         has_legal_moves = true;
-
         ++search_state->ply;
+        search_state->repetition_check[search_state->repetition_index++] = board->hash;
+
         if (num_moves_searched == 0 ) {
             score = -negamax(-beta, -alpha, depth-1, board, search_state);
         } else {
@@ -208,6 +199,7 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
         }
         ++num_moves_searched;
         --search_state->ply;
+        --search_state->repetition_index;
         pop_move(board);
 
         if (score > alpha) {
@@ -248,7 +240,7 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
 
 static move_t inline_always find_best_move(board_t* board, int depth, const volatile int* cancel_flag) {
     search_state_t search_state;
-    init_search(&search_state);
+    init_search_state(&search_state);
 
     int alpha = -INF;
     int beta = INF;

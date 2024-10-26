@@ -23,6 +23,20 @@ typedef struct align {
     bool score_pv;
 } search_state_t;
 
+
+static inline_always void init_search_state(search_state_t* search_state) {
+    search_state->nodes = 0;
+    search_state->ply = 0;
+    search_state->repetition_index = 0;
+    search_state->score_pv = false;
+    search_state->follow_pv = true;
+    memset(search_state->pv_table, 0, sizeof(search_state->pv_table));
+    memset(search_state->pv_length, 0, sizeof(search_state->pv_length));
+    memset(search_state->history_moves, 0, sizeof (search_state->history_moves));
+    memset(search_state->killer_moves, 0, sizeof (search_state->killer_moves));
+    memset(search_state->repetition_check, 0, sizeof(search_state->repetition_check));
+}
+
 static inline_always bool contains_repetition(search_state_t* search_state, const uint64_t position_hash) {
     for (int i=search_state->repetition_index-1; i>0; i--) {
         if (search_state->repetition_check[i] == position_hash) return true;

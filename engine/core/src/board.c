@@ -61,9 +61,6 @@ void print_board(board_t* board, showable_t options) {
                 if (board->castle_flag & black_king_side) printf("k");
                 if (board->castle_flag & black_queen_side) printf("q");
             }
-            printf("\n");
-            printf("Half move:\t%d\n", board->half_move);
-            printf("\n");
         }
     }
 

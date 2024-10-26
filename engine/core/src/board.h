@@ -23,7 +23,6 @@ typedef struct  {
     int captured_piece;
     int castle_flag;
     int en_passant;
-    int half_move;
     int fifty_move;
     uint64_t hash;
 } undo_meta_t;
@@ -40,7 +39,6 @@ typedef struct {
     int castle_flag;
     square en_passant;
     colour side;
-    int half_move;
     int fifty_move;
     uint64_t hash;
     /* Used for applying/undo moves to a board. */
@@ -255,7 +253,6 @@ static inline_always void pop_move(board_t* board) {
     /* Reset flags and counters. */
     board->castle_flag = undo_element->castle_flag;
     board->en_passant = undo_element->en_passant;
-    board->half_move = undo_element->half_move;
     board->fifty_move = undo_element->fifty_move;
     board->hash = undo_element->hash;
     board->occupancy[both] = board->occupancy[white] | board->occupancy[black];
@@ -270,7 +267,6 @@ static inline_always bool make_move(board_t* board, move_t move) {
     board->stack[board->stack_ptr].move = move;
     board->stack[board->stack_ptr].castle_flag = board->castle_flag;
     board->stack[board->stack_ptr].en_passant = board->en_passant;
-    board->stack[board->stack_ptr].half_move = board->half_move;
     board->stack[board->stack_ptr].fifty_move = board->fifty_move;
     board->stack[board->stack_ptr].hash = board->hash;
 
@@ -292,11 +288,11 @@ static inline_always bool make_move(board_t* board, move_t move) {
     board->hash ^= get_piece_key(source, move_piece);
     board->hash ^= get_piece_key(target, move_piece);
 
-    /* Update half move counter, if necessary. */
+    /* Update half/fifty move counter, if necessary. */
     if ( move_piece == P || move_piece == p || capture_flag) {
-        board->half_move = 0;
+        board->fifty_move = 0;
     } else {
-        board->half_move++;
+        board->fifty_move++;
     }
 
     /* A square is only en passant for one move... */
@@ -426,7 +422,6 @@ static inline_always void copy_position(board_t* src, board_t* dest) {
     dest->castle_flag = src->castle_flag;
     dest->en_passant = src->en_passant;
     dest->side = src->side;
-    dest->half_move = src->half_move;
     dest->fifty_move = src->fifty_move;
     dest->hash = src->hash;
 

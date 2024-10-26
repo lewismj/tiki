@@ -47,7 +47,7 @@ static inline_always int eval_nnue(const board_t* const board) {
 
     pieces[index] = 0;
     squares[index] = 0;
-    return nnue_evaluate(board->side, pieces, squares);
+    return nnue_evaluate(board->side, pieces, squares) * (100 - board->fifty_move/ 100);
 }
 
 

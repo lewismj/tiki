@@ -49,7 +49,7 @@ int main(int argc, char* argv[]) {
     gettimeofday(&start, NULL);
 
 
-    parse_fen(start_position, &board);
+    parse_fen(tricky_position, &board);
 
         volatile int cancel_flag = 0;
         gettimeofday(&start, NULL);
