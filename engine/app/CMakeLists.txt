@@ -27,6 +27,13 @@ else()
     message(STATUS "PEXT instruction is not supported.")
 endif()
 
+if (CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+#    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_AVX-512)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_AVX2)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mavx512f -mavx512dq -mavx512bw -mavx512vl")
+endif()
+
+
 if (CMAKE_BUILD_TYPE MATCHES "^[Rr]elease")
     message(STATUS "Optimisation on.")
     target_compile_options(${PROJECT_NAME} PRIVATE "-O3")

@@ -20,6 +20,7 @@
  * iterative deepening may not yield any results?).
  */
 
+
 typedef enum {
     tt_exact = 1,
     tt_alpha,
@@ -64,6 +65,7 @@ void tt_save(const uint64_t position_hash, const tt_entry_type hash_flag, const 
     t_table[index].score = score;
     t_table[index].depth = depth;
 }
+
 
 
 #endif
