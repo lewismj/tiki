@@ -50,7 +50,7 @@ int main(int argc, char* argv[]) {
 
 
     parse_fen(cmk_position, &board);
-    for (int i=0; i<1; i++) {
+    for (int i=0; i<4; i++) {
         volatile int cancel_flag = 0;
         gettimeofday(&start, NULL);
 
