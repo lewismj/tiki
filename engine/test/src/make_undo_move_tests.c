@@ -9,7 +9,7 @@
 
 void test_make_move_hash1() {
     /*
-     * Different board positions & moves, that yield same end position,
+     * Different board positions & moves, that yield same end fen_position,
      * should have same hash values.
      * This test includes an en passant move.
      */
@@ -105,7 +105,7 @@ void test_undo_restores_state1() {
         TEST_ASSERT_EQUAL_UINT64(original.hash, board.hash);
 
         /*
-         * Generate all candidate moves from this position, note this will include positions that we could filter,
+         * Generate all candidate moves from this fen_position, note this will include positions that we could filter,
          * e.g. move leaves king in check, ignore for the purposes of this test.
          */
         move_buffer_t buffer;

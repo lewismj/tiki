@@ -30,7 +30,7 @@ typedef struct  {
 #define MAX_DEPTH 64
 
 /**
- * Represents the board (position) state of a game.
+ * Represents the board (fen_position) state of a game.
  * Typically engine will create a single instance.
  */
 typedef struct {
@@ -120,7 +120,7 @@ static inline_always void recalculate_hash(board_t* board) {
 /**
  * Return true if the given square 's' is attacked by any piece of colour 'c'.
  *
- * @param board the board position.
+ * @param board the board fen_position.
  * @param c     the colour of the attacker.
  * @param s     the square that might be attacked.
  * @return  true, if square attacked; false otherwise.
@@ -413,8 +413,8 @@ static inline_always bool make_null_move(board_t* board) {
 static inline_always void copy_position(board_t* src, board_t* dest) {
     /*
      * N.B. We do not use copy-make in the move generation, this is used to copy
-     * position data at the start of iterative deepening. Each thread has
-     * it own position copy to mutate. There is no need to copy the undo stack
+     * fen_position data at the start of iterative deepening. Each thread has
+     * it own fen_position copy to mutate. There is no need to copy the undo stack
      * as it is always empty at the start of the search.
      */
     memcpy(dest->pieces, src->pieces, 12 * sizeof(bitboard));

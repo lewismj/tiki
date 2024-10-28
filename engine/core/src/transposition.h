@@ -74,6 +74,9 @@ void tt_save(const uint64_t position_hash, const tt_entry_type hash_flag, const 
     t_table[index].depth = depth;
 }
 
+static inline_always void tt_clear() {
+    memset(t_table, 0, tt_size * sizeof(transposition_node_t));
+}
 
 
 #endif

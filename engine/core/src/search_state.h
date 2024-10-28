@@ -38,15 +38,14 @@ static inline_always void init_search_state(search_state_t* search_state) {
 }
 
 /**
- * Used by UCI loop, where we parse a position each ply, so the repetition state needs to be
+ * Used by UCI loop, where we parse a fen_position each ply, so the repetition state needs to be
  * preserved.
  */
-static inline_always void clear_pvs(search_state_t* search_state) {
+static inline_always void clear_pv_table(search_state_t* search_state) {
     search_state->nodes = 0;
     search_state->ply = 0;
     search_state->score_pv = false;
     search_state->follow_pv = true;
-    //if (search_state->repetition_index>0) search_state->repetition_index--;
     memset(search_state->pv_table, 0ULL, sizeof(search_state->pv_table));
     memset(search_state->pv_length, 0ULL, sizeof(search_state->pv_length));
     memset(search_state->history_moves, 0, sizeof (search_state->history_moves));
@@ -55,10 +54,7 @@ static inline_always void clear_pvs(search_state_t* search_state) {
 
 static inline_always bool contains_repetition(search_state_t* search_state, const uint64_t position_hash) {
     for (int i=0; i<search_state->repetition_index; i++) {
-        if (search_state->repetition_check[i] == position_hash) {
-            printf("found hash:\t\t0x%" PRIx64 "\n\n", position_hash);
-            return true;
-        }
+        if (search_state->repetition_check[i] == position_hash) return true;
     }
     return false;
 }

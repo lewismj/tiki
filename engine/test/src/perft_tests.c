@@ -51,7 +51,7 @@ void perft_tests() {
    int num_perft_positions = (int) (sizeof(perft_data)/sizeof(perft_data[0]));
 
     for (int i=0; i<num_perft_positions; i++) {
-        printf("perft check position [%d]: %s ", i, perft_data[i].position);
+        printf("perft check fen_position [%d]: %s ", i, perft_data[i].position);
         for (int j=0; j<6; j++) {
             if (perft_data[i].values[j] !=-1) {
                 board_t board;
@@ -75,7 +75,7 @@ void* worker_thread(void* args) {
     printf("Thread %d working on indices %d to %d\n", thread_args->id, start, end);
 
     for (int i = start; i < end; ++i) {
-        printf("perft check position [%d]: %s \n", i, thread_args->buff[i].position);
+        printf("perft check fen_position [%d]: %s \n", i, thread_args->buff[i].position);
         /*
          * todo: can make this a parameter, running 6K+ positions at depths 1,2,3,4,5, and 6,
          * todo: will take a long time to run for a unit test.

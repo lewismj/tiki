@@ -245,7 +245,6 @@ static move_t inline_always find_best_move(board_t* board,
     int beta = INF;
     int score;
 
-    printf("rep index [%d]\n",search_state->repetition_index);
     for (int i=1; i<=depth; i++) {
         if (*cancel_flag) break;
         search_state->follow_pv = true;
@@ -261,7 +260,6 @@ static move_t inline_always find_best_move(board_t* board,
         beta = score + ASPIRATION_WINDOW;
     }
 
-    print_move(search_state->pv_table[0][0],show);
     return search_state->pv_table[0][0];
 }
 

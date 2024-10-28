@@ -20,9 +20,9 @@ typedef struct align {
 
 /**
  * Generate the set of moves given a board state 'board', and a buffer to store
- * those moves. The moves are stored starting at the 'index' position.
+ * those moves. The moves are stored starting at the 'index' fen_position.
  *
- * @param board the board position state.
+ * @param board the board fen_position state.
  * @param move_buffer the move_t buffer.
  */
 void generate_moves(board_t* board, move_buffer_t* move_buffer);

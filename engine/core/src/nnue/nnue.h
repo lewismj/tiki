@@ -53,7 +53,7 @@ typedef struct {
   bool computedAccumulation;
 } Accumulator;
 
-/*position*/
+/*fen_position*/
 typedef struct Position {
   int player;
   int* pieces;

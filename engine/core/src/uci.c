@@ -131,8 +131,8 @@ move_t parse_move(const char* input, board_t* board) {
 
 
 void parse_position(const char* position, board_t* board, search_state_t* search_state) {
-    init_search_state(search_state);
-    reset_board(board);
+    /* Whenever we parse a board position, we initialize the search state and clear the tt table. */
+    init_search_state(search_state); tt_clear();
 
     const char *ptr = position +9;
     if (strncmp(ptr, "startpos",8) == 0) {
@@ -206,11 +206,7 @@ void parse_go(const char* position, board_t* board, search_state_t* search_state
         gettimeofday(&limits->stop_time,NULL);
     }
 
-    //init_search_state(search_state);
-    clear_pvs(search_state);
-    printf("search state index: [%d]\n",search_state->repetition_index);
     move_t mv = find_best_move(board, search_state, depth, &limits->cancel_flag);
-    printf("search state index: [%d]\n",search_state->repetition_index);
     print(mv);
 }
 
@@ -219,20 +215,15 @@ void uci_main() {
     on_startup();
 
     board_t board;
-
     search_state_t search_state;
     init_search_state(&search_state);
-
     limits_t  limits;
     reset_time_control(&limits);
-
-    const volatile int cancel_flag;
 
     char command[BUFSIZ];
 
     while (fgets(command, sizeof(command), stdin)) {
         command[strcspn(command, "\n")] = 0;
-
         if (strncmp(command, "uci", 3) == 0) {
             printf("id name %s %s\n", ENGINE_NAME, ENGINE_VERSION);
             printf("id author %s\n", ENGINE_AUTHOR);
@@ -242,11 +233,9 @@ void uci_main() {
             continue;
         } else if (strncmp(command, "position", 8) == 0) {
             parse_position(command, &board, &search_state);
-            print_board(&board, min);
         } else if (strncmp(command, "go", 2) == 0) {
             parse_go(command, &board, &search_state, &limits);
         } else if (strncmp(command, "ucinewgame", 10) == 0) {
-            init_transposition_table(256);
             parse_position("position startpos", &board, &search_state);
         } else if (strncmp(command, "quit", 4) == 0 || strncmp(command, "stop", 4) == 0)  {
             break;
