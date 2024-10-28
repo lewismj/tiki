@@ -1284,17 +1284,18 @@ DLLExport void _CDECL nnue_init(const char* evalFile)
   if (loadedFile)
     free(loadedFile);
 
-  printf("Loading NNUE : %s\n", evalFile);
-  fflush(stdout);
+  /* printf("Loading NNUE : %s\n", evalFile); */
   if (load_eval_file(evalFile)) {
     loadedFile = strdup(evalFile);
-    printf("NNUE loaded !\n");
-    fflush(stdout);
+    /*printf("NNUE loaded !\n"); */
+      fflush(stdout);
     return;
   }
 
   printf("NNUE file not found!\n");
-  fflush(stdout);
+    fflush(stdout);
+  exit(EXIT_FAILURE);
+
 }
 
 DLLExport int _CDECL nnue_evaluate(int player, int* pieces, int* squares)

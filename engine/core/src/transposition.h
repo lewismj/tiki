@@ -44,6 +44,7 @@ void init_transposition_table(unsigned short mb);
 void free_transposition_table();
 
 
+
 static inline_always int tt_probe(const uint64_t position_hash, const int depth, const int ply, int alpha, int beta) {
     const size_t index = position_hash % tt_size;
 

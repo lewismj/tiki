@@ -3,12 +3,15 @@
 
 #include "board.h"
 
-
+/**
+ * Require these for Perft and other tests.
+ */
 void on_startup();
-void on_shutdown();
-
-
 void parse_fen(const char* fen, board_t* board);
+
+/**
+ * Main UCI loop.
+ */
 void uci_main();
 
 #endif

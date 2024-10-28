@@ -85,4 +85,5 @@ static inline_always int get_queen_side_castle_flag(move_t m) {
 
 void print_move(move_t m, showable_t options);
 
+
 #endif

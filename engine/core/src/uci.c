@@ -3,17 +3,21 @@
 #include <string.h>
 #include <ctype.h>
 
-
 #include "uci.h"
 #include "attack_mask.h"
 #include "zobrist_key.h"
 #include "transposition.h"
 #include "search_state.h"
 #include "search.h"
+#include "limits.h"
+#include "version.h"
 
 
+#define startpos "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+
+
+/* Will be invoked on atexit, no need to invoke directly. */
 void on_shutdown() {
-    printf("Free transposition table.\n");
     free_transposition_table();
 }
 
@@ -100,11 +104,154 @@ void parse_fen(const char* fen, board_t* board) {
     recalculate_hash(board);
 }
 
+move_t parse_move(const char* input, board_t* board) {
+    /* Parse the move and validate the move. */
+    move_buffer_t buffer;
+    generate_moves(board, &buffer);
+
+    square source_sq = (input[0] - 'a') + (8 - (input[1] - '0')) * 8;
+    square target_sq = (input[2] - 'a') + (8 - (input[3] - '0')) * 8;
+
+    for (int i=0; i < buffer.index; i++ ) {
+        move_t mv = buffer.moves[i];
+        if (source_sq == get_source_square(mv) && target_sq == get_target_square(mv)) {
+            piece promoted = get_promoted_piece(mv);
+            if (promoted) {
+               if ((promoted==Q || promoted==q) && input[4]=='q') return mv;
+               if ((promoted==R || promoted==r) && input[4]=='r') return mv;
+               if ((promoted==B || promoted==b) && input[4]=='b') return mv;
+               if ((promoted==N || promoted==n) && input[4]=='n') return mv;
+               continue; /* Check that move doesn't contain incorrect promotion, e.g. d2d4P */
+            }
+            return mv;
+        }
+    }
+    return 0; /* No move found. */
+}
+
+
+void parse_position(const char* position, board_t* board, search_state_t* search_state) {
+    init_search_state(search_state);
+    reset_board(board);
+
+    const char *ptr = position +9;
+    if (strncmp(ptr, "startpos",8) == 0) {
+        parse_fen(startpos, board);
+    } else {
+        ptr = strstr(ptr, "fen");
+        if (ptr == NULL) {
+            parse_fen(startpos, board);
+        } else {
+            ptr += 4;
+            parse_fen(ptr, board);
+        }
+    }
+    ptr = strstr(position, "moves");
+    if (ptr != NULL) {
+        ptr +=6;
+        while (*ptr) {
+            move_t move = parse_move(ptr, board);
+            if (move == 0) break;
+            search_state->repetition_check[search_state->repetition_index++] = board->hash;
+            make_move(board, move);
+            while (*ptr && *ptr != ' ') ptr++;
+            ptr++;
+        }
+    }
+}
+
+void parse_go(const char* position, board_t* board, search_state_t* search_state, limits_t* limits) {
+    reset_time_control(limits);
+
+    char* arg;
+
+    if ((arg = strstr(position, "winc")) && board->side == white)
+        limits->increment = atoi(arg+5);
+
+    if ((arg = strstr(position, "binc")) && board->side == black)
+        limits->increment = atoi(arg+5);
+
+    if ((arg = strstr(position, "wtime")) && board->side == white)
+        limits->time = atoi(arg+6);
+
+    if ((arg = strstr(position, "btime")) && board->side == black)
+        limits->time = atoi(arg+6);
+
+    if ((arg= strstr(position, "movetime")))
+        limits->move_time = atoi(arg+9);
+
+    if ((arg = strstr(position, "movestogo")))
+        limits->moves_to_go = atoi(arg+10);
+
+    int depth=-1;
+    if ((arg = strstr(position, "depth")))
+        depth = atoi(arg+6);
+    if (depth == -1) depth = 64;
+
+    if (limits->move_time != -1) {
+        limits->time = limits->move_time;
+        limits->moves_to_go = 1;
+    }
+
+    gettimeofday(&limits->start_time, NULL);
+    if (limits->time != -1) {
+        limits->time_set= true;
+        limits->time /= limits->moves_to_go;
+        limits->time -= 50; /* ??? Standard seems to be to compensate for lag. */
+        if (limits->time <0) {
+            limits->time =0;
+            limits->increment -= 50;
+            if (limits->increment < 0) limits->increment = 1;
+        }
+        gettimeofday(&limits->stop_time,NULL);
+    }
+
+    //init_search_state(search_state);
+    clear_pvs(search_state);
+    printf("search state index: [%d]\n",search_state->repetition_index);
+    move_t mv = find_best_move(board, search_state, depth, &limits->cancel_flag);
+    printf("search state index: [%d]\n",search_state->repetition_index);
+    print(mv);
+}
+
+
 void uci_main() {
+    on_startup();
 
     board_t board;
+
     search_state_t search_state;
+    init_search_state(&search_state);
+
+    limits_t  limits;
+    reset_time_control(&limits);
+
     const volatile int cancel_flag;
 
+    char command[BUFSIZ];
 
+    while (fgets(command, sizeof(command), stdin)) {
+        command[strcspn(command, "\n")] = 0;
+
+        if (strncmp(command, "uci", 3) == 0) {
+            printf("id name %s %s\n", ENGINE_NAME, ENGINE_VERSION);
+            printf("id author %s\n", ENGINE_AUTHOR);
+            printf("uciok\n");
+        } else if (strncmp(command, "isready", 7) == 0) {
+            printf("readyok\n");
+            continue;
+        } else if (strncmp(command, "position", 8) == 0) {
+            parse_position(command, &board, &search_state);
+            print_board(&board, min);
+        } else if (strncmp(command, "go", 2) == 0) {
+            parse_go(command, &board, &search_state, &limits);
+        } else if (strncmp(command, "ucinewgame", 10) == 0) {
+            init_transposition_table(256);
+            parse_position("position startpos", &board, &search_state);
+        } else if (strncmp(command, "quit", 4) == 0 || strncmp(command, "stop", 4) == 0)  {
+            break;
+        } else {
+            printf("info string Unknown command: %s\n", command);
+        }
+    }
 }

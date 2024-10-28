@@ -44,3 +44,11 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/../core
 target_link_libraries(${PROJECT_NAME} tiki_engine_core Threads::Threads)
 
 install (TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+install(CODE [[
+        message("Copy NNUE model to bin dir.")
+        file(INSTALL
+                DESTINATION "${CMAKE_INSTALL_BINDIR}/bin"
+                TYPE SHARED_LIBRARY
+                FILES "${NNUE_PATH}")
+    ]])

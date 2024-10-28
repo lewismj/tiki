@@ -14,6 +14,15 @@ void print_move(move_t m, showable_t options) {
         printf("%c ", get_queen_side_castle_flag(m) != 0 ? 't' : 'f');
     }
     if (options & min) {
-        printf("%s%s ", square_to_str[get_source_square(m)], square_to_str[get_target_square(m)]);
+        piece maybe_promoted = get_promoted_piece(m);
+        if (maybe_promoted == 0 )
+            printf("%s%s",
+                   square_to_str[get_source_square(m)],
+                   square_to_str[get_target_square(m)]);
+        else
+            printf("%s%s%c",
+                   square_to_str[get_source_square(m)],
+                   square_to_str[get_target_square(m)],
+                   piece_to_char[maybe_promoted]);
     }
 }
