@@ -186,24 +186,25 @@ void parse_go(const char* position, board_t* board, search_state_t* search_state
     int depth=-1;
     if ((arg = strstr(position, "depth")))
         depth = atoi(arg+6);
-    if (depth == -1) depth = 64;
+
+    if (depth == -1) depth = 32;
 
     if (limits->move_time != -1) {
         limits->time = limits->move_time;
         limits->moves_to_go = 1;
     }
 
-    gettimeofday(&limits->start_time, NULL);
+    limits->start_time = clock_time_ms();
     if (limits->time != -1) {
         limits->time_set= true;
         limits->time /= limits->moves_to_go;
-        limits->time -= 50; /* ??? Standard seems to be to compensate for lag. */
+        limits->time -= 50; /* This approach seems standard, compensate for lag. */
         if (limits->time <0) {
             limits->time =0;
             limits->increment -= 50;
             if (limits->increment < 0) limits->increment = 1;
         }
-        gettimeofday(&limits->stop_time,NULL);
+        limits->stop_time = limits->start_time + limits->time + limits->increment;
     }
 
     move_t mv = find_best_move(board, search_state, depth, &limits->cancel_flag);
