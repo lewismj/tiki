@@ -1,5 +1,6 @@
 #include "search_constants.h"
 
+/* Most valuable victim, least valuable attacker, used to order moves (i.e. not position evaluation).  */
 const search_const_t search_const = {
     .mvv_lva = {
         105, 205, 305, 405, 505, 605,  105, 205, 305, 405, 505, 605,
