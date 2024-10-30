@@ -11,5 +11,6 @@
 #include "../../core/src/search.h"
 #include "../../core/src/transposition.h"
 #include "../../core/src/random.h"
+#include "../../core/src/limits.h"
 
 #endif

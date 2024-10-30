@@ -27,7 +27,7 @@ typedef struct  {
     uint64_t hash;
 } undo_meta_t;
 
-#define MAX_DEPTH 64
+#define MAX_STACK 1024
 
 /**
  * Represents the board (fen_position) state of a game.
@@ -42,7 +42,7 @@ typedef struct {
     int fifty_move;
     uint64_t hash;
     /* Used for applying/undo moves to a board. */
-    undo_meta_t stack[MAX_DEPTH];
+    undo_meta_t stack[MAX_STACK];
     int stack_ptr;
 } board_t;
 
@@ -95,11 +95,15 @@ static inline_always void recalculate_hash(board_t* board) {
 
     for (int p=0; p<12; p++) {
         bitboard b = board->pieces[p];
+//        printf("piece %c ", piece_to_char[p]);
+//        printf(" hash:\t\t0x%" PRIx64 "\n", b);
+//        print_bitboard(&board->pieces[p],show);
         while (b != 0ULL) {
             square s = get_lsb_and_pop_bit(&b);
             hash ^= get_piece_key(s,p);
         }
     }
+//    printf("pieces hash:\t\t0x%" PRIx64 "\n", hash);
 
     if (board->en_passant != none_sq) hash ^= get_enpassant_key(board->en_passant);
     hash ^= get_castle_key(board->castle_flag);
@@ -386,7 +390,6 @@ static inline_always bool make_move(board_t* board, move_t move) {
     square king_sq = opponent == white ?
                      trailing_zero_count(board->pieces[k]) : trailing_zero_count(board->pieces[K]);
     board->stack_ptr++;
-
     return opponent == white ?
            !is_square_attacked_by_white(board, king_sq) : !is_square_attacked_by_black(board, king_sq);
 }

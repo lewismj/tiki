@@ -2,6 +2,7 @@
 #define TIKI_SEARCH_STATE_H
 
 #include <unistd.h>
+#include <string.h>
 #include "search_constants.h"
 
 
@@ -58,5 +59,7 @@ static inline_always bool contains_repetition(search_state_t* search_state, cons
     }
     return false;
 }
+
+void print_search_state(const search_state_t* search_state);
 
 #endif

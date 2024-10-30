@@ -21,6 +21,8 @@ set (SOURCES
         src/uci.c
         src/nnue/misc.c
         src/nnue/nnue.c
+        src/limits.c
+        src/search_state.c
 )
 
 add_library(${PROJECT_NAME} ${SOURCES})

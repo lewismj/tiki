@@ -37,6 +37,7 @@ void reset_board(board_t* board) {
     board->side = white;
     board->fifty_move = 0;
     board->stack_ptr = 0;
+    board->hash = 0ULL;
 }
 
 void parse_fen(const char* fen, board_t* board) {
@@ -114,25 +115,27 @@ move_t parse_move(const char* input, board_t* board) {
 
     for (int i=0; i < buffer.index; i++ ) {
         move_t mv = buffer.moves[i];
+
         if (source_sq == get_source_square(mv) && target_sq == get_target_square(mv)) {
             piece promoted = get_promoted_piece(mv);
             if (promoted) {
-               if ((promoted==Q || promoted==q) && input[4]=='q') return mv;
-               if ((promoted==R || promoted==r) && input[4]=='r') return mv;
-               if ((promoted==B || promoted==b) && input[4]=='b') return mv;
-               if ((promoted==N || promoted==n) && input[4]=='n') return mv;
+               if ((promoted==Q || promoted==q) && (input[4]=='q' || input[4] =='Q')) return mv;
+               if ((promoted==R || promoted==r) && (input[4]=='r' || input[4] =='R')) return mv;
+               if ((promoted==B || promoted==b) && (input[4]=='b' || input[4] =='B')) return mv;
+               if ((promoted==N || promoted==n) && (input[4]=='n' || input[4] =='N')) return mv;
                continue; /* Check that move doesn't contain incorrect promotion, e.g. d2d4P */
             }
             return mv;
         }
     }
+
     return 0; /* No move found. */
 }
 
 
 void parse_position(const char* position, board_t* board, search_state_t* search_state) {
     /* Whenever we parse a board position, we initialize the search state and clear the tt table. */
-    init_search_state(search_state); tt_clear();
+    init_search_state(search_state);
 
     const char *ptr = position +9;
     if (strncmp(ptr, "startpos",8) == 0) {
@@ -158,10 +161,14 @@ void parse_position(const char* position, board_t* board, search_state_t* search
             ptr++;
         }
     }
+
+
+    board->stack_ptr = 0; /* Reset the stack pointer for undo state. */
 }
 
 void parse_go(const char* position, board_t* board, search_state_t* search_state, limits_t* limits) {
     reset_time_control(limits);
+    tt_clear();
 
     char* arg;
 
@@ -183,11 +190,11 @@ void parse_go(const char* position, board_t* board, search_state_t* search_state
     if ((arg = strstr(position, "movestogo")))
         limits->moves_to_go = atoi(arg+10);
 
-    int depth=-1;
+    limits->depth=-1;
     if ((arg = strstr(position, "depth")))
-        depth = atoi(arg+6);
+        limits->depth = atoi(arg+6);
 
-    if (depth == -1) depth = 32;
+    if (limits->depth == -1) limits->depth = 32;
 
     if (limits->move_time != -1) {
         limits->time = limits->move_time;
@@ -207,7 +214,10 @@ void parse_go(const char* position, board_t* board, search_state_t* search_state
         limits->stop_time = limits->start_time + limits->time + limits->increment;
     }
 
-    move_t mv = find_best_move(board, search_state, depth, &limits->cancel_flag);
+//    printf("find best move on this board state:\n");
+//    print_board(board, show|hex);
+
+    move_t mv = find_best_move(board, search_state, limits);
     print(mv);
 }
 
@@ -218,10 +228,10 @@ void uci_main() {
     board_t board;
     search_state_t search_state;
     init_search_state(&search_state);
-    limits_t  limits;
+    limits_t limits;
     reset_time_control(&limits);
 
-    char command[BUFSIZ];
+    char command[100000];
 
     while (fgets(command, sizeof(command), stdin)) {
         command[strcspn(command, "\n")] = 0;

@@ -14,6 +14,7 @@
 #include "search_constants.h"
 #include "search_state.h"
 #include "transposition.h"
+#include "limits.h"
 
 
 static inline_always int score_move(move_t move, board_t* board, search_state_t* search_state) {
@@ -56,18 +57,14 @@ static inline_always int score_move(move_t move, board_t* board, search_state_t*
 }
 
 
-static inline_always void sort_move_buffer(move_buffer_t* buffer, move_t best_move, board_t* board, search_state_t* search_state) {
+static inline_always void sort_move_buffer(move_buffer_t* buffer,  board_t* board, search_state_t* search_state) {
     int scores[buffer->index];
     /*
      * Insertion sort, n.b. probably should look into splitting up the move gen, so captures are at the
      * front of the move list, or separate lists.
      */
     for (int i = 0; i < buffer->index; i++) {
-        if ( buffer->moves[i] == best_move) {
-            scores[i] = 50000;
-        } else {
-            scores[i] = score_move(buffer->moves[i], board, search_state);
-        }
+        scores[i] = score_move(buffer->moves[i], board, search_state);
     }
 
     for (int i = 1; i < buffer->index; i++) {
@@ -86,6 +83,7 @@ static inline_always void sort_move_buffer(move_buffer_t* buffer, move_t best_mo
     }
 }
 
+
 static inline_always void set_follow_pv_flags(move_buffer_t* buffer, search_state_t* search_state) {
     search_state->follow_pv = false;
     for (int i=0; i< buffer->index; i++) {
@@ -97,8 +95,11 @@ static inline_always void set_follow_pv_flags(move_buffer_t* buffer, search_stat
     }
 }
 
-static inline_hint int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state) {
+
+static inline_hint int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state, int stop_time) {
     search_state->nodes++;
+
+    if (search_state->ply > MAX_PLY-1) return evaluation(board);
 
     int eval = evaluation(board);
     if (eval >= beta) return beta;
@@ -106,18 +107,20 @@ static inline_hint int quiescence(int alpha, int beta, board_t* board, search_st
 
     move_buffer_t buffer;
     generate_moves(board, &buffer);
-    sort_move_buffer(&buffer, 0, board, search_state);
+    sort_move_buffer(&buffer, board, search_state);
 
     for (int i=0; i< buffer.index; i++) {
         move_t mv = buffer.moves[i];
         if (get_capture_flag(mv)) {
             ++search_state->ply;
             if (make_move(board, mv)) {
-                int score = -quiescence(-beta, -alpha, board, search_state);
+                int score = -quiescence(-beta, -alpha, board, search_state, stop_time);
                 --search_state->ply;
                 pop_move(board);
-                if (score >= beta) return beta;
-                if (score > alpha) alpha = score;
+                if (score > alpha) {
+                    alpha = score;
+                    if (score >= beta) return beta;
+                }
             } else {
                 --search_state->ply;
                 pop_move(board);
@@ -128,16 +131,25 @@ static inline_hint int quiescence(int alpha, int beta, board_t* board, search_st
 }
 
 
-static inline int negamax(int alpha, int beta, int depth, board_t* board, search_state_t* search_state) {
+static inline int negamax(int alpha,
+                          int beta,
+                          int depth,
+                          board_t* board,
+                          search_state_t* search_state,
+                          limits_t* limits) {
+
     search_state->pv_length[search_state->ply] = search_state->ply;
 
     if ((search_state->ply>0 && contains_repetition(search_state, board->hash)) || board->fifty_move > 100)
         return 0;
 
+    bool is_pv_node = beta - alpha > 1;
     int cached_eval = tt_probe(board->hash, depth, search_state->ply, alpha, beta);
-    if (cached_eval != TT_NOT_FOUND) return cached_eval;
+    if (search_state->ply && !is_pv_node && cached_eval != TT_NOT_FOUND) return cached_eval;
 
-    if (depth == 0) return quiescence(alpha, beta, board, search_state);
+    if (depth == 0) return quiescence(alpha, beta, board, search_state, limits->stop_time);
+
+    if (search_state->ply>MAX_PLY-1) return evaluation(board);
 
     bool in_check = board->side == white ?
                     is_square_attacked_by_black(board, trailing_zero_count(board->pieces[K])) :
@@ -150,7 +162,7 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
         make_null_move(board);
         search_state->repetition_check[++search_state->repetition_index] = board->hash;
         ++search_state->ply;
-        int score = -negamax(-beta, -beta + 1, depth - NULL_MOVE_DEPTH_BOUND, board, search_state);
+        int score = -negamax(-beta, -beta + 1, depth - 2, board, search_state, limits);
         --search_state->ply;
         --search_state->repetition_index;
         pop_null_move(board);
@@ -162,12 +174,12 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
     move_buffer_t buffer;
     generate_moves(board, &buffer);
     if (search_state->follow_pv) set_follow_pv_flags(&buffer, search_state);
-    sort_move_buffer(&buffer, 0, board, search_state);
+    sort_move_buffer(&buffer, board, search_state);
 
     bool has_legal_moves = false;
     int num_moves_searched = 0;
     int score;
-    int best_score;
+    int best_score = -INF;
     for (int i=0; i < buffer.index; i++) {
         move_t mv = buffer.moves[i];
         bool is_capture = get_capture_flag(mv);
@@ -180,23 +192,24 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
         search_state->repetition_check[++search_state->repetition_index] = board->hash;
 
         if (num_moves_searched == 0 ) {
-            score = -negamax(-beta, -alpha, depth-1, board, search_state);
+            score = -negamax(-beta, -alpha, depth-1, board, search_state, limits);
         } else {
             /* Late move reduction. */
             bool is_promoted = get_promoted_piece(mv);
             if ( num_moves_searched >= LMR_DEPTH_BOUND && depth >= LMR_DEPTH_BOUND && !in_check && !is_capture && !is_promoted) {
-                score = -negamax(-alpha - 1, -alpha, depth - 2, board, search_state);
+                score = -negamax(-alpha - 1, -alpha, depth - 2, board, search_state, limits);
                 if (score > alpha) {
-                    score = -negamax(-beta, -alpha, depth - 1, board, search_state);
+                    score = -negamax(-beta, -alpha, depth - 1, board, search_state, limits);
                 }
             }
             else { /* Principal variation search. */
-                score = -negamax(-alpha - 1, -alpha, depth - 1, board, search_state);
+                score = -negamax(-alpha - 1, -alpha, depth - 1, board, search_state, limits);
                 if (score > alpha && score < beta) {
-                    score = -negamax(-beta, -alpha, depth - 1, board, search_state);
+                    score = -negamax(-beta, -alpha, depth - 1, board, search_state, limits);
                 }
             }
         }
+
         ++num_moves_searched;
         --search_state->ply;
         --search_state->repetition_index;
@@ -206,9 +219,10 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
             best_score = score;
 
             search_state->pv_table[search_state->ply][search_state->ply] = mv;
-            for (int j=search_state->ply+1; j < search_state->ply+1; j++) {
-                search_state->pv_table[search_state->ply][j] = search_state->pv_table[search_state->ply+1][j];
+            for (int j = search_state->ply + 1; j < search_state->pv_length[search_state->ply + 1]; j++) {
+                search_state->pv_table[search_state->ply][j] = search_state->pv_table[search_state->ply + 1][j];
             }
+            search_state->pv_length[search_state->ply] = search_state->pv_length[search_state->ply + 1];
 
             if (!is_capture) {
                 search_state->history_moves[get_piece_moved(mv)][get_target_square(mv)] += depth;
@@ -237,33 +251,63 @@ static inline int negamax(int alpha, int beta, int depth, board_t* board, search
 }
 
 
-static move_t inline_always find_best_move(board_t* board,
-                                           search_state_t* search_state,
-                                           int depth,
-                                           atomic_bool* cancel_flag) {
+static move_t inline_always find_best_move(board_t* board, search_state_t* search_state, limits_t* limits) {
     int alpha = -INF;
     int beta = INF;
     int score;
 
+    int depth = limits->depth;
     for (int i=1; i<=depth; i++) {
-        if (*cancel_flag) break;
+        if (limits->cancel_flag) break;
         search_state->follow_pv = true;
-        score = negamax(alpha, beta, i, board, search_state);
+        score = negamax(alpha, beta, i, board, search_state, limits);
         if (score <= alpha || score >= beta) {
             /* If we fall outside the search_state window, widen the search_state *and*
              * re-search_state the same depth, don't 'continue' to the next depth. */
             alpha = -INF;
             beta = INF;
-            score = negamax(alpha, beta, i, board, search_state);
+            score = negamax(alpha, beta, i, board, search_state, limits);
         }
         alpha = score - ASPIRATION_WINDOW;
         beta = score + ASPIRATION_WINDOW;
+        if (search_state->pv_length[0])
+        {
+            if (score > -MATE_VALUE && score < -MATE_SCORE) {
+                printf("info score mate %d depth %d nodes %lu time %d pv ",
+                       -(score + MATE_VALUE) / 2 - 1,
+                       i,
+                       search_state->nodes,
+                       clock_time_ms() - limits->start_time
+                );
+            }
+            else if (score > MATE_SCORE && score < MATE_VALUE) {
+                printf("info score mate %d depth %d nodes %lu time %d pv ", (MATE_VALUE - score) / 2 + 1,
+                       i,
+                       search_state->nodes,
+                       clock_time_ms() - limits->start_time);
+            }
+            else {
+                printf("info score cp %d depth %d nodes %lu time %d pv ", score,
+                       i,
+                       search_state->nodes,
+                       clock_time_ms() - limits->start_time);
+            }
+
+            for (int count = 0; count < search_state->pv_length[0]; count++) {
+                print_move(search_state->pv_table[0][count], min);
+                printf(" ");
+            }
+            printf("\n");
+        }
     }
 
-    return search_state->pv_table[0][0];
+    move_t mv =search_state->pv_table[0][0];
+    return mv;
 }
 
+
 static void inline_always print(move_t mv) {
+
     piece maybe_promoted = get_promoted_piece(mv);
     if (maybe_promoted == 0) {
         printf("bestmove %s%s\n",
