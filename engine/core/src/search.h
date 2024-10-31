@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <poll.h>
 
 #include "types.h"
 #include "board.h"
@@ -95,8 +96,38 @@ static inline_always void set_follow_pv_flags(move_buffer_t* buffer, search_stat
     }
 }
 
+static inline_always bool poll_stdin() {
+    struct pollfd fds;
+    fds.fd = fileno(stdin);
+    fds.events = POLLIN;
+    int ret = poll(&fds, 1, 0);
+    return (ret > 0 && (fds.revents & POLLIN)) ? 1 : 0;
+}
 
-static inline_hint int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state, int stop_time) {
+static inline_always void has_stdin_input(limits_t* limits) {
+    char input[256] = {0};
+    if (poll_stdin()) {
+        limits->stop_search_flag = true;
+        if (fgets(input, sizeof(input), stdin) != NULL) {
+            input[strcspn(input, "\n")] = '\0';
+            if (strcmp(input, "quit") == 0) {
+                limits->stop_engine_flag = true;
+            }
+        }
+    }
+}
+
+static inline_always void check_time(limits_t* limits) {
+    /* Set flag if out of time & then check stdin. */
+    if (limits->time_set && clock_time_ms() > limits->stop_time) {
+        limits->stop_search_flag = true;
+        has_stdin_input(limits);
+    }
+}
+
+static inline_hint int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state, limits_t* limits) {
+    if ((search_state->nodes & 2048) == 0) check_time(limits);
+
     search_state->nodes++;
 
     if (search_state->ply > MAX_PLY-1) return evaluation(board);
@@ -114,9 +145,14 @@ static inline_hint int quiescence(int alpha, int beta, board_t* board, search_st
         if (get_capture_flag(mv)) {
             ++search_state->ply;
             if (make_move(board, mv)) {
-                int score = -quiescence(-beta, -alpha, board, search_state, stop_time);
+                int score = -quiescence(-beta, -alpha, board, search_state, limits);
                 --search_state->ply;
                 pop_move(board);
+
+                if (limits->stop_search_flag) {
+                    return 0;
+                }
+
                 if (score > alpha) {
                     alpha = score;
                     if (score >= beta) return beta;
@@ -147,7 +183,9 @@ static inline int negamax(int alpha,
     int cached_eval = tt_probe(board->hash, depth, search_state->ply, alpha, beta);
     if (search_state->ply && !is_pv_node && cached_eval != TT_NOT_FOUND) return cached_eval;
 
-    if (depth == 0) return quiescence(alpha, beta, board, search_state, limits->stop_time);
+    if ((search_state->nodes & 2048) == 0) check_time(limits);
+
+    if (depth == 0) return quiescence(alpha, beta, board, search_state, limits);
 
     if (search_state->ply>MAX_PLY-1) return evaluation(board);
 
@@ -215,6 +253,10 @@ static inline int negamax(int alpha,
         --search_state->repetition_index;
         pop_move(board);
 
+        if (limits->stop_search_flag) {
+            return 0;
+        }
+
         if (score > alpha) {
             best_score = score;
 
@@ -258,7 +300,7 @@ static move_t inline_always find_best_move(board_t* board, search_state_t* searc
 
     int depth = limits->depth;
     for (int i=1; i<=depth; i++) {
-        if (limits->cancel_flag) break;
+        if (limits->stop_search_flag) break;
         search_state->follow_pv = true;
         score = negamax(alpha, beta, i, board, search_state, limits);
         if (score <= alpha || score >= beta) {
@@ -273,7 +315,7 @@ static move_t inline_always find_best_move(board_t* board, search_state_t* searc
         if (search_state->pv_length[0])
         {
             if (score > -MATE_VALUE && score < -MATE_SCORE) {
-                printf("info score mate %d depth %d nodes %lu time %d pv ",
+                printf("info score mate %d depth %d nodes %lu time %lu pv ",
                        -(score + MATE_VALUE) / 2 - 1,
                        i,
                        search_state->nodes,
@@ -281,13 +323,13 @@ static move_t inline_always find_best_move(board_t* board, search_state_t* searc
                 );
             }
             else if (score > MATE_SCORE && score < MATE_VALUE) {
-                printf("info score mate %d depth %d nodes %lu time %d pv ", (MATE_VALUE - score) / 2 + 1,
+                printf("info score mate %d depth %d nodes %lu time %lu pv ", (MATE_VALUE - score) / 2 + 1,
                        i,
                        search_state->nodes,
                        clock_time_ms() - limits->start_time);
             }
             else {
-                printf("info score cp %d depth %d nodes %lu time %d pv ", score,
+                printf("info score cp %d depth %d nodes %lu time %lu pv ", score,
                        i,
                        search_state->nodes,
                        clock_time_ms() - limits->start_time);
