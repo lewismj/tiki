@@ -149,9 +149,7 @@ static inline_hint int quiescence(int alpha, int beta, board_t* board, search_st
                 --search_state->ply;
                 pop_move(board);
 
-                if (limits->stop_search_flag) {
-                    return 0;
-                }
+                if (limits->stop_search_flag) return 0;
 
                 if (score > alpha) {
                     alpha = score;
@@ -253,9 +251,7 @@ static inline int negamax(int alpha,
         --search_state->repetition_index;
         pop_move(board);
 
-        if (limits->stop_search_flag) {
-            return 0;
-        }
+        if (limits->stop_search_flag) return 0;
 
         if (score > alpha) {
             best_score = score;
