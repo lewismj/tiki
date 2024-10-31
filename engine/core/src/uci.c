@@ -134,9 +134,7 @@ move_t parse_move(const char* input, board_t* board) {
 
 
 void parse_position(const char* position, board_t* board, search_state_t* search_state) {
-    /* Whenever we parse a board position, we initialize the search state and clear the tt table. */
-    init_search_state(search_state);
-
+    reset_board(board);
     const char *ptr = position +9;
     if (strncmp(ptr, "startpos",8) == 0) {
         parse_fen(startpos, board);
@@ -167,6 +165,7 @@ void parse_position(const char* position, board_t* board, search_state_t* search
 }
 
 void parse_go(const char* position, board_t* board, search_state_t* search_state, limits_t* limits) {
+    init_search_state(search_state);
     reset_time_control(limits);
     tt_clear();
 

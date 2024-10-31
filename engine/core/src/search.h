@@ -37,7 +37,7 @@ static inline_always int score_move(move_t move, board_t* board, search_state_t*
      */
     if (search_state->score_pv && search_state->pv_table[0][search_state->ply] == move) {
         search_state->score_pv = false;
-        return 40000;
+        return 20000;
     }
 
     if (get_capture_flag(move)) {
@@ -46,13 +46,13 @@ static inline_always int score_move(move_t move, board_t* board, search_state_t*
         int* pieces = (board->side == white) ? black_pieces : white_pieces;
         for (int i = 0; i < 6; i++) {
             if (is_bit_set(&board->pieces[pieces[i]], target)) {
-                return 30000 + search_const.mvv_lva[piece][pieces[i]];
+                return 10000 + search_const.mvv_lva[piece][pieces[i]];
             }
         }
         return 0;
     } else {
-        if (search_state->killer_moves[0][search_state->ply] == move) return 20000;
-        else if (search_state->killer_moves[1][search_state->ply] == move) return 10000;
+        if (search_state->killer_moves[0][search_state->ply] == move) return 9000;
+        else if (search_state->killer_moves[1][search_state->ply] == move) return 8000;
         return search_state->history_moves[get_piece_moved(move)][get_target_square(move)];
     }
 }
@@ -183,7 +183,9 @@ static inline int negamax(int alpha,
 
     if ((search_state->nodes & 2048) == 0) check_time(limits);
 
-    if (depth == 0) return quiescence(alpha, beta, board, search_state, limits);
+    if (depth == 0) {
+        return quiescence(alpha, beta, board, search_state, limits);
+    }
 
     if (search_state->ply>MAX_PLY-1) return evaluation(board);
 
@@ -198,7 +200,7 @@ static inline int negamax(int alpha,
         make_null_move(board);
         search_state->repetition_check[++search_state->repetition_index] = board->hash;
         ++search_state->ply;
-        int score = -negamax(-beta, -beta + 1, depth - 2, board, search_state, limits);
+        int score = -negamax(-beta, -beta + 1, depth - 3, board, search_state, limits);
         --search_state->ply;
         --search_state->repetition_index;
         pop_null_move(board);
@@ -337,7 +339,7 @@ static move_t inline_always find_best_move(board_t* board, search_state_t* searc
             }
             printf("\n");
         }
-    }
+   }
 
     move_t mv =search_state->pv_table[0][0];
     return mv;

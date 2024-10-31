@@ -31,9 +31,9 @@ extern const search_const_t search_const;
 #define MATE_VALUE 890000
 #define MATE_SCORE 880000
 
-#define MAX_MOVES 1024          /* Maximum number of moves in the game.                                     */
-#define MAX_PLY 64              /* Maximum ply we can search.                                               */
-#define NULL_MOVE_DEPTH_BOUND 4 /* Lower bound for depth to enable null move pruning.                       */
-#define LMR_DEPTH_BOUND 4       /* Lower bound for depth to enable late move reduction.                     */
-#define ASPIRATION_WINDOW 50    /* Offsets to use to narrow search window with iterative deepening.         */
+#define MAX_MOVES 1024           /* Maximum number of moves in the game.                                     */
+#define MAX_PLY 64               /* Maximum ply we can search.                                               */
+#define NULL_MOVE_DEPTH_BOUND 4  /* Lower bound for depth to enable null move pruning.                       */
+#define LMR_DEPTH_BOUND 4        /* Lower bound for depth to enable late move reduction.                     */
+#define ASPIRATION_WINDOW 300    /* Offsets to use to narrow search window with iterative deepening.         */
 #endif

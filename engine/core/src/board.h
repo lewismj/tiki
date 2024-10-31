@@ -95,15 +95,11 @@ static inline_always void recalculate_hash(board_t* board) {
 
     for (int p=0; p<12; p++) {
         bitboard b = board->pieces[p];
-//        printf("piece %c ", piece_to_char[p]);
-//        printf(" hash:\t\t0x%" PRIx64 "\n", b);
-//        print_bitboard(&board->pieces[p],show);
         while (b != 0ULL) {
             square s = get_lsb_and_pop_bit(&b);
             hash ^= get_piece_key(s,p);
         }
     }
-//    printf("pieces hash:\t\t0x%" PRIx64 "\n", hash);
 
     if (board->en_passant != none_sq) hash ^= get_enpassant_key(board->en_passant);
     hash ^= get_castle_key(board->castle_flag);

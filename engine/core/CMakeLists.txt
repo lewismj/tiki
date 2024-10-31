@@ -23,6 +23,7 @@ set (SOURCES
         src/nnue/nnue.c
         src/limits.c
         src/search_state.c
+        src/hce/evaluation_mask.c
 )
 
 add_library(${PROJECT_NAME} ${SOURCES})
