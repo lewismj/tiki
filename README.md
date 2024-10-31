@@ -9,4 +9,4 @@ Chess Engine Ansi C
   - Transposition table is basic at present and require test cases for UCI, when parsing 'position ... moves ...'
   commands, to ensure hashing is correct (simple move ordering tests in place).
 - Time control implemented.
-- Eval, just using old NNUE model.
+- Eval, just using old NNUE model (Need to create a handcrafted evaluation and then simple NNUE style model).
