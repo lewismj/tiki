@@ -190,11 +190,12 @@ void parse_go(const char* position, board_t* board, search_state_t* search_state
     if ((arg = strstr(position, "movestogo")))
         limits->moves_to_go = atoi(arg+10);
 
-    limits->depth=-1;
-    if ((arg = strstr(position, "depth")))
-        limits->depth = atoi(arg+6);
-
-    if (limits->depth == -1) limits->depth = 32;
+    limits->depth=32;
+    if ((arg = strstr(position, "depth"))) {
+        limits->time_set = false;
+        limits->time = -1;
+        limits->depth = atoi(arg + 6);
+    }
 
     if (limits->move_time != -1) {
         limits->time = limits->move_time;
@@ -205,17 +206,16 @@ void parse_go(const char* position, board_t* board, search_state_t* search_state
     if (limits->time != -1) {
         limits->time_set= true;
         limits->time /= limits->moves_to_go;
-        limits->time -= 50; /* This approach seems standard, compensate for lag. */
         if (limits->time <0) {
             limits->time =0;
-            limits->increment -= 50;
             if (limits->increment < 0) limits->increment = 1;
         }
         limits->stop_time = limits->start_time + limits->time + limits->increment;
     }
 
-//    printf("find best move on this board state:\n");
-//    print_board(board, show|hex);
+    if (limits->time_set) {
+        printf("start time [%lu] stop time [%lu]\n",limits->start_time, limits->stop_time);
+    }
 
     move_t mv = find_best_move(board, search_state, limits);
     print(mv);
@@ -233,7 +233,7 @@ void uci_main() {
 
     char command[100000];
 
-    while (fgets(command, sizeof(command), stdin)) {
+    while (fgets(command, sizeof(command), stdin) && !limits.stop_engine_flag) {
         command[strcspn(command, "\n")] = 0;
         if (strncmp(command, "uci", 3) == 0) {
             printf("id name %s %s\n", ENGINE_NAME, ENGINE_VERSION);
