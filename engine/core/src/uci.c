@@ -212,10 +212,6 @@ void parse_go(const char* position, board_t* board, search_state_t* search_state
         limits->stop_time = limits->start_time + limits->time + limits->increment;
     }
 
-    if (limits->time_set) {
-        printf("start time [%lu] stop time [%lu]\n",limits->start_time, limits->stop_time);
-    }
-
     move_t mv = find_best_move(board, search_state, limits);
     print(mv);
 }
