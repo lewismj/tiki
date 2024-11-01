@@ -6,7 +6,15 @@ Chess Engine Ansi C
 - MoveGen is quite fast (uses PEXT) <2s for Perft-6 of start position. Large number 6K of perft test positions.
 - Search is very much _work in progress_ with very basics done, PVS, Null move pruning & Late move reduction.
   - Likely requires some additional work to visualize search tree and spot any suboptimal choices.
-  - Transposition table is basic at present and require test cases for UCI, when parsing 'position ... moves ...'
-  commands, to ensure hashing is correct (simple move ordering tests done).
+  - Transposition table is basic at present and require test cases for UCI & aging etc.
+  - Various refinements to the iterative deepening, LMR etc. would improve strength.
 - Time control implemented.
-- Eval, Hand-crafted evaluation, (also using early NNUE model to verify) need to expand to some sort of simple NNUE.
+- Eval, using early version of NNUE (and also hand-crafted evaluation) need to expand to some sort of simple NNUE.
+
+
+- The basic move gen is fast, however rather than generate 'list of moves', should generate list of captures and list
+of quiet moves. The sorting can be improved initially by just moving the PV to the top of the list and only sorting the
+remaining moves, if necessary.
+
+- Parallel search is an option, even if its just non-deterministically filling the transposition table.
+Useful as a prototype for a v2 and test for own NNUE evaluation.

@@ -310,8 +310,7 @@ static move_t inline_always find_best_move(board_t* board, search_state_t* searc
         }
         alpha = score - ASPIRATION_WINDOW;
         beta = score + ASPIRATION_WINDOW;
-        if (search_state->pv_length[0])
-        {
+        if (search_state->pv_length[0])     {
             if (score > -MATE_VALUE && score < -MATE_SCORE) {
                 printf("info score mate %d depth %d nodes %lu time %lu pv ",
                        -(score + MATE_VALUE) / 2 - 1,

@@ -30,9 +30,9 @@ typedef enum {
 
 typedef struct align {
     uint64_t            position_hash;
-    uint8_t             depth;
+    uint16_t            depth;
     tt_entry_type       entry_type;
-    uint8_t             score;
+    int                 score;
 } transposition_node_t;
 
 extern transposition_node_t* t_table;
@@ -66,6 +66,8 @@ static inline_always
 void tt_save(const uint64_t position_hash, const tt_entry_type hash_flag, const int depth, const int ply, int score) {
     const size_t index = position_hash % tt_size;
 
+    if (position_hash == t_table[index].position_hash && t_table[index].depth >= depth) return;
+
     if (score < -MATE_SCORE) score -= ply;
     if (score > MATE_SCORE) score += ply;
 
@@ -76,7 +78,7 @@ void tt_save(const uint64_t position_hash, const tt_entry_type hash_flag, const 
 }
 
 static inline_always void tt_clear() {
-    memset(t_table, 99, tt_size * sizeof(transposition_node_t));
+    memset(t_table, 0, tt_size * sizeof(transposition_node_t));
 }
 
 
