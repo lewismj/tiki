@@ -285,8 +285,8 @@ static inline_always bool make_move(board_t* board, move_t move) {
     set_bit(&board->occupancy[board->side], target);
     pop_bit(&board->occupancy[board->side], source);
 
-    board->hash ^= get_piece_key(source, move_piece);
-    board->hash ^= get_piece_key(target, move_piece);
+    //board->hash ^= get_piece_key(source, move_piece);
+    //board->hash ^= get_piece_key(target, move_piece);
 
     /* Update half/fifty move counter, if necessary. */
     if ( move_piece == P || move_piece == p || capture_flag) {
@@ -296,7 +296,7 @@ static inline_always bool make_move(board_t* board, move_t move) {
     }
 
     /* A square is only en passant for one move... */
-    if (board->en_passant != none_sq) board->hash ^= get_enpassant_key(board->en_passant);
+    //if (board->en_passant != none_sq) board->hash ^= get_enpassant_key(board->en_passant);
     board->en_passant = none_sq;
 
     int double_push_flag = get_double_push_flag(move);
@@ -314,7 +314,7 @@ static inline_always bool make_move(board_t* board, move_t move) {
             board->stack[board->stack_ptr].captured_piece = captured_piece;
             pop_bit(&board->pieces[captured_piece], target);
             pop_bit(&board->occupancy[opponent], target);
-            board->hash ^= get_piece_key(target, captured_piece);
+           // board->hash ^= get_piece_key(target, captured_piece);
             break;
         }
     }
@@ -323,7 +323,7 @@ static inline_always bool make_move(board_t* board, move_t move) {
     if (double_push_flag) {
         square sq = board->side == white ? target + 8 : target - 8;
         board->en_passant = sq;
-        board->hash ^= get_enpassant_key(sq);
+        //board->hash ^= get_enpassant_key(sq);
     }
     else if (enpassant_flag) {
         /*
@@ -334,12 +334,12 @@ static inline_always bool make_move(board_t* board, move_t move) {
             square sq = target + 8;
             pop_bit(&board->pieces[p], sq);
             pop_bit(&board->occupancy[opponent], sq);
-            board->hash ^= get_piece_key(sq, p);
+            //board->hash ^= get_piece_key(sq, p);
         } else {
             square sq = target - 8;
             pop_bit(&board->pieces[P], sq);
             pop_bit(&board->occupancy[opponent], sq);
-            board->hash ^= get_piece_key(sq, P);
+          //  board->hash ^= get_piece_key(sq, P);
         }
     } /* en passant. */
     else if (king_side_castle_flag) {
@@ -351,11 +351,8 @@ static inline_always bool make_move(board_t* board, move_t move) {
         pop_bit(&board->occupancy[board->side], from);
         set_bit(&board->pieces[rook], to);
         set_bit(&board->occupancy[board->side], to);
-
-        board->hash ^= get_piece_key(from, rook);
-        board->hash ^= get_piece_key(to, rook);
-        board->castle_flag &= (castling_update[source] & castling_update[target]);
-        board->hash ^= get_castle_key(board->castle_flag);
+        //board->hash ^= get_piece_key(from, rook);
+        //board->hash ^= get_piece_key(to, rook);
     } else if (queen_side_castle_flag) {
         /* Queen side castling. */
         int rook = board->side == white ? R: r;
@@ -365,32 +362,32 @@ static inline_always bool make_move(board_t* board, move_t move) {
         pop_bit(&board->occupancy[board->side], from);
         set_bit(&board->pieces[rook], to);
         set_bit(&board->occupancy[board->side], to);
-
-        board->hash ^= get_piece_key(from, rook);
-        board->hash ^= get_piece_key(to, rook);
-        board->castle_flag &= (castling_update[source] & castling_update[target]);
-        board->hash ^= get_castle_key(board->castle_flag);
+        //board->hash ^= get_piece_key(from, rook);
+        //board->hash ^= get_piece_key(to, rook);
     } else if (promoted) {
         /* Here promoted is piece, but if promoted=0, indicated no promotion. */
         int pawn = board->side == white ? P : p;
         pop_bit(&board->pieces[pawn], target);
         pop_bit(&board->occupancy[board->side], target);
+        //board->hash ^= get_piece_key(target, pawn);
+
         set_bit(&board->pieces[promoted], target);
         set_bit(&board->occupancy[board->side], target);
-        board->hash ^= get_piece_key(target, promoted);
-        board->hash ^= get_piece_key(target, pawn);
+        //board->hash ^= get_piece_key(target, promoted);
     }
 
+    board->castle_flag &= (castling_update[source] & castling_update[target]);
+    //board->hash ^= get_castle_key(board->castle_flag);
 
     board->occupancy[both] = board->occupancy[white] | board->occupancy[black];
     board->side = opponent;
-    board->hash ^= get_side_key();
+    //board->hash ^= get_side_key();
 
     square king_sq = opponent == white ?
                      trailing_zero_count(board->pieces[k]) : trailing_zero_count(board->pieces[K]);
     board->stack_ptr++;
 
-    //recalculate_hash(board);
+    recalculate_hash(board);
     return opponent == white ?
            !is_square_attacked_by_white(board, king_sq) : !is_square_attacked_by_black(board, king_sq);
 }

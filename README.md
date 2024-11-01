@@ -11,6 +11,8 @@ Chess Engine Ansi C
 - Time control implemented.
 - Eval, using early version of NNUE (and also hand-crafted evaluation) need to expand to some sort of simple NNUE.
 
+- ELO - rough estimate just above 2000, only tested versus some other engine that claim to be 2000 ELO and it seems to 
+handle these fairly easily (using NNUE, will retry with HCE).
 
 - The basic move gen is fast, however rather than generate 'list of moves', should generate list of captures and list
 of quiet moves. The sorting can be improved initially by just moving the PV to the top of the list and only sorting the
