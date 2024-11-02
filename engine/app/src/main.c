@@ -39,6 +39,7 @@ int main(int argc, char* argv[]) {
         uci_main();
     }
     else {
+        /* Should make Evaluation a choice between handcrafted and NNUE. */
         fprintf(stderr, "Environment variable NNUE_PATH is not set.\n");
         exit(EXIT_FAILURE);
     }
