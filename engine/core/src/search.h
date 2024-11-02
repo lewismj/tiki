@@ -318,7 +318,7 @@ static move_t inline_always find_best_move(board_t* board, search_state_t* searc
 
         alpha = score - ASPIRATION_WINDOW;
         beta = score + ASPIRATION_WINDOW;
-        
+
         best_move = search_state->pv_table[0][0];
 
         if (search_state->pv_length[0]) {
