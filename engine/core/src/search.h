@@ -149,7 +149,7 @@ static inline_hint int quiescence(int alpha, int beta, board_t* board, search_st
                 --search_state->ply;
                 pop_move(board);
 
-                if (limits->stop_search_flag) return 0;
+                if (limits->stop_search_flag) return STOPPED_SEARCH;
 
                 if (score > alpha) {
                     alpha = score;
@@ -253,7 +253,7 @@ static inline int negamax(int alpha,
         --search_state->repetition_index;
         pop_move(board);
 
-        if (limits->stop_search_flag) return 0;
+        if (limits->stop_search_flag) return STOPPED_SEARCH;
 
         if (score > alpha) {
             best_score = score;
@@ -290,8 +290,71 @@ static inline int negamax(int alpha,
     return has_legal_moves ? alpha : in_check ? -MATE_VALUE + search_state->ply : 0;
 }
 
-
 static move_t inline_always find_best_move(board_t* board, search_state_t* search_state, limits_t* limits) {
+    int alpha = -INF;
+    int beta = INF;
+    int score;
+
+    int depth = limits->depth;
+    move_t best_move = 0;
+    int best_score = -INF;
+    bool stopped = false;
+
+    for (int i = 1; i <= depth; i++) {
+        search_state->follow_pv = true;
+        score = negamax(alpha, beta, i, board, search_state, limits);
+
+        if (score == STOPPED_SEARCH ) {
+            stopped = true;
+            break;
+        }
+
+        if (score <= alpha || score >= beta) {
+            alpha = -INF;
+            beta = INF;
+            score = negamax(alpha, beta, i, board, search_state, limits);
+        }
+
+
+        alpha = score - ASPIRATION_WINDOW;
+        beta = score + ASPIRATION_WINDOW;
+        
+        best_move = search_state->pv_table[0][0];
+
+        if (search_state->pv_length[0]) {
+            if (score > -MATE_VALUE && score < -MATE_SCORE) {
+                printf("info score mate %d depth %d nodes %lu time %lu pv ",
+                       -(score + MATE_VALUE) / 2 - 1,
+                       i,
+                       search_state->nodes,
+                       clock_time_ms() - limits->start_time);
+            }
+            else if (score > MATE_SCORE && score < MATE_VALUE) {
+                printf("info score mate %d depth %d nodes %lu time %lu pv ", (MATE_VALUE - score) / 2 + 1,
+                       i,
+                       search_state->nodes,
+                       clock_time_ms() - limits->start_time);
+            }
+            else {
+                printf("info score cp %d depth %d nodes %lu time %lu pv ", score,
+                       i,
+                       search_state->nodes,
+                       clock_time_ms() - limits->start_time);
+            }
+
+            for (int count = 0; count < search_state->pv_length[0]; count++) {
+                print_move(search_state->pv_table[0][count], min);
+                printf(" ");
+            }
+            printf("\n");
+        }
+    }
+
+    if (!stopped) best_move = search_state->pv_table[0][0];
+    return best_move;
+}
+
+static move_t inline_always find_best_move0(board_t* board, search_state_t* search_state, limits_t* limits) {
     int alpha = -INF;
     int beta = INF;
     int score;
