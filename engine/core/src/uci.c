@@ -205,9 +205,11 @@ void parse_go(const char* position, board_t* board, search_state_t* search_state
     if (limits->time != -1) {
         limits->time_set= true;
         limits->time /= limits->moves_to_go;
+        limits->time -= 55;
         if (limits->time <0) {
             limits->time =0;
-            if (limits->increment < 0) limits->increment = 1;
+            limits->increment -= 55;
+            if (limits->increment < 0) limits->increment = 55;
         }
         limits->stop_time = limits->start_time + limits->time + limits->increment;
     }
