@@ -59,24 +59,26 @@ void test_make_move_hash3() {
     parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board2);
 
 
-    move_t b2c3 = encode_move(b2, c3, N, 0, 0, 0, 0, 0, 0);
-    move_t b8c5 = encode_move(b8, c5, n, 0, 0, 0, 0, 0, 0);
-    move_t g1f4 = encode_move(g1, f4, N, 0, 0, 0, 0, 0, 0);
+    /* Knights from their real squares, the incremental hash assumes the piece is on the source. */
+    move_t b1c3 = encode_move(b1, c3, N, 0, 0, 0, 0, 0, 0);
+    move_t b8c6 = encode_move(b8, c6, n, 0, 0, 0, 0, 0, 0);
+    move_t g1f3 = encode_move(g1, f3, N, 0, 0, 0, 0, 0, 0);
     move_t g8f6 = encode_move(g8, f6, n, 0, 0, 0, 0, 0, 0);
 
-    make_move(&board1, b2c3);
-    make_move(&board1, b8c5);
-    make_move(&board1, g1f4);
+    make_move(&board1, b1c3);
+    make_move(&board1, b8c6);
+    make_move(&board1, g1f3);
     make_move(&board1, g8f6);
 
-    make_move(&board2, g1f4);
+    make_move(&board2, g1f3);
     TEST_ASSERT_NOT_EQUAL_UINT64(board1.hash, board2.hash);
     make_move(&board2, g8f6);
     TEST_ASSERT_NOT_EQUAL_UINT64(board1.hash, board2.hash);
-    make_move(&board2, b2c3);
+    make_move(&board2, b1c3);
     TEST_ASSERT_NOT_EQUAL_UINT64(board1.hash, board2.hash);
-    make_move(&board2, b8c5);
+    make_move(&board2, b8c6);
     TEST_ASSERT_EQUAL_UINT64(board1.hash, board2.hash);
+    TEST_ASSERT_EQUAL_UINT64(compute_hash(&board2), board2.hash);
 }
 
 
@@ -132,5 +134,43 @@ void test_undo_restores_state1() {
            // TEST_ASSERT_EQUAL_INT(original.half_move, board.half_move);
             TEST_ASSERT_EQUAL_INT(original.fifty_move, board.fifty_move);
         }
+    }
+}
+/* Perft-style walk, counts nodes where the incremental hash differs from a full recompute. */
+static int hash_mismatches(board_t* board, int depth) {
+    if (depth == 0) return 0;
+
+    int mismatches = 0;
+    const uint64_t hash = board->hash;
+    move_buffer_t buffer;
+    buffer.index = 0;
+    generate_moves(board, &buffer);
+    for (int i = 0; i < buffer.index; i++) {
+        bool legal = make_move(board, buffer.moves[i]);
+        /* Checked for illegal moves too, they're made (then undone) in search. */
+        if (board->hash != compute_hash(board)) mismatches++;
+        if (legal) mismatches += hash_mismatches(board, depth - 1);
+        pop_move(board);
+        if (board->hash != hash) mismatches++;
+    }
+    return mismatches;
+}
+
+void test_incremental_hash_matches_full() {
+    /* Castling (and rights lost by rook capture), en passant, promotions with capture. */
+    static const struct { const char* fen; int depth; } positions[] = {
+            { "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4 },
+            { "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 3 },
+            { "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 4 },
+            { "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1", 3 },
+            { "n1n5/PPPk4/8/8/8/8/4Kppp/5N1N b - - 0 1", 3 },
+            { "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", 3 },
+            { "rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3", 3 },
+    };
+    for (size_t i = 0; i < sizeof(positions) / sizeof(positions[0]); i++) {
+        board_t board;
+        parse_fen(positions[i].fen, &board);
+        TEST_ASSERT_EQUAL_UINT64(compute_hash(&board), board.hash);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, hash_mismatches(&board, positions[i].depth), positions[i].fen);
     }
 }

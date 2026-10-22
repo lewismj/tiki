@@ -22,6 +22,7 @@ typedef struct {
     int start_index;
     int end_index;
     perft_data_t* buff;
+    int failures; /* Unity asserts aren't thread safe, failures are counted and asserted on the main thread. */
 } thread_args_t;
 
 
@@ -90,8 +91,8 @@ void* worker_thread(void* args) {
                 int num_moves = calc_perft(&board, j+1);
                 if (thread_args->buff[i].values[j] != num_moves) {
                     printf(" case [%d] failed, j: %d, actual: %d, expected: %d\n", i, j+1, num_moves, thread_args->buff[i].values[j]);
+                    thread_args->failures++;
                 }
-                TEST_ASSERT_EQUAL_INT(thread_args->buff[i].values[j], num_moves);
             }
         }
         //printf("\n");
@@ -115,14 +116,17 @@ void full_perft_test() {
 
     int count =0;
     char line[MAX_LINE_LENGTH];
-    while (fgets(line, sizeof(line), file) && count<limit) {
-        char *token = strtok(line, ",");
-        int len = strlen(token);
-        if (token) {
-            full_perft_data[count].position = malloc(len+1 * sizeof(char));
-            strncpy(full_perft_data[count].position, token, len);
-            full_perft_data[count].position[len] = '\0';
+    while (fgets(line, sizeof(line), file)) {
+        if (count == limit) {
+            TEST_FAIL_MESSAGE("Perft data file has more records than the buffer holds.");
         }
+        char *token = strtok(line, ",");
+        if (token == NULL) continue;
+
+        /* Rows may have fewer than 6 depths, -1 marks a depth that isn't checked. */
+        for (int d = 0; d < 6; d++) full_perft_data[count].values[d] = -1;
+        full_perft_data[count].position = strdup(token);
+
         while ((token = strtok(NULL, ",")) != NULL) {
             int depth = atoi(token);
             token = strtok(NULL, ",");
@@ -147,6 +151,7 @@ void full_perft_test() {
         thread_args[i].id = i;
         thread_args[i].start_index = i * items_per_thread;
         thread_args[i].buff = full_perft_data;
+        thread_args[i].failures = 0;
 
         if (i == MAX_TEST_THREADS - 1) thread_args[i].end_index = (i + 1) * items_per_thread + remainder;
         else thread_args[i].end_index = (i + 1) * items_per_thread;
@@ -154,10 +159,15 @@ void full_perft_test() {
         pthread_create(&threads[i], NULL, worker_thread, (void*) &thread_args[i]);
     }
 
-    for (int i = 0; i < MAX_TEST_THREADS; ++i)
+    int failures = 0;
+    for (int i = 0; i < MAX_TEST_THREADS; ++i) {
         pthread_join(threads[i], NULL);
+        failures += thread_args[i].failures;
+    }
 
     for (int i=0;i<count;i++) free(full_perft_data[i].position);
     free(full_perft_data);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, failures, "Perft mismatches, see 'failed' lines above.");
 
 }

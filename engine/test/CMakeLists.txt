@@ -8,7 +8,11 @@ set (SOURCES
         src/make_undo_move_tests.c
         src/perft_tests.c
         src/uci_tests.c
-        src/repetition_tests.c)
+        src/repetition_tests.c
+        src/tt_tests.c
+        src/input_tests.c
+        src/board_tests.c
+        src/search_tests.c)
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 
@@ -26,5 +30,17 @@ set(DATA_DIRECTORY "${CMAKE_BINARY_DIR}/engine/test/data/")
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/data/perft-tests.csv DESTINATION ${DATA_DIRECTORY})
 
 target_link_libraries(${PROJECT_NAME} tiki_engine_core unity Threads::Threads)
+tiki_target_warnings(${PROJECT_NAME})
+
+# The runner looks for <dir>/data/perft-tests.csv (dir is the argument), and runs the full perft
+# suite only when it's found. 'unit' points at a directory without it, 'perft_full' at the copy.
+add_test(NAME unit COMMAND ${PROJECT_NAME} ${CMAKE_CURRENT_BINARY_DIR}/unit)
+set_tests_properties(unit PROPERTIES TIMEOUT 900)
+
+add_test(NAME perft_full COMMAND ${PROJECT_NAME} ${CMAKE_BINARY_DIR}/engine/test)
+set_tests_properties(perft_full PROPERTIES TIMEOUT 3600 LABELS slow)
 
 install (TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+# The 'bench' command runs end to end (the node count is checked for determinism in the unit tests).
+add_test(NAME bench COMMAND tiki_app bench 6)
+set_tests_properties(bench PROPERTIES TIMEOUT 300 PASS_REGULAR_EXPRESSION "Nodes searched")

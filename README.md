@@ -19,6 +19,26 @@ Chess Engine Ansi C
 - re: ELO a rough estimate just around/above 2000, only tested versus some other engine that claim to be 2000 ELO, it seems to 
 handle these fairly easily, but need to run via profiler to gauge search hostspot.
 
+### Building and testing
+
+```
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+cd build && ctest -LE slow        # unit tests and bench smoke test; 'ctest' also runs the full perft file
+```
+
+- `-DTIKI_USE_PEXT=OFF` uses magic bitboards (default is on when the build machine has BMI2; turn it off on AMD Zen 1/2).
+- `-DTIKI_SANITIZE=address,undefined` (or `thread`) builds everything with sanitizers.
+- `-DTIKI_BUILD_BENCHMARKS=OFF` skips fetching Google Benchmark.
+
+### Benchmarking
+
+- `tiki_app bench [depth]` (or `bench [depth]` in the UCI loop) searches 16 fixed positions to a fixed depth
+  (default 8) with a 16MB TT cleared before each one, and prints the total node count and nodes/second. The node count
+  only changes when the search or evaluation does, so it's a signature for refactors that shouldn't change behaviour.
+- `build/engine/benchmark/tiki_benchmark` runs Google Benchmark micro-benchmarks of evaluation, move generation,
+  make/undo, perft and a fixed-depth search, for comparing an evaluation change on its own.
+
 ### Notes
 
 - The basic move gen is fast, however rather than generate 'list of moves', should generate list of captures and list

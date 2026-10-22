@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <core/tiki.h>
 
 static int perft(board_t* b, int depth) {
@@ -31,6 +32,13 @@ int main(int argc, char* argv[]) {
     on_startup();
 
     /* Evaluation is HCE, the NNUE model isn't loaded until it is replaced. */
+
+    /* 'tiki_app bench [depth]', run the benchmark and exit (e.g. for OpenBench/regression checks). */
+    if (argc >= 2 && strcmp(argv[1], "bench") == 0) {
+        int depth = argc >= 3 ? atoi(argv[2]) : 0;
+        bench(depth > 0 ? depth : BENCH_DEFAULT_DEPTH);
+        return EXIT_SUCCESS;
+    }
 
     /* Run main UCI loop.           */
     uci_main();

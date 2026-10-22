@@ -12,5 +12,6 @@
 #include "../../core/src/transposition.h"
 #include "../../core/src/random.h"
 #include "../../core/src/limits.h"
+#include "../../core/src/bench.h"
 
 #endif

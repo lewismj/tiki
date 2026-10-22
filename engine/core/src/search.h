@@ -6,7 +6,6 @@
 #include <signal.h>
 #include <unistd.h>
 #include <pthread.h>
-#include <poll.h>
 
 #include "types.h"
 #include "board.h"
@@ -18,11 +17,11 @@
 #include "limits.h"
 
 
-static inline_always int score_move(move_t move, board_t* board, search_state_t* search_state) {
+static inline_always int score_move(move_t move, move_t tt_move, board_t* board, search_state_t* search_state) {
 
     /*
      * We require, in order of move type,
-     *      0. PV
+     *      0. TT best move, then PV
      *      1. captures,
      *      2. killer moves,
      *      3. history heuristic moves.
@@ -35,6 +34,8 @@ static inline_always int score_move(move_t move, board_t* board, search_state_t*
      * categories above).
      *
      */
+    if (tt_move && move == tt_move) return 30000;
+
     if (search_state->score_pv && search_state->pv_table[0][search_state->ply] == move) {
         search_state->score_pv = false;
         return 20000;
@@ -58,14 +59,14 @@ static inline_always int score_move(move_t move, board_t* board, search_state_t*
 }
 
 
-static inline_always void sort_move_buffer(move_buffer_t* buffer,  board_t* board, search_state_t* search_state) {
+static inline_always void sort_move_buffer(move_buffer_t* buffer, move_t tt_move, board_t* board, search_state_t* search_state) {
     int scores[buffer->index];
     /*
      * Insertion sort, n.b. probably should look into splitting up the move gen, so captures are at the
      * front of the move list, or separate lists.
      */
     for (int i = 0; i < buffer->index; i++) {
-        scores[i] = score_move(buffer->moves[i], board, search_state);
+        scores[i] = score_move(buffer->moves[i], tt_move, board, search_state);
     }
 
     for (int i = 1; i < buffer->index; i++) {
@@ -96,34 +97,11 @@ static inline_always void set_follow_pv_flags(move_buffer_t* buffer, search_stat
     }
 }
 
-static inline_always bool poll_stdin() {
-    struct pollfd fds;
-    fds.fd = fileno(stdin);
-    fds.events = POLLIN;
-    int ret = poll(&fds, 1, 0);
-    return (ret > 0 && (fds.revents & POLLIN)) ? 1 : 0;
-}
-
-static inline_always void has_stdin_input(limits_t* limits) {
-    char input[256] = {0};
-    if (poll_stdin()) {
-        if (fgets(input, sizeof(input), stdin) != NULL) {
-            input[strcspn(input, "\r\n")] = '\0';
-            handle_search_input(limits, input);
-        } else {
-            /* stdin closed, nothing more can arrive so treat as quit. */
-            limits->stop_search_flag = true;
-            limits->stop_engine_flag = true;
-        }
-    }
-}
-
 static inline_always void check_time(limits_t* limits) {
-    /* Set flag if out of time. Always poll stdin, so 'go infinite' and 'go depth' can be stopped. */
+    /* Set flag if out of time. 'stop' and 'quit' set the flag from the input thread. */
     if (limits->time_set && clock_time_ms() > limits->stop_time) {
         limits->stop_search_flag = true;
     }
-    if (!limits->stop_search_flag) has_stdin_input(limits);
 }
 
 static inline_always bool is_draw(const board_t* board, search_state_t* search_state) {
@@ -143,7 +121,7 @@ static inline_hint int quiescence(int alpha, int beta, board_t* board, search_st
 
     move_buffer_t buffer;
     generate_moves(board, &buffer);
-    sort_move_buffer(&buffer, board, search_state);
+    sort_move_buffer(&buffer, 0, board, search_state);
 
     for (int i=0; i< buffer.index; i++) {
         move_t mv = buffer.moves[i];
@@ -184,7 +162,9 @@ static inline int negamax(int alpha,
         return 0;
 
     bool is_pv_node = beta - alpha > 1;
-    int cached_eval = tt_probe(board->hash, depth, search_state->ply, alpha, beta);
+    const int alpha_orig = alpha;
+    move_t tt_move;
+    int cached_eval = tt_probe(board->hash, depth, search_state->ply, alpha, beta, &tt_move);
     if (search_state->ply && !is_pv_node && cached_eval != TT_NOT_FOUND) return cached_eval;
 
     if ((search_state->nodes & 2047) == 0) check_time(limits);
@@ -210,6 +190,8 @@ static inline int negamax(int alpha,
         --search_state->ply;
         --search_state->repetition_index;
         pop_null_move(board);
+        /* A stopped null search returns -STOPPED_SEARCH, which would look like a cutoff. */
+        if (limits->stop_search_flag) return STOPPED_SEARCH;
         if (score >= beta) return beta;
     }
 
@@ -218,12 +200,12 @@ static inline int negamax(int alpha,
     move_buffer_t buffer;
     generate_moves(board, &buffer);
     if (search_state->follow_pv) set_follow_pv_flags(&buffer, search_state);
-    sort_move_buffer(&buffer, board, search_state);
+    sort_move_buffer(&buffer, tt_move, board, search_state);
 
     bool has_legal_moves = false;
     int num_moves_searched = 0;
     int score;
-    int best_score = -INF;
+    move_t best_move = 0;
     for (int i=0; i < buffer.index; i++) {
         move_t mv = buffer.moves[i];
         bool is_capture = get_capture_flag(mv);
@@ -262,7 +244,7 @@ static inline int negamax(int alpha,
         if (limits->stop_search_flag) return STOPPED_SEARCH;
 
         if (score > alpha) {
-            best_score = score;
+            best_move = mv;
 
             search_state->pv_table[search_state->ply][search_state->ply] = mv;
             for (int j = search_state->ply + 1; j < search_state->pv_length[search_state->ply + 1]; j++) {
@@ -277,7 +259,7 @@ static inline int negamax(int alpha,
             alpha = score;
 
             if (score >= beta) {
-                tt_save(board->hash, tt_beta, depth, search_state->ply, score);
+                tt_save(board->hash, tt_beta, depth, search_state->ply, score, mv);
                 if (!is_capture) {
                     search_state->killer_moves[1][search_state->ply] = search_state->killer_moves[0][search_state->ply];
                     search_state->killer_moves[0][search_state->ply] = mv;
@@ -287,13 +269,28 @@ static inline int negamax(int alpha,
         }
     }
 
-    if (best_score > alpha) {
-        tt_save(board->hash, tt_exact, depth, search_state->ply, best_score);
+    if (!has_legal_moves) return in_check ? -MATE_VALUE + search_state->ply : 0;
+
+    /* Fail-hard, alpha only moves if a move scored inside the window. */
+    if (alpha > alpha_orig) {
+        tt_save(board->hash, tt_exact, depth, search_state->ply, alpha, best_move);
     } else {
-        tt_save(board->hash, tt_alpha, depth, search_state->ply, alpha);
+        tt_save(board->hash, tt_alpha, depth, search_state->ply, alpha, 0);
     }
 
-    return has_legal_moves ? alpha : in_check ? -MATE_VALUE + search_state->ply : 0;
+    return alpha;
+}
+
+/* Used when no iteration completed (stopped very early), 0 if there are no legal moves. */
+static move_t inline_always first_legal_move(board_t* board) {
+    move_buffer_t buffer;
+    generate_moves(board, &buffer);
+    for (int i = 0; i < buffer.index; i++) {
+        bool legal = make_move(board, buffer.moves[i]);
+        pop_move(board);
+        if (legal) return buffer.moves[i];
+    }
+    return 0;
 }
 
 static move_t inline_always find_best_move(board_t* board, search_state_t* search_state, limits_t* limits) {
@@ -303,24 +300,21 @@ static move_t inline_always find_best_move(board_t* board, search_state_t* searc
 
     int depth = limits->depth;
     move_t move = 0;
-    int best_score = -INF;
-    bool stopped = false;
 
     for (int i = 1; i <= depth; i++) {
         search_state->follow_pv = true;
         score = negamax(alpha, beta, i, board, search_state, limits);
 
-        if (score == STOPPED_SEARCH ) {
-            stopped = true;
-            break;
-        }
-
-        if (score <= alpha || score >= beta) {
+        /* Outside the aspiration window, re-search with a full window. */
+        if (!limits->stop_search_flag && (score <= alpha || score >= beta)) {
             alpha = -INF;
             beta = INF;
             score = negamax(alpha, beta, i, board, search_state, limits);
         }
 
+        /* Either search may have been stopped, the PV table is then partly overwritten so keep
+         * the move from the last completed depth. */
+        if (limits->stop_search_flag || score == STOPPED_SEARCH) break;
 
         alpha = score - ASPIRATION_WINDOW;
         beta = score + ASPIRATION_WINDOW;
@@ -354,14 +348,21 @@ static move_t inline_always find_best_move(board_t* board, search_state_t* searc
             }
             printf("\n");
         }
+
+        /* Soft limit, the next depth is unlikely to complete in the time left. */
+        if (limits->time_set && clock_time_ms() > limits->soft_stop_time) break;
     }
 
-    /* If a search was interrupted (time) then don't return from the interrupted pv
-     * table, return the last completed search. */
-    return stopped ? move : search_state->pv_table[0][0];
+    return move ? move : first_legal_move(board);
 }
 
 static void inline_always print(move_t mv) {
+
+    /* No legal moves, UCI null move. */
+    if (mv == 0) {
+        printf("bestmove 0000\n");
+        return;
+    }
 
     piece maybe_promoted = get_promoted_piece(mv);
     if (maybe_promoted == 0) {

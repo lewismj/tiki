@@ -24,7 +24,7 @@ static inline_always uint64_t get_enpassant_key(square s) {
 }
 
 static inline_always uint64_t get_castle_key(int castle_flag) {
-    return zk_instance.castle_keys[castle_flag % 15];
+    return zk_instance.castle_keys[castle_flag]; /* 0-15, one key per combination of rights. */
 }
 
 static inline_always uint64_t get_side_key() {

@@ -7,5 +7,6 @@ void test_make_move_hash1();
 void test_make_move_hash2();
 void test_make_move_hash3();
 void test_undo_restores_state1();
+void test_incremental_hash_matches_full();
 
 #endif

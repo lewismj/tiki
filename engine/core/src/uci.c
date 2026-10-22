@@ -10,6 +10,8 @@
 #include "search_state.h"
 #include "search.h"
 #include "limits.h"
+#include "uci_input.h"
+#include "bench.h"
 #include "version.h"
 
 
@@ -167,7 +169,7 @@ void parse_position(const char* position, board_t* board, search_state_t* search
                 search_state->repetition_index = 100;
             }
             while (*ptr && *ptr != ' ') ptr++;
-            ptr++;
+            if (*ptr == ' ') ptr++; /* Don't step past the terminator after the last move. */
         }
     }
 
@@ -192,6 +194,7 @@ uci_command_t parse_uci_command(const char* command) {
     if (is_token(command, "go")) return uci_cmd_go;
     if (is_token(command, "stop")) return uci_cmd_stop;
     if (is_token(command, "quit")) return uci_cmd_quit;
+    if (is_token(command, "bench")) return uci_cmd_bench;
     return uci_cmd_unknown;
 }
 
@@ -248,25 +251,26 @@ void parse_go_limits(const char* command, const board_t* board, limits_t* limits
             if (limits->increment < 0) limits->increment = 55;
         }
         limits->stop_time = limits->start_time + limits->time + limits->increment;
+
+        /* Don't start a new depth after half the allocation, 'movetime' can use all of it. */
+        limits->soft_stop_time = limits->move_time != -1 ?
+                                 limits->stop_time :
+                                 limits->start_time + (limits->stop_time - limits->start_time) / 2;
     }
 }
 
 void parse_go(const char* command, board_t* board, search_state_t* search_state, limits_t* limits) {
     clear_pv_table(search_state); /* Preserves the game history from 'position' for repetition checks. */
-    tt_clear();
+    tt_new_search(); /* The TT is kept between moves, it's only cleared on 'ucinewgame'. */
     parse_go_limits(command, board, limits);
+    input_search_started(limits); /* After the limits are reset, a queued 'stop' may set the flag. */
 
     move_t mv = find_best_move(board, search_state, limits);
 
     /* UCI: with 'go infinite' bestmove must not be sent before 'stop', even if the search completed. */
-    if (limits->infinite) {
-        char input[256];
-        while (!limits->stop_search_flag && fgets(input, sizeof(input), stdin)) {
-            input[strcspn(input, "\r\n")] = '\0';
-            handle_search_input(limits, input);
-        }
-    }
+    if (limits->infinite) input_wait_for_stop(limits);
 
+    input_search_finished();
     print(mv);
 }
 
@@ -301,6 +305,12 @@ bool handle_uci_command(const char* command, board_t* board, search_state_t* sea
         case uci_cmd_quit:
             limits->stop_engine_flag = true;
             break;
+        case uci_cmd_bench: {
+            int depth = atoi(command + 5);
+            bench(depth > 0 ? depth : BENCH_DEFAULT_DEPTH);
+            new_game(board, search_state); /* Bench leaves its last position on the board. */
+            break;
+        }
         default:
             printf("info string Unknown command: %s\n", command);
     }
@@ -309,17 +319,26 @@ bool handle_uci_command(const char* command, board_t* board, search_state_t* sea
 }
 
 
+void uci_loop(FILE* in, board_t* board, search_state_t* search_state, limits_t* limits) {
+    input_start(in);
+
+    char* command;
+    while ((command = input_pop()) != NULL) {
+        bool running = handle_uci_command(command, board, search_state, limits);
+        free(command);
+        if (!running) break;
+    }
+
+    input_join();
+}
+
 void uci_main() {
     board_t board;
     search_state_t search_state;
     init_search_state(&search_state);
     limits_t limits;
     reset_time_control(&limits);
+    parse_position("position startpos", &board, &search_state);
 
-    char command[100000];
-
-    while (!limits.stop_engine_flag && fgets(command, sizeof(command), stdin)) {
-        command[strcspn(command, "\r\n")] = 0;
-        if (!handle_uci_command(command, &board, &search_state, &limits)) break;
-    }
+    uci_loop(stdin, &board, &search_state, &limits);
 }

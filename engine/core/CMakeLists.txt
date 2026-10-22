@@ -2,7 +2,6 @@ project(tiki_engine_core)
 
 set(CMAKE_C_STANDARD_REQUIRED True)
 set(CMAKE_C_STANDARD 23)
-include(CheckCSourceCompiles)
 
 include_directories(${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR})
 
@@ -19,6 +18,8 @@ set (SOURCES
         src/search_constants.c
         src/transposition.c
         src/uci.c
+        src/uci_input.c
+        src/bench.c
         src/nnue/misc.c
         src/nnue/nnue.c
         src/limits.c
@@ -29,26 +30,16 @@ set (SOURCES
 add_library(${PROJECT_NAME} ${SOURCES})
 set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
-# Copy these PEXT settings to executable definition.
-set(CMAKE_REQUIRED_FLAGS "-mbmi2")
-check_c_source_compiles("
-#include <immintrin.h>
-int main() {
-    unsigned long long src = 0b10101010, mask = 0b1111;
-    unsigned long long res = _pext_u64(src, mask);
-    return 0;
-}" PEXT_SUPPORTED)
-
-if(PEXT_SUPPORTED)
-    message(STATUS "PEXT instruction is supported.")
-    target_compile_definitions(${PROJECT_NAME} PRIVATE USE_PEXT)
-    target_compile_options(${PROJECT_NAME} PRIVATE "-mbmi2")
-    target_link_options(${PROJECT_NAME} PRIVATE "-mbmi2")
-else()
-    message(STATUS "PEXT instruction is not supported.")
+# PUBLIC, the attack lookups are inlined from headers into every target that links the core.
+if(TIKI_USE_PEXT)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC USE_PEXT)
+    target_compile_options(${PROJECT_NAME} PUBLIC "-mbmi2")
 endif()
 
-target_link_libraries(${PROJECT_NAME} PRIVATE atomic)
+tiki_target_warnings(${PROJECT_NAME})
+
+find_package(Threads REQUIRED)
+target_link_libraries(${PROJECT_NAME} PRIVATE atomic Threads::Threads)
 
 
 if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
