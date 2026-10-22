@@ -89,3 +89,201 @@ void test_bench_is_deterministic() {
     /* The TT size is restored after the run. */
     TEST_ASSERT_EQUAL_size_t(tt_entries, tt_size);
 }
+
+void test_time_checked_once_per_2048_nodes() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    setup_position("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+                   &board, &search_state, &limits, 5);
+    find_best_move(&board, &search_state, &limits);
+
+    /* Used to also check before counting, several times on the same count. */
+    TEST_ASSERT_TRUE(search_state.nodes > 10 * 2048);
+    TEST_ASSERT_EQUAL_UINT64(search_state.nodes / 2048, limits.time_checks);
+}
+
+void test_time_limit_stops_at_first_check() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* Already out of time, the first check (at 2048 nodes) stops the search. */
+    setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, 10);
+    limits.time_set = true;
+    limits.stop_time = 0;
+    limits.soft_stop_time = UINT64_MAX; /* Only the hard limit, the soft one would stop after depth 1. */
+
+    move_t mv = find_best_move(&board, &search_state, &limits);
+    TEST_ASSERT_TRUE(limits.stop_search_flag);
+    TEST_ASSERT_EQUAL_UINT64(1, limits.time_checks);
+    TEST_ASSERT_TRUE(search_state.nodes >= 2048 && search_state.nodes < 2 * 2048);
+    TEST_ASSERT_TRUE(make_move(&board, mv));
+}
+
+void test_pick_next_move_order() {
+    move_buffer_t buffer;
+    int scores[MOVE_BUFFER_SIZE];
+    static const int input[] = { 5, 100, 0, 9000, 5, 20000, -3, 100 };
+    const int n = (int) (sizeof(input) / sizeof(input[0]));
+
+    /* Move i is just i + 1, so the picked moves can be checked against their scores. */
+    buffer.index = n;
+    for (int i = 0; i < n; i++) {
+        buffer.moves[i] = (move_t) (i + 1);
+        scores[i] = input[i];
+    }
+
+    bool seen[16] = { false };
+    int previous = 1 << 30;
+    for (int i = 0; i < n; i++) {
+        move_t mv = pick_next_move(&buffer, scores, i);
+        TEST_ASSERT_EQUAL_INT(input[mv - 1], scores[i]); /* Score still belongs to its move. */
+        TEST_ASSERT_TRUE(scores[i] <= previous);         /* Best first. */
+        TEST_ASSERT_FALSE(seen[mv]);                     /* Each move once. */
+        seen[mv] = true;
+        previous = scores[i];
+    }
+    TEST_ASSERT_EQUAL_UINT32(6, buffer.moves[0]); /* 20000 */
+    TEST_ASSERT_EQUAL_UINT32(4, buffer.moves[1]); /* 9000  */
+}
+
+void test_quiescence_sees_quiet_queen_promotion() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* No captures, only a7a8=Q. The old qsearch skipped non-captures, so it stood pat. */
+    setup_position("8/P7/8/8/8/8/k7/7K w - - 0 1", &board, &search_state, &limits, 1);
+    const int stand_pat = evaluation(&board);
+    const int score = quiescence(-INF, INF, &board, &search_state, &limits);
+    TEST_ASSERT_TRUE(score > stand_pat + 500);
+}
+
+void test_check_extended_at_horizon() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* Mated, searched at depth 0. Without the extension this went to qsearch and stood pat. */
+    setup_position("R5k1/5ppp/8/8/8/8/5PPP/6K1 b - - 0 1", &board, &search_state, &limits, 0);
+    TEST_ASSERT_EQUAL_INT(-MATE_VALUE, negamax(-INF, INF, 0, &board, &search_state, &limits));
+
+    /* Mate in 1 at depth 1: Rd8+ leaves the reply at depth 0, it must still see the mate. */
+    setup_position("6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1", &board, &search_state, &limits, 1);
+    TEST_ASSERT_EQUAL_INT(MATE_VALUE - 1, negamax(-INF, INF, 1, &board, &search_state, &limits));
+}
+
+void test_null_move_guards() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+    const int low_beta = -10000; /* Static eval is always above this. */
+
+    /* Middlegame, pieces on both sides, not in check, one ply in. */
+    setup_position("r1bqkb1r/pppp1ppp/2n2n2/4p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq - 4 4",
+                   &board, &search_state, &limits, 5);
+    search_state.ply = 1;
+    search_state.repetition_index = 1;
+    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, low_beta, false, false));
+
+    /* Depth, check and PV node. */
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, NULL_MOVE_DEPTH_BOUND - 1, low_beta, false, false));
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, true, false));
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, false, true));
+
+    /* Static eval below beta. */
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, evaluation(&board) + 1, false, false));
+    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, evaluation(&board), false, false));
+
+    /* Root. */
+    search_state.ply = 0;
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, false, false));
+    search_state.ply = 1;
+
+    /* Straight after a null move, but not two plies after one. */
+    search_state.null_move_index = 1;
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, false, false));
+    search_state.repetition_index = 2;
+    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, low_beta, false, false));
+    search_state.null_move_index = 0;
+    search_state.repetition_index = 1;
+
+    /* Side to move has only king and pawns (the opponent's pieces don't matter). */
+    setup_position("4k3/8/8/2r5/8/8/PPP5/4K3 w - - 0 1", &board, &search_state, &limits, 5);
+    search_state.ply = 1;
+    search_state.repetition_index = 1;
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, false, false));
+    setup_position("4k3/8/8/2r5/8/8/PPP5/4K3 b - - 0 1", &board, &search_state, &limits, 5);
+    search_state.ply = 1;
+    search_state.repetition_index = 1;
+    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, low_beta, false, false));
+}
+
+void test_history_bonus_and_bound() {
+    search_state_t search_state;
+    init_search_state(&search_state);
+    const move_t mv = encode_move(g1, f3, N, 0, 0, 0, 0, 0, 0);
+    const int32_t* h = &search_state.history_moves[N][f3];
+
+    /* From zero the bonus is depth^2. */
+    update_history(&search_state, mv, 3);
+    TEST_ASSERT_EQUAL_INT(9, *h);
+
+    /* Deep, long searches saturate at HISTORY_MAX instead of growing without bound. */
+    for (int i = 0; i < 100000; i++) update_history(&search_state, mv, 40);
+    TEST_ASSERT_TRUE(*h <= HISTORY_MAX);
+    TEST_ASSERT_TRUE(*h > HISTORY_MAX * 9 / 10);
+
+    /* Near the bound the same bonus adds less than it did from zero. */
+    search_state.history_moves[N][f3] = HISTORY_MAX / 2;
+    update_history(&search_state, mv, 10);
+    TEST_ASSERT_EQUAL_INT(HISTORY_MAX / 2 + 100 - (HISTORY_MAX / 2) * 100 / HISTORY_MAX, *h);
+}
+
+void test_history_stays_below_killers_and_captures() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* 1.e4 d5, exd5 is a capture. */
+    setup_position("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2", &board, &search_state, &limits, 1);
+    const move_t quiet = parse_move("g1f3", &board);
+    const move_t killer = parse_move("b1c3", &board);
+    const move_t capture = parse_move("e4d5", &board);
+
+    for (int i = 0; i < 100000; i++) update_history(&search_state, quiet, 40);
+    search_state.killer_moves[1][0] = killer; /* Second killer, the lower of the two. */
+
+    const int quiet_score = score_move(quiet, 0, &board, &search_state);
+    const int killer_score = score_move(killer, 0, &board, &search_state);
+    const int capture_score = score_move(capture, 0, &board, &search_state);
+    TEST_ASSERT_TRUE(quiet_score < killer_score);
+    TEST_ASSERT_TRUE(killer_score < capture_score);
+}
+
+void test_en_passant_scored_as_pawn_capture() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* White e5, black just played d7d5: exd6 e.p. and, for comparison, exf6 taking a pawn on f6. */
+    setup_position("rnbqkbnr/ppp1p1pp/5p2/3pP3/8/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 3", &board, &search_state, &limits, 1);
+    const move_t en_passant = parse_move("e5d6", &board);
+    const move_t pawn_takes_pawn = parse_move("e5f6", &board);
+    TEST_ASSERT_TRUE(get_enpassant_flag(en_passant));
+    TEST_ASSERT_FALSE(get_enpassant_flag(pawn_takes_pawn));
+
+    /* Used to score 0, below every quiet move with history. */
+    TEST_ASSERT_EQUAL_INT(score_move(pawn_takes_pawn, 0, &board, &search_state),
+                          score_move(en_passant, 0, &board, &search_state));
+
+    /* Black side as well. */
+    setup_position("rnbqkbnr/pppp1ppp/8/8/3Pp3/5P2/PPP3PP/RNBQKBNR b KQkq d3 0 3", &board, &search_state, &limits, 1);
+    const move_t black_en_passant = parse_move("e4d3", &board);
+    const move_t black_pawn_takes_pawn = parse_move("e4f3", &board);
+    TEST_ASSERT_TRUE(get_enpassant_flag(black_en_passant));
+    TEST_ASSERT_EQUAL_INT(score_move(black_pawn_takes_pawn, 0, &board, &search_state),
+                          score_move(black_en_passant, 0, &board, &search_state));
+}

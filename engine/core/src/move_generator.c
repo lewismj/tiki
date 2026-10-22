@@ -262,3 +262,116 @@ void generate_moves(board_t* board, move_buffer_t* move_buffer) {
 
 }
 
+
+
+void generate_white_pawn_captures(board_t* board, move_buffer_t* move_buffer) {
+    bitboard white_pawns = board->pieces[P];
+
+    /* Promotions, to a queen only. */
+    bitboard pawns_on_rank7 = white_pawns & bitboard_const.rank_masks[6];
+    bitboard up = (pawns_on_rank7 >> 8) & ~board->occupancy[both];
+    while (up) {
+        square target = get_lsb_and_pop_bit(&up);
+        move_buffer->moves[move_buffer->index++] = encode_move(target + 8, target, P, Q, 0, 0, 0, 0, 0);
+    }
+    bitboard up_left = (pawns_on_rank7 >> 9 & bitboard_const.not_h_file) & board->occupancy[black];
+    while (up_left) {
+        square target = get_lsb_and_pop_bit(&up_left);
+        move_buffer->moves[move_buffer->index++] = encode_move(target + 9, target, P, Q, 1, 0, 0, 0, 0);
+    }
+    bitboard up_right = (pawns_on_rank7 >> 7 & bitboard_const.not_a_file) & board->occupancy[black];
+    while (up_right) {
+        square target = get_lsb_and_pop_bit(&up_right);
+        move_buffer->moves[move_buffer->index++] = encode_move(target + 7, target, P, Q, 1, 0, 0, 0, 0);
+    }
+
+    /* Captures. */
+    bitboard pawns_not_on_rank7 = white_pawns & ~bitboard_const.rank_masks[6];
+    up_left = (pawns_not_on_rank7 >> 9 & bitboard_const.not_h_file) & board->occupancy[black];
+    while (up_left) {
+        square target = get_lsb_and_pop_bit(&up_left);
+        move_buffer->moves[move_buffer->index++] = encode_move(target + 9, target, P, 0, 1, 0, 0, 0, 0);
+    }
+    up_right = (pawns_not_on_rank7 >> 7 & bitboard_const.not_a_file) & board->occupancy[black];
+    while (up_right) {
+        square target = get_lsb_and_pop_bit(&up_right);
+        move_buffer->moves[move_buffer->index++] = encode_move(target + 7, target, P, 0, 1, 0, 0, 0, 0);
+    }
+
+    if (board->en_passant != none_sq) {
+        bitboard en_passant_capture = pawns_not_on_rank7 & pawn_attack(board->en_passant, black);
+        while (en_passant_capture) {
+            square source = get_lsb_and_pop_bit(&en_passant_capture);
+            move_buffer->moves[move_buffer->index++] = encode_move(source, board->en_passant, P, 0, 1, 0, 1, 0, 0);
+        }
+    }
+}
+
+void generate_black_pawn_captures(board_t* board, move_buffer_t* move_buffer) {
+    bitboard black_pawns = board->pieces[p];
+
+    /* Promotions, to a queen only. */
+    bitboard pawns_on_rank2 = black_pawns & bitboard_const.rank_masks[1];
+    bitboard down = (pawns_on_rank2 << 8) & ~board->occupancy[both];
+    while (down) {
+        square target = get_lsb_and_pop_bit(&down);
+        move_buffer->moves[move_buffer->index++] = encode_move(target - 8, target, p, q, 0, 0, 0, 0, 0);
+    }
+    bitboard down_left = (pawns_on_rank2 << 9 & bitboard_const.not_a_file) & board->occupancy[white];
+    while (down_left) {
+        square target = get_lsb_and_pop_bit(&down_left);
+        move_buffer->moves[move_buffer->index++] = encode_move(target - 9, target, p, q, 1, 0, 0, 0, 0);
+    }
+    bitboard down_right = (pawns_on_rank2 << 7 & bitboard_const.not_h_file) & board->occupancy[white];
+    while (down_right) {
+        square target = get_lsb_and_pop_bit(&down_right);
+        move_buffer->moves[move_buffer->index++] = encode_move(target - 7, target, p, q, 1, 0, 0, 0, 0);
+    }
+
+    /* Captures. */
+    bitboard pawns_not_on_rank2 = black_pawns & ~bitboard_const.rank_masks[1];
+    down_left = (pawns_not_on_rank2 << 9 & bitboard_const.not_a_file) & board->occupancy[white];
+    while (down_left) {
+        square target = get_lsb_and_pop_bit(&down_left);
+        move_buffer->moves[move_buffer->index++] = encode_move(target - 9, target, p, 0, 1, 0, 0, 0, 0);
+    }
+    down_right = (pawns_not_on_rank2 << 7 & bitboard_const.not_h_file) & board->occupancy[white];
+    while (down_right) {
+        square target = get_lsb_and_pop_bit(&down_right);
+        move_buffer->moves[move_buffer->index++] = encode_move(target - 7, target, p, 0, 1, 0, 0, 0, 0);
+    }
+
+    if (board->en_passant != none_sq) {
+        bitboard en_passant_capture = pawns_not_on_rank2 & pawn_attack(board->en_passant, white);
+        while (en_passant_capture) {
+            square source = get_lsb_and_pop_bit(&en_passant_capture);
+            move_buffer->moves[move_buffer->index++] = encode_move(source, board->en_passant, p, 0, 1, 0, 1, 0, 0);
+        }
+    }
+}
+
+void generate_captures(board_t* board, move_buffer_t* move_buffer) {
+    move_buffer->index = 0;
+    bitboard all = board->occupancy[both];
+
+    /* Only opponent squares as targets, so every piece move is a capture. */
+    if (board->side == white) {
+        bitboard opponent = board->occupancy[black];
+
+        generate_white_pawn_captures(board, move_buffer);
+        generate_piece_move(N, board->pieces[N], &opponent, &opponent, &all, knight_attack_wrapper, move_buffer);
+        generate_piece_move(B, board->pieces[B], &opponent, &opponent, &all, bishop_attack, move_buffer);
+        generate_piece_move(R, board->pieces[R], &opponent, &opponent, &all, rook_attack, move_buffer);
+        generate_piece_move(Q, board->pieces[Q], &opponent, &opponent, &all, queen_attack, move_buffer);
+        generate_piece_move(K, board->pieces[K], &opponent, &opponent, &all, king_attack_wrapper, move_buffer);
+    } else {
+        bitboard opponent = board->occupancy[white];
+
+        generate_black_pawn_captures(board, move_buffer);
+        generate_piece_move(n, board->pieces[n], &opponent, &opponent, &all, knight_attack_wrapper, move_buffer);
+        generate_piece_move(b, board->pieces[b], &opponent, &opponent, &all, bishop_attack, move_buffer);
+        generate_piece_move(r, board->pieces[r], &opponent, &opponent, &all, rook_attack, move_buffer);
+        generate_piece_move(q, board->pieces[q], &opponent, &opponent, &all, queen_attack, move_buffer);
+        generate_piece_move(k, board->pieces[k], &opponent, &opponent, &all, king_attack_wrapper, move_buffer);
+    }
+}

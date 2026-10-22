@@ -38,4 +38,5 @@ extern const search_const_t search_const;
 #define NULL_MOVE_DEPTH_BOUND 4  /* Lower bound for depth to enable null move pruning.                       */
 #define LMR_DEPTH_BOUND 4        /* Lower bound for depth to enable late move reduction.                     */
 #define ASPIRATION_WINDOW 300    /* Offsets to use to narrow search window with iterative deepening.         */
+#define HISTORY_MAX 7000         /* History scores stay at or below this, under the killers (8000, 9000).    */
 #endif

@@ -12,6 +12,7 @@ typedef struct align {
     uint64_t start_time;
     uint64_t stop_time;       /* Hard limit, the search is stopped.                   */
     uint64_t soft_stop_time;  /* Soft limit, no new iteration is started after this.  */
+    uint64_t time_checks;     /* Number of clock checks made by the search.           */
     int depth;
     int moves_to_go;
     int move_time;
@@ -36,6 +37,7 @@ static inline_always void reset_time_control(limits_t* limits) {
     limits->start_time = 0ULL;
     limits->stop_time = 0ULL;
     limits->soft_stop_time = 0ULL;
+    limits->time_checks = 0ULL;
 }
 
 static inline_always uint64_t clock_time_ms() {

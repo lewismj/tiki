@@ -44,6 +44,10 @@ static inline_always int score_move(move_t move, move_t tt_move, board_t* board,
     if (get_capture_flag(move)) {
         square target = get_target_square(move);
         piece piece = get_piece_moved(move);
+        /* En passant, the target square is empty, the victim is the pawn beside it. */
+        if (get_enpassant_flag(move)) {
+            return 10000 + search_const.mvv_lva[piece][board->side == white ? p : P];
+        }
         int* pieces = (board->side == white) ? black_pieces : white_pieces;
         for (int i = 0; i < 6; i++) {
             if (is_bit_set(&board->pieces[pieces[i]], target)) {
@@ -59,30 +63,43 @@ static inline_always int score_move(move_t move, move_t tt_move, board_t* board,
 }
 
 
-static inline_always void sort_move_buffer(move_buffer_t* buffer, move_t tt_move, board_t* board, search_state_t* search_state) {
-    int scores[buffer->index];
-    /*
-     * Insertion sort, n.b. probably should look into splitting up the move gen, so captures are at the
-     * front of the move list, or separate lists.
-     */
+/**
+ * Quiet move raised alpha, bonus depth^2 with 'gravity': h += bonus - h * bonus / HISTORY_MAX.
+ * The increase shrinks as h approaches HISTORY_MAX and h never exceeds it, so history stays
+ * below the killer and capture scores however deep or long the search runs.
+ */
+static inline_always void update_history(search_state_t* search_state, move_t mv, int depth) {
+    int32_t* h = &search_state->history_moves[get_piece_moved(mv)][get_target_square(mv)];
+    int bonus = depth * depth;
+    if (bonus > HISTORY_MAX) bonus = HISTORY_MAX;
+    *h += bonus - *h * bonus / HISTORY_MAX;
+    if (*h > HISTORY_MAX) *h = HISTORY_MAX;
+}
+
+static inline_always void score_moves(const move_buffer_t* buffer, int* scores, move_t tt_move, board_t* board, search_state_t* search_state) {
     for (int i = 0; i < buffer->index; i++) {
         scores[i] = score_move(buffer->moves[i], tt_move, board, search_state);
     }
+}
 
-    for (int i = 1; i < buffer->index; i++) {
-        int current_score = scores[i];
-        move_t current_move = buffer->moves[i];
-        int j = i - 1;
-
-        while (j >= 0 && scores[j] < current_score) {
-            scores[j + 1] = scores[j];
-            buffer->moves[j + 1] = buffer->moves[j];
-            j--;
-        }
-
-        scores[j + 1] = current_score;
-        buffer->moves[j + 1] = current_move;
+/**
+ * Selection sort one step at a time: swap the best scored move from i onwards into i and return it.
+ * Most nodes cut off after one or two moves, so sorting the whole list up front is wasted work.
+ */
+static inline_always move_t pick_next_move(move_buffer_t* buffer, int* scores, int i) {
+    int best = i;
+    for (int j = i + 1; j < buffer->index; j++) {
+        if (scores[j] > scores[best]) best = j;
     }
+    if (best != i) {
+        move_t mv = buffer->moves[best];
+        buffer->moves[best] = buffer->moves[i];
+        buffer->moves[i] = mv;
+        int score = scores[best];
+        scores[best] = scores[i];
+        scores[i] = score;
+    }
+    return buffer->moves[i];
 }
 
 
@@ -99,19 +116,51 @@ static inline_always void set_follow_pv_flags(move_buffer_t* buffer, search_stat
 
 static inline_always void check_time(limits_t* limits) {
     /* Set flag if out of time. 'stop' and 'quit' set the flag from the input thread. */
+    ++limits->time_checks;
     if (limits->time_set && clock_time_ms() > limits->stop_time) {
         limits->stop_search_flag = true;
     }
 }
 
+/* KvK, KNvK and KBvK (either side), neither side can mate. */
+static inline_always bool is_insufficient_material(const board_t* board) {
+    if (board->pieces[P] | board->pieces[p] | board->pieces[R] | board->pieces[r] | board->pieces[Q] | board->pieces[q])
+        return false;
+    return pop_count(board->pieces[N] | board->pieces[n] | board->pieces[B] | board->pieces[b]) <= 1;
+}
+
+/* Knight, bishop, rook or queen for the side to move. Without one, zugzwang is likely. */
+static inline_always bool has_non_pawn_material(const board_t* board) {
+    return board->side == white ?
+           (board->pieces[N] | board->pieces[B] | board->pieces[R] | board->pieces[Q]) != 0 :
+           (board->pieces[n] | board->pieces[b] | board->pieces[r] | board->pieces[q]) != 0;
+}
+
+/**
+ * Whether to try null move pruning at this node. Not at the root or in PV nodes, not in check,
+ * not straight after another null move (the position after a null move is at null_move_index),
+ * not with only king and pawns, and only when the static eval is already at or above beta.
+ */
+static inline_always bool can_null_move(const board_t* board,
+                                        const search_state_t* search_state,
+                                        int depth,
+                                        int beta,
+                                        bool in_check,
+                                        bool is_pv_node) {
+    if (depth < NULL_MOVE_DEPTH_BOUND || in_check || is_pv_node || search_state->ply == 0) return false;
+    if (search_state->null_move_index != 0 && search_state->null_move_index == search_state->repetition_index) return false;
+    if (!has_non_pawn_material(board)) return false;
+    return evaluation(board) >= beta; /* Last, it's the most expensive. */
+}
+
 static inline_always bool is_draw(const board_t* board, search_state_t* search_state) {
-    return contains_repetition(search_state, board->hash) || board->fifty_move >= 100;
+    return board->fifty_move >= 100 ||
+           is_insufficient_material(board) ||
+           contains_repetition(search_state, board->hash, board->fifty_move);
 }
 
 static inline_hint int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state, limits_t* limits) {
-    if ((search_state->nodes & 2047) == 0) check_time(limits);
-
-    search_state->nodes++;
+    if ((++search_state->nodes & 2047) == 0) check_time(limits);
 
     if (search_state->ply > MAX_PLY-1) return evaluation(board);
 
@@ -120,28 +169,28 @@ static inline_hint int quiescence(int alpha, int beta, board_t* board, search_st
     if (eval > alpha) alpha = eval;
 
     move_buffer_t buffer;
-    generate_moves(board, &buffer);
-    sort_move_buffer(&buffer, 0, board, search_state);
+    int scores[MOVE_BUFFER_SIZE];
+    generate_captures(board, &buffer);
+    score_moves(&buffer, scores, 0, board, search_state);
 
+    /* Captures and queen promotions only. */
     for (int i=0; i< buffer.index; i++) {
-        move_t mv = buffer.moves[i];
-        if (get_capture_flag(mv)) {
-            ++search_state->ply;
-            if (make_move(board, mv)) {
-                int score = -quiescence(-beta, -alpha, board, search_state, limits);
-                --search_state->ply;
-                pop_move(board);
+        move_t mv = pick_next_move(&buffer, scores, i);
+        ++search_state->ply;
+        if (make_move(board, mv)) {
+            int score = -quiescence(-beta, -alpha, board, search_state, limits);
+            --search_state->ply;
+            pop_move(board);
 
-                if (limits->stop_search_flag) return STOPPED_SEARCH;
+            if (limits->stop_search_flag) return STOPPED_SEARCH;
 
-                if (score > alpha) {
-                    alpha = score;
-                    if (score >= beta) return beta;
-                }
-            } else {
-                --search_state->ply;
-                pop_move(board);
+            if (score > alpha) {
+                alpha = score;
+                if (score >= beta) return beta;
             }
+        } else {
+            --search_state->ply;
+            pop_move(board);
         }
     }
     return alpha;
@@ -161,33 +210,38 @@ static inline int negamax(int alpha,
     if (search_state->ply > 0 && is_draw(board, search_state))
         return 0;
 
-    bool is_pv_node = beta - alpha > 1;
-    const int alpha_orig = alpha;
-    move_t tt_move;
-    int cached_eval = tt_probe(board->hash, depth, search_state->ply, alpha, beta, &tt_move);
-    if (search_state->ply && !is_pv_node && cached_eval != TT_NOT_FOUND) return cached_eval;
-
-    if ((search_state->nodes & 2047) == 0) check_time(limits);
-
-    if (depth == 0) {
-        return quiescence(alpha, beta, board, search_state, limits);
-    }
-
     if (search_state->ply>MAX_PLY-1) return evaluation(board);
 
+    /* Extend checks before the depth 0 test, so a check at the horizon is searched rather than
+     * standing pat in qsearch (which would miss mates). */
     bool in_check = board->side == white ?
                     is_square_attacked_by_black(board, trailing_zero_count(board->pieces[K])) :
                     is_square_attacked_by_white(board, trailing_zero_count(board->pieces[k]));
 
     if (in_check) ++depth;
 
+    /* Probed with the extended depth, the same depth the node is saved with. */
+    bool is_pv_node = beta - alpha > 1;
+    const int alpha_orig = alpha;
+    move_t tt_move;
+    int cached_eval = tt_probe(board->hash, depth, search_state->ply, alpha, beta, &tt_move);
+    if (search_state->ply && !is_pv_node && cached_eval != TT_NOT_FOUND) return cached_eval;
+
+    if (depth == 0) {
+        return quiescence(alpha, beta, board, search_state, limits);
+    }
+
     /* Null move pruning. */
-    if (depth >= NULL_MOVE_DEPTH_BOUND && !in_check) {
+    if (can_null_move(board, search_state, depth, beta, in_check, is_pv_node)) {
         make_null_move(board);
         search_state->repetition_check[++search_state->repetition_index] = board->hash;
+        /* Repetitions can't span the null move, it isn't a real move. */
+        const uint16_t null_move_index = search_state->null_move_index;
+        search_state->null_move_index = search_state->repetition_index;
         ++search_state->ply;
         int score = -negamax(-beta, -beta + 1, depth - 3, board, search_state, limits);
         --search_state->ply;
+        search_state->null_move_index = null_move_index;
         --search_state->repetition_index;
         pop_null_move(board);
         /* A stopped null search returns -STOPPED_SEARCH, which would look like a cutoff. */
@@ -195,19 +249,21 @@ static inline int negamax(int alpha,
         if (score >= beta) return beta;
     }
 
-    ++search_state->nodes;
+    /* Check straight after counting, so the check runs once per 2048 counted nodes. */
+    if ((++search_state->nodes & 2047) == 0) check_time(limits);
 
     move_buffer_t buffer;
+    int scores[MOVE_BUFFER_SIZE];
     generate_moves(board, &buffer);
     if (search_state->follow_pv) set_follow_pv_flags(&buffer, search_state);
-    sort_move_buffer(&buffer, tt_move, board, search_state);
+    score_moves(&buffer, scores, tt_move, board, search_state);
 
     bool has_legal_moves = false;
     int num_moves_searched = 0;
     int score;
     move_t best_move = 0;
     for (int i=0; i < buffer.index; i++) {
-        move_t mv = buffer.moves[i];
+        move_t mv = pick_next_move(&buffer, scores, i);
         bool is_capture = get_capture_flag(mv);
         if (!make_move(board,mv)) {
             pop_move(board);
@@ -252,9 +308,7 @@ static inline int negamax(int alpha,
             }
             search_state->pv_length[search_state->ply] = search_state->pv_length[search_state->ply + 1];
 
-            if (!is_capture) {
-                search_state->history_moves[get_piece_moved(mv)][get_target_square(mv)] += depth;
-            }
+            if (!is_capture) update_history(search_state, mv, depth);
 
             alpha = score;
 

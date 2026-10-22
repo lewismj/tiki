@@ -1,3 +1,6 @@
+#include <stdlib.h>
+#include <string.h>
+
 #include "unity.h"
 #include "board_tests.h"
 
@@ -129,4 +132,84 @@ void test_slider_attacks_match_reference() {
             TEST_ASSERT_EQUAL_UINT64(ray_attacks(sq, occupancy, bishop_directions), magic_bishop_attack(sq, occupancy));
         }
     }
+}
+
+
+static int compare_moves(const void* a, const void* b) {
+    move_t x = *(const move_t*) a, y = *(const move_t*) b;
+    return (x > y) - (x < y);
+}
+
+/* What generate_captures should produce: captures and promotions, promotions to a queen only. */
+static bool is_quiescence_move(move_t mv) {
+    piece promoted = get_promoted_piece(mv);
+    if (promoted) return promoted == Q || promoted == q;
+    return get_capture_flag(mv);
+}
+
+/* Walks the tree, at each node compares generate_captures with generate_moves filtered. */
+static int capture_mismatches(board_t* board, int depth) {
+    move_buffer_t all, captures;
+    move_t expected[MOVE_BUFFER_SIZE];
+    int n = 0;
+
+    generate_moves(board, &all);
+    generate_captures(board, &captures);
+    for (int i = 0; i < all.index; i++) {
+        if (is_quiescence_move(all.moves[i])) expected[n++] = all.moves[i];
+    }
+
+    int mismatches = 0;
+    if (n != captures.index) {
+        mismatches++;
+    } else {
+        qsort(expected, n, sizeof(move_t), compare_moves);
+        qsort(captures.moves, captures.index, sizeof(move_t), compare_moves);
+        if (memcmp(expected, captures.moves, n * sizeof(move_t)) != 0) mismatches++;
+    }
+
+    if (depth > 1) {
+        for (int i = 0; i < all.index; i++) {
+            if (make_move(board, all.moves[i])) mismatches += capture_mismatches(board, depth - 1);
+            pop_move(board);
+        }
+    }
+    return mismatches;
+}
+
+void test_generate_captures_matches_filtered_moves() {
+    /* Both sides, en passant, promotions with and without capture, castling (excluded). */
+    static const char* const positions[] = {
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+            "r3k2r/p1ppqpb1/bn2pnp1/3PN3/Pp2P3/2N2Q1p/1PPBBPPP/R3K2R b KQkq a3 0 1",
+            "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+            "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
+            "n1n5/PPPk4/8/8/8/8/4Kppp/5N1N b - - 0 1",
+            "n1n5/PPPk4/8/8/8/8/4Kppp/5N1N w - - 0 1",
+            "rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3",
+    };
+    for (size_t i = 0; i < sizeof(positions) / sizeof(positions[0]); i++) {
+        board_t board;
+        parse_fen(positions[i], &board);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, capture_mismatches(&board, 3), positions[i]);
+    }
+}
+
+void test_generate_captures_promotions() {
+    board_t board;
+    move_buffer_t buffer;
+
+    /* Quiet promotion and a capture promotion, one queen move each. */
+    parse_fen("1n5k/P7/8/8/8/8/8/K7 w - - 0 1", &board);
+    generate_captures(&board, &buffer);
+    TEST_ASSERT_EQUAL_INT(2, buffer.index);
+    for (int i = 0; i < buffer.index; i++) {
+        TEST_ASSERT_EQUAL_INT(Q, get_promoted_piece(buffer.moves[i]));
+    }
+
+    /* No captures or promotions, nothing generated. */
+    parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
+    generate_captures(&board, &buffer);
+    TEST_ASSERT_EQUAL_INT(0, buffer.index);
 }

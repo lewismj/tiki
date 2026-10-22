@@ -20,6 +20,7 @@ typedef struct align {
     uint64_t nodes;
     uint8_t ply;
     uint16_t repetition_index;
+    uint16_t null_move_index;  /* repetition_check index of the position after the last null move (0 if none). */
     bool follow_pv;
     bool score_pv;
 } search_state_t;
@@ -29,6 +30,7 @@ static inline_always void init_search_state(search_state_t* search_state) {
     search_state->nodes = 0;
     search_state->ply = 0;
     search_state->repetition_index = 0;
+    search_state->null_move_index = 0;
     search_state->score_pv = false;
     search_state->follow_pv = true;
     memset(search_state->pv_table, 0ULL, sizeof(search_state->pv_table));
@@ -45,6 +47,7 @@ static inline_always void init_search_state(search_state_t* search_state) {
 static inline_always void clear_pv_table(search_state_t* search_state) {
     search_state->nodes = 0;
     search_state->ply = 0;
+    search_state->null_move_index = 0;
     search_state->score_pv = false;
     search_state->follow_pv = true;
     memset(search_state->pv_table, 0ULL, sizeof(search_state->pv_table));
@@ -56,9 +59,16 @@ static inline_always void clear_pv_table(search_state_t* search_state) {
 /**
  * repetition_check[repetition_index] holds the current position, entries below it are the
  * earlier positions (game history from 'position', then the search path).
+ *
+ * Only positions with the same side to move (every second entry) since the last irreversible
+ * move ('fifty_move' plies back) and the last null move can repeat. The position two plies back
+ * can't, as each side has only made one move, so the scan starts four plies back.
  */
-static inline_always bool contains_repetition(search_state_t* search_state, const uint64_t position_hash) {
-    for (int i=0; i<search_state->repetition_index; i++) {
+static inline_always bool contains_repetition(search_state_t* search_state, const uint64_t position_hash, int fifty_move) {
+    int oldest = search_state->repetition_index - fifty_move;
+    if (oldest < search_state->null_move_index) oldest = search_state->null_move_index;
+
+    for (int i = search_state->repetition_index - 4; i >= oldest; i -= 2) {
         if (search_state->repetition_check[i] == position_hash) return true;
     }
     return false;

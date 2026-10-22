@@ -12,8 +12,10 @@
  * size array, n.b. don't use a linked list as this would be unnecessarily
  * slow.
  */
+#define MOVE_BUFFER_SIZE 512
+
 typedef struct align {
-    uint32_t moves[512];
+    uint32_t moves[MOVE_BUFFER_SIZE];
     int index;
 } move_buffer_t;
 
@@ -26,6 +28,16 @@ typedef struct align {
  * @param move_buffer the move_t buffer.
  */
 void generate_moves(board_t* board, move_buffer_t* move_buffer);
+
+/**
+ * Generate the moves for quiescence search: captures (including en passant) and promotions,
+ * with promotions to a queen only (capturing or not). Like generate_moves, the moves are
+ * pseudo-legal and the buffer is reset first.
+ *
+ * @param board the board fen_position state.
+ * @param move_buffer the move_t buffer.
+ */
+void generate_captures(board_t* board, move_buffer_t* move_buffer);
 
 /**
  * Update the move buffer with all the moves (if possible) of a specified piece type.
