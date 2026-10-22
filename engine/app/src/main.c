@@ -30,19 +30,10 @@ int main(int argc, char* argv[]) {
     /* Initialise tables.           */
     on_startup();
 
-    /* Load NNUE evaluation model.  */
-    const char *nnue_path = getenv("NNUE_PATH");
-    if (nnue_path != NULL)  {
-        nnue_init(nnue_path);
-        printf("Initialized NNUE.\n");
-        /* Run main UCI loop.           */
-        uci_main();
-    }
-    else {
-        /* Should make Evaluation a choice between handcrafted and NNUE. */
-        fprintf(stderr, "Environment variable NNUE_PATH is not set.\n");
-        exit(EXIT_FAILURE);
-    }
+    /* Evaluation is HCE, the NNUE model isn't loaded until it is replaced. */
+
+    /* Run main UCI loop.           */
+    uci_main();
 
     return EXIT_SUCCESS;
 }
