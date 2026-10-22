@@ -1,0 +1,11 @@
+@echo off
+rem Starts the engine inside WSL, so a Windows GUI (Fritz, Cute Chess, ...) can load it as a UCI engine.
+rem Copy to run_engine.bat and set TIKI_APP, or set it in the environment, to the WSL path of tiki_app, e.g.
+rem   set TIKI_APP=/mnt/c/Users/<you>/develop/tiki/build/engine/app/tiki_app
+
+if "%TIKI_APP%"=="" (
+    echo Set TIKI_APP to the WSL path of tiki_app. 1>&2
+    exit /b 1
+)
+
+wsl "%TIKI_APP%"

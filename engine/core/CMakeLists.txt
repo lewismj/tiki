@@ -6,6 +6,7 @@ set(CMAKE_C_STANDARD 23)
 include_directories(${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR})
 
 set (SOURCES
+        src/types.c
         src/bitboard_constants.c
         src/bitboard_ops.c
         src/mask_generator.c
@@ -16,6 +17,7 @@ set (SOURCES
         src/board.c
         src/move_generator.c
         src/search_constants.c
+        src/search.c
         src/transposition.c
         src/uci.c
         src/uci_input.c
@@ -23,7 +25,6 @@ set (SOURCES
         src/nnue/misc.c
         src/nnue/nnue.c
         src/limits.c
-        src/search_state.c
         src/hce/evaluation_mask.c
 )
 

@@ -63,24 +63,25 @@ static inline_always piece get_promoted_piece(move_t m) {
     return (m & 0xf0000) >> 16;
 }
 
+/* The flags are 0 or 1 (not the masked bit), so comparing with == 1 works too. */
 static inline_always int get_capture_flag(move_t m) {
-    return (int) m & 0x100000;
+    return (int) (m >> 20) & 1;
 }
 
 static inline_always int get_double_push_flag(move_t m) {
-    return (int) m & 0x200000;
+    return (int) (m >> 21) & 1;
 }
 
 static inline_always int get_enpassant_flag(move_t m) {
-    return (int) m & 0x400000;
+    return (int) (m >> 22) & 1;
 }
 
 static inline_always int get_king_side_castle_flag(move_t m) {
-    return (int) m & 0x800000;
+    return (int) (m >> 23) & 1;
 }
 
 static inline_always int get_queen_side_castle_flag(move_t m) {
-    return (int) m & 0x1000000;
+    return (int) (m >> 24) & 1;
 }
 
 void print_move(move_t m, showable_t options);

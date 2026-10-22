@@ -33,6 +33,7 @@ const int bench_position_count = (int) (sizeof(bench_positions) / sizeof(bench_p
 
 
 uint64_t bench(int depth) {
+    if (depth <= 0) depth = BENCH_DEFAULT_DEPTH;
     static board_t board;
     static search_state_t search_state;
     limits_t limits;
@@ -57,7 +58,7 @@ uint64_t bench(int depth) {
         reset_time_control(&limits);
         limits.depth = depth;
         tt_new_search();
-        print(find_best_move(&board, &search_state, &limits));
+        print_bestmove(find_best_move(&board, &search_state, &limits));
         nodes += search_state.nodes;
     }
 

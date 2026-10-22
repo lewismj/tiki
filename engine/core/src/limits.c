@@ -2,11 +2,6 @@
 #include <string.h>
 #include "limits.h"
 
-/* Placeholder, we may want to dump limits for debugging/optimisation. */
-void print_limits(const limits_t* limits) {
-    printf("limits\n");
-}
-
 void handle_search_input(limits_t* limits, const char* input) {
     if (strcmp(input, "isready") == 0) {
         printf("readyok\n");

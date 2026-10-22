@@ -14,7 +14,7 @@ extern const char* const bench_positions[];
 extern const int bench_position_count;
 
 /**
- * Search every bench position to 'depth', with the TT cleared before each one, and print the
+ * Search every bench position to 'depth' (BENCH_DEFAULT_DEPTH when <= 0), with the TT cleared before each one, and print the
  * total node count and nodes per second. The node count depends only on the search (and
  * evaluation), so it's a signature for changes that should not affect them. The TT is resized to
  * BENCH_HASH_MB for the run, and restored afterwards.

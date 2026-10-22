@@ -68,7 +68,7 @@ typedef struct {
  *  the source of a move. i.e. white queen's rook is at a1, if that moves on its own, we'd mask with 13 as above,
  *  for the whole chess board we have as follows:
  */
-static int castling_update[] = {
+static const int castling_update[] = {
         7, 15, 15, 15, 3, 15, 15, 11,
         15, 15, 15, 15, 15, 15, 15, 15,
         15, 15, 15, 15, 15, 15, 15, 15,
@@ -317,7 +317,7 @@ static inline_always bool make_move(board_t* board, move_t move) {
     /* Captures. */
     if (capture_flag) {
         /* Process capture. Find the piece we're capturing and pop the bit. */
-        int *pieces = board->side == white ? black_pieces : white_pieces;
+        const int *pieces = board->side == white ? black_pieces : white_pieces;
         for (int i=0; i<=5; i++) {
             piece captured_piece = pieces[i];
             if (!is_bit_set(&board->pieces[captured_piece],target)) continue;

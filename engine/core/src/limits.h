@@ -46,7 +46,6 @@ static inline_always uint64_t clock_time_ms() {
     return (uint64_t) time_spec.tv_sec * 1000 + time_spec.tv_nsec / 1000000;
 }
 
-void print_limits(const limits_t* limits);
 
 /**
  * Handle a line of input received while a search is running, called from the input thread.

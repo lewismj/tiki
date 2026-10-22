@@ -5,6 +5,7 @@
 #include "../../core/src/limits.h"
 #include "../../core/src/search_state.h"
 #include "../../core/src/search.h"
+#include "../../core/src/evaluation.h"
 #include "../../core/src/transposition.h"
 #include "../../core/src/uci.h"
 #include "../../core/src/bench.h"

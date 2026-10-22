@@ -272,7 +272,7 @@ void parse_go(const char* command, board_t* board, search_state_t* search_state,
     if (limits->infinite) input_wait_for_stop(limits);
 
     input_search_finished();
-    print(mv);
+    print_bestmove(mv);
 }
 
 void new_game(board_t* board, search_state_t* search_state) {
@@ -307,8 +307,7 @@ bool handle_uci_command(const char* command, board_t* board, search_state_t* sea
             limits->stop_engine_flag = true;
             break;
         case uci_cmd_bench: {
-            int depth = atoi(command + 5);
-            bench(depth > 0 ? depth : BENCH_DEFAULT_DEPTH);
+            bench(atoi(command + 5)); /* 0 (no depth given) is the default depth. */
             new_game(board, search_state); /* Bench leaves its last position on the board. */
             break;
         }
