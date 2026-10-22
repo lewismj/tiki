@@ -19,7 +19,7 @@ typedef struct align {
     uint8_t pv_length[MAX_PLY];
     uint64_t nodes;
     uint8_t ply;
-    uint8_t repetition_index;
+    uint16_t repetition_index;
     bool follow_pv;
     bool score_pv;
 } search_state_t;
@@ -53,6 +53,10 @@ static inline_always void clear_pv_table(search_state_t* search_state) {
     memset(search_state->killer_moves, 0, sizeof (search_state->killer_moves));
 }
 
+/**
+ * repetition_check[repetition_index] holds the current position, entries below it are the
+ * earlier positions (game history from 'position', then the search path).
+ */
 static inline_always bool contains_repetition(search_state_t* search_state, const uint64_t position_hash) {
     for (int i=0; i<search_state->repetition_index; i++) {
         if (search_state->repetition_check[i] == position_hash) return true;

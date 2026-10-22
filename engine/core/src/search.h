@@ -126,6 +126,10 @@ static inline_always void check_time(limits_t* limits) {
     if (!limits->stop_search_flag) has_stdin_input(limits);
 }
 
+static inline_always bool is_draw(const board_t* board, search_state_t* search_state) {
+    return contains_repetition(search_state, board->hash) || board->fifty_move >= 100;
+}
+
 static inline_hint int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state, limits_t* limits) {
     if ((search_state->nodes & 2047) == 0) check_time(limits);
 
@@ -175,7 +179,8 @@ static inline int negamax(int alpha,
 
     search_state->pv_length[search_state->ply] = search_state->ply;
 
-    if ((search_state->ply>0 && contains_repetition(search_state, board->hash)) || board->fifty_move > 100)
+    /* Not at the root, so a move is always returned. */
+    if (search_state->ply > 0 && is_draw(board, search_state))
         return 0;
 
     bool is_pv_node = beta - alpha > 1;

@@ -136,6 +136,7 @@ move_t parse_move(const char* input, board_t* board) {
 
 void parse_position(const char* position, board_t* board, search_state_t* search_state) {
     reset_board(board);
+    search_state->repetition_index = 0; /* Each 'position' command sends the whole game. */
     const char *ptr = position +9;
     if (strncmp(ptr, "startpos",8) == 0) {
         parse_fen(startpos, board);
@@ -156,11 +157,23 @@ void parse_position(const char* position, board_t* board, search_state_t* search
             if (move == 0) break;
             search_state->repetition_check[search_state->repetition_index++] = board->hash;
             make_move(board, move);
+            /* Positions before an irreversible move (pawn move or capture) can't repeat. */
+            if (board->fifty_move == 0) search_state->repetition_index = 0;
+            /* Keep room for the search path, only the last 100 plies matter for repetition. */
+            if (search_state->repetition_index >= MAX_MOVES - MAX_PLY - 1) {
+                memmove(search_state->repetition_check,
+                        search_state->repetition_check + search_state->repetition_index - 100,
+                        100 * sizeof(search_state->repetition_check[0]));
+                search_state->repetition_index = 100;
+            }
             while (*ptr && *ptr != ' ') ptr++;
             ptr++;
         }
     }
 
+
+    /* Root position, the search stores each child at the next index. */
+    search_state->repetition_check[search_state->repetition_index] = board->hash;
 
     board->stack_ptr = 0; /* Reset the stack pointer for undo state. */
 }
@@ -239,7 +252,7 @@ void parse_go_limits(const char* command, const board_t* board, limits_t* limits
 }
 
 void parse_go(const char* command, board_t* board, search_state_t* search_state, limits_t* limits) {
-    init_search_state(search_state);
+    clear_pv_table(search_state); /* Preserves the game history from 'position' for repetition checks. */
     tt_clear();
     parse_go_limits(command, board, limits);
 

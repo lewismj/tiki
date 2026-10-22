@@ -6,6 +6,7 @@
 #include "make_undo_move_tests.h"
 #include "perf_tests.h"
 #include "uci_tests.h"
+#include "repetition_tests.h"
 
 #include "../../core/src/attack_mask.h"
 #include "../../core/src/zobrist_key.h"
@@ -64,6 +65,14 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_search_input_stop);
     RUN_TEST(test_search_input_quit);
     RUN_TEST(test_search_input_isready);
+    RUN_TEST(test_position_resets_history);
+    RUN_TEST(test_position_records_root);
+    RUN_TEST(test_position_irreversible_move_clears_history);
+    RUN_TEST(test_position_detects_game_repetition);
+    RUN_TEST(test_position_long_history);
+    RUN_TEST(test_go_preserves_history);
+    RUN_TEST(test_fifty_move_draw);
+    RUN_TEST(test_position_history_overflow);
     RUN_TEST(perft_tests);
     if (!skip_full_perft) {
         printf("All perft.\n");

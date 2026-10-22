@@ -55,14 +55,14 @@ void test_uci_newgame_resets_position() {
 
     parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &expected);
 
-    TEST_ASSERT_TRUE(handle_uci_command("position startpos moves e2e4 e7e5", &board, &search_state, &limits));
+    TEST_ASSERT_TRUE(handle_uci_command("position startpos moves g1f3 g8f6", &board, &search_state, &limits));
     TEST_ASSERT_NOT_EQUAL(expected.hash, board.hash);
-    TEST_ASSERT_EQUAL_UINT8(2, search_state.repetition_index);
+    TEST_ASSERT_EQUAL_UINT16(2, search_state.repetition_index);
 
     TEST_ASSERT_TRUE(handle_uci_command("ucinewgame", &board, &search_state, &limits));
     TEST_ASSERT_EQUAL_UINT64(expected.hash, board.hash);
     TEST_ASSERT_EQUAL_INT(white, board.side);
-    TEST_ASSERT_EQUAL_UINT8(0, search_state.repetition_index);
+    TEST_ASSERT_EQUAL_UINT16(0, search_state.repetition_index);
 }
 
 void test_go_infinite_limits() {

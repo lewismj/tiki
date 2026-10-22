@@ -7,7 +7,8 @@ set (SOURCES
         src/tiki_test_runner.c
         src/make_undo_move_tests.c
         src/perft_tests.c
-        src/uci_tests.c)
+        src/uci_tests.c
+        src/repetition_tests.c)
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 
