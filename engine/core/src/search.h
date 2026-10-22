@@ -107,26 +107,27 @@ static inline_always bool poll_stdin() {
 static inline_always void has_stdin_input(limits_t* limits) {
     char input[256] = {0};
     if (poll_stdin()) {
-        limits->stop_search_flag = true;
         if (fgets(input, sizeof(input), stdin) != NULL) {
-            input[strcspn(input, "\n")] = '\0';
-            if (strcmp(input, "quit") == 0) {
-                limits->stop_engine_flag = true;
-            }
+            input[strcspn(input, "\r\n")] = '\0';
+            handle_search_input(limits, input);
+        } else {
+            /* stdin closed, nothing more can arrive so treat as quit. */
+            limits->stop_search_flag = true;
+            limits->stop_engine_flag = true;
         }
     }
 }
 
 static inline_always void check_time(limits_t* limits) {
-    /* Set flag if out of time & then check stdin. */
+    /* Set flag if out of time. Always poll stdin, so 'go infinite' and 'go depth' can be stopped. */
     if (limits->time_set && clock_time_ms() > limits->stop_time) {
         limits->stop_search_flag = true;
-        has_stdin_input(limits);
     }
+    if (!limits->stop_search_flag) has_stdin_input(limits);
 }
 
 static inline_hint int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state, limits_t* limits) {
-    if ((search_state->nodes & 2048) == 0) check_time(limits);
+    if ((search_state->nodes & 2047) == 0) check_time(limits);
 
     search_state->nodes++;
 
@@ -181,7 +182,7 @@ static inline int negamax(int alpha,
     int cached_eval = tt_probe(board->hash, depth, search_state->ply, alpha, beta);
     if (search_state->ply && !is_pv_node && cached_eval != TT_NOT_FOUND) return cached_eval;
 
-    if ((search_state->nodes & 2048) == 0) check_time(limits);
+    if ((search_state->nodes & 2047) == 0) check_time(limits);
 
     if (depth == 0) {
         return quiescence(alpha, beta, board, search_state, limits);

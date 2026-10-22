@@ -34,6 +34,7 @@ extern const search_const_t search_const;
 
 #define MAX_MOVES 1024           /* Maximum number of moves in the game.                                     */
 #define MAX_PLY 64               /* Maximum ply we can search.                                               */
+#define MAX_SEARCH_DEPTH 32      /* Iterative deepening limit when no depth is given (e.g. 'go infinite').   */
 #define NULL_MOVE_DEPTH_BOUND 4  /* Lower bound for depth to enable null move pruning.                       */
 #define LMR_DEPTH_BOUND 4        /* Lower bound for depth to enable late move reduction.                     */
 #define ASPIRATION_WINDOW 300    /* Offsets to use to narrow search window with iterative deepening.         */

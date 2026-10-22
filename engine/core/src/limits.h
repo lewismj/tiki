@@ -16,6 +16,7 @@ typedef struct align {
     int time;
     int increment;
     bool time_set;
+    bool infinite;
     bool stop_search_flag;
     bool stop_engine_flag;
 } limits_t;
@@ -24,6 +25,7 @@ static inline_always void reset_time_control(limits_t* limits) {
     limits->stop_search_flag = false;
     limits->stop_engine_flag = false;
     limits->time_set = false;
+    limits->infinite = false;
     limits->moves_to_go = 30;
     limits->move_time = -1;
     limits->time = -1;
@@ -39,6 +41,15 @@ static inline_always uint64_t clock_time_ms() {
 }
 
 void print_limits(const limits_t* limits);
+
+/**
+ * Handle a line of input received while a search is running.
+ *  'stop'    - stop the search.
+ *  'quit'    - stop the search and exit the engine.
+ *  'isready' - reply 'readyok', search continues.
+ * Anything else is ignored.
+ */
+void handle_search_input(limits_t* limits, const char* input);
 
 
 #endif

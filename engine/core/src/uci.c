@@ -21,6 +21,7 @@ void on_shutdown() {
     free_transposition_table();
 }
 
+/* Call once at program start (main), registers on_shutdown with atexit. */
 void on_startup() {
     init_zobrist_key();
     init_attack_table();
@@ -164,33 +165,48 @@ void parse_position(const char* position, board_t* board, search_state_t* search
     board->stack_ptr = 0; /* Reset the stack pointer for undo state. */
 }
 
-void parse_go(const char* position, board_t* board, search_state_t* search_state, limits_t* limits) {
-    init_search_state(search_state);
+static bool is_token(const char* command, const char* token) {
+    size_t n = strlen(token);
+    return strncmp(command, token, n) == 0 && (command[n] == '\0' || isspace((unsigned char) command[n]));
+}
+
+uci_command_t parse_uci_command(const char* command) {
+    /* Whole token match, so that 'ucinewgame' isn't treated as 'uci'. */
+    if (is_token(command, "uci")) return uci_cmd_uci;
+    if (is_token(command, "ucinewgame")) return uci_cmd_ucinewgame;
+    if (is_token(command, "isready")) return uci_cmd_isready;
+    if (is_token(command, "position")) return uci_cmd_position;
+    if (is_token(command, "go")) return uci_cmd_go;
+    if (is_token(command, "stop")) return uci_cmd_stop;
+    if (is_token(command, "quit")) return uci_cmd_quit;
+    return uci_cmd_unknown;
+}
+
+void parse_go_limits(const char* command, const board_t* board, limits_t* limits) {
     reset_time_control(limits);
-    tt_clear();
 
     char* arg;
 
-    if ((arg = strstr(position, "winc")) && board->side == white)
+    if ((arg = strstr(command, "winc")) && board->side == white)
         limits->increment = atoi(arg+5);
 
-    if ((arg = strstr(position, "binc")) && board->side == black)
+    if ((arg = strstr(command, "binc")) && board->side == black)
         limits->increment = atoi(arg+5);
 
-    if ((arg = strstr(position, "wtime")) && board->side == white)
+    if ((arg = strstr(command, "wtime")) && board->side == white)
         limits->time = atoi(arg+6);
 
-    if ((arg = strstr(position, "btime")) && board->side == black)
+    if ((arg = strstr(command, "btime")) && board->side == black)
         limits->time = atoi(arg+6);
 
-    if ((arg= strstr(position, "movetime")))
+    if ((arg= strstr(command, "movetime")))
         limits->move_time = atoi(arg+9);
 
-    if ((arg = strstr(position, "movestogo")))
+    if ((arg = strstr(command, "movestogo")))
         limits->moves_to_go = atoi(arg+10);
 
-    limits->depth=32;
-    if ((arg = strstr(position, "depth"))) {
+    limits->depth = MAX_SEARCH_DEPTH;
+    if ((arg = strstr(command, "depth"))) {
         limits->time_set = false;
         limits->time = -1;
         limits->depth = atoi(arg + 6);
@@ -199,6 +215,13 @@ void parse_go(const char* position, board_t* board, search_state_t* search_state
     if (limits->move_time != -1) {
         limits->time = limits->move_time;
         limits->moves_to_go = 1;
+    }
+
+    /* Search until 'stop', ignore any clock values. */
+    if (strstr(command, "infinite")) {
+        limits->infinite = true;
+        limits->time = -1;
+        limits->depth = MAX_SEARCH_DEPTH;
     }
 
     limits->start_time = clock_time_ms();
@@ -213,15 +236,67 @@ void parse_go(const char* position, board_t* board, search_state_t* search_state
         }
         limits->stop_time = limits->start_time + limits->time + limits->increment;
     }
+}
+
+void parse_go(const char* command, board_t* board, search_state_t* search_state, limits_t* limits) {
+    init_search_state(search_state);
+    tt_clear();
+    parse_go_limits(command, board, limits);
 
     move_t mv = find_best_move(board, search_state, limits);
+
+    /* UCI: with 'go infinite' bestmove must not be sent before 'stop', even if the search completed. */
+    if (limits->infinite) {
+        char input[256];
+        while (!limits->stop_search_flag && fgets(input, sizeof(input), stdin)) {
+            input[strcspn(input, "\r\n")] = '\0';
+            handle_search_input(limits, input);
+        }
+    }
+
     print(mv);
+}
+
+void new_game(board_t* board, search_state_t* search_state) {
+    tt_clear();
+    init_search_state(search_state);
+    parse_position("position startpos", board, search_state);
+}
+
+bool handle_uci_command(const char* command, board_t* board, search_state_t* search_state, limits_t* limits) {
+    switch (parse_uci_command(command)) {
+        case uci_cmd_uci:
+            printf("id name %s %s\n", ENGINE_NAME, ENGINE_VERSION);
+            printf("id author %s\n", ENGINE_AUTHOR);
+            printf("uciok\n");
+            break;
+        case uci_cmd_isready:
+            printf("readyok\n");
+            break;
+        case uci_cmd_ucinewgame:
+            new_game(board, search_state);
+            break;
+        case uci_cmd_position:
+            parse_position(command, board, search_state);
+            break;
+        case uci_cmd_go:
+            parse_go(command, board, search_state, limits);
+            break;
+        case uci_cmd_stop:
+            /* No search running, nothing to stop. */
+            break;
+        case uci_cmd_quit:
+            limits->stop_engine_flag = true;
+            break;
+        default:
+            printf("info string Unknown command: %s\n", command);
+    }
+    /* 'quit' may also have been received while searching. */
+    return !limits->stop_engine_flag;
 }
 
 
 void uci_main() {
-    on_startup();
-
     board_t board;
     search_state_t search_state;
     init_search_state(&search_state);
@@ -230,25 +305,8 @@ void uci_main() {
 
     char command[100000];
 
-    while (fgets(command, sizeof(command), stdin) && !limits.stop_engine_flag) {
-        command[strcspn(command, "\n")] = 0;
-        if (strncmp(command, "uci", 3) == 0) {
-            printf("id name %s %s\n", ENGINE_NAME, ENGINE_VERSION);
-            printf("id author %s\n", ENGINE_AUTHOR);
-            printf("uciok\n");
-        } else if (strncmp(command, "isready", 7) == 0) {
-            printf("readyok\n");
-            continue;
-        } else if (strncmp(command, "position", 8) == 0) {
-            parse_position(command, &board, &search_state);
-        } else if (strncmp(command, "go", 2) == 0) {
-            parse_go(command, &board, &search_state, &limits);
-        } else if (strncmp(command, "ucinewgame", 10) == 0) {
-            parse_position("position startpos", &board, &search_state);
-        } else if (strncmp(command, "quit", 4) == 0 || strncmp(command, "stop", 4) == 0)  {
-            break;
-        } else {
-            printf("info string Unknown command: %s\n", command);
-        }
+    while (!limits.stop_engine_flag && fgets(command, sizeof(command), stdin)) {
+        command[strcspn(command, "\r\n")] = 0;
+        if (!handle_uci_command(command, &board, &search_state, &limits)) break;
     }
 }

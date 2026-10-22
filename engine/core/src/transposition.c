@@ -10,6 +10,7 @@ size_t tt_size;
 
 void free_transposition_table() {
     if (t_table != NULL) free(t_table);
+    t_table = NULL;
 }
 
 void init_transposition_table(unsigned short mb) {
