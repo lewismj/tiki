@@ -39,7 +39,7 @@ endif()
 tiki_target_warnings(${PROJECT_NAME})
 
 find_package(Threads REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE atomic Threads::Threads)
+target_link_libraries(${PROJECT_NAME} PRIVATE atomic Threads::Threads m)
 
 
 if(CMAKE_C_COMPILER_ID STREQUAL "Clang")

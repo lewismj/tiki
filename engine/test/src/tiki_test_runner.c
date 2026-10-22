@@ -49,6 +49,7 @@ int main(int argc, char* argv[]) {
 
     init_attack_table();
     init_zobrist_key();
+    init_lmr_table();
 
     /* Small table, the UCI tests clear it on 'ucinewgame'. */
     init_transposition_table(1);
@@ -66,6 +67,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_slider_attacks_match_reference);
     RUN_TEST(test_generate_captures_matches_filtered_moves);
     RUN_TEST(test_generate_captures_promotions);
+    RUN_TEST(test_see);
     RUN_TEST(test_search_mate_in_one);
     RUN_TEST(test_search_stalemate_root);
     RUN_TEST(test_search_checkmated_root);
@@ -80,6 +82,12 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_history_bonus_and_bound);
     RUN_TEST(test_history_stays_below_killers_and_captures);
     RUN_TEST(test_en_passant_scored_as_pawn_capture);
+    RUN_TEST(test_losing_capture_ordered_after_quiet_moves);
+    RUN_TEST(test_reverse_futility_guards);
+    RUN_TEST(test_futility_guards);
+    RUN_TEST(test_lmr_reduction);
+    RUN_TEST(test_iir_reduction);
+    RUN_TEST(test_aspiration_search);
     RUN_TEST(test_uci_command_tokens);
     RUN_TEST(test_uci_stop_does_not_quit);
     RUN_TEST(test_uci_quit_exits);

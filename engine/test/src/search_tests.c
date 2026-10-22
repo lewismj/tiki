@@ -96,7 +96,7 @@ void test_time_checked_once_per_2048_nodes() {
     limits_t limits;
 
     setup_position("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
-                   &board, &search_state, &limits, 5);
+                   &board, &search_state, &limits, 7);
     find_best_move(&board, &search_state, &limits);
 
     /* Used to also check before counting, several times on the same count. */
@@ -186,27 +186,27 @@ void test_null_move_guards() {
                    &board, &search_state, &limits, 5);
     search_state.ply = 1;
     search_state.repetition_index = 1;
-    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, low_beta, false, false));
+    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board), false, false));
 
     /* Depth, check and PV node. */
-    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, NULL_MOVE_DEPTH_BOUND - 1, low_beta, false, false));
-    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, true, false));
-    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, false, true));
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, NULL_MOVE_DEPTH_BOUND - 1, low_beta, evaluation(&board), false, false));
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board), true, false));
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board), false, true));
 
     /* Static eval below beta. */
-    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, evaluation(&board) + 1, false, false));
-    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, evaluation(&board), false, false));
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, evaluation(&board) + 1, evaluation(&board), false, false));
+    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, evaluation(&board), evaluation(&board), false, false));
 
     /* Root. */
     search_state.ply = 0;
-    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, false, false));
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board), false, false));
     search_state.ply = 1;
 
     /* Straight after a null move, but not two plies after one. */
     search_state.null_move_index = 1;
-    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, false, false));
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board), false, false));
     search_state.repetition_index = 2;
-    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, low_beta, false, false));
+    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board), false, false));
     search_state.null_move_index = 0;
     search_state.repetition_index = 1;
 
@@ -214,11 +214,11 @@ void test_null_move_guards() {
     setup_position("4k3/8/8/2r5/8/8/PPP5/4K3 w - - 0 1", &board, &search_state, &limits, 5);
     search_state.ply = 1;
     search_state.repetition_index = 1;
-    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, false, false));
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board), false, false));
     setup_position("4k3/8/8/2r5/8/8/PPP5/4K3 b - - 0 1", &board, &search_state, &limits, 5);
     search_state.ply = 1;
     search_state.repetition_index = 1;
-    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, low_beta, false, false));
+    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board), false, false));
 }
 
 void test_history_bonus_and_bound() {
@@ -286,4 +286,102 @@ void test_en_passant_scored_as_pawn_capture() {
     TEST_ASSERT_TRUE(get_enpassant_flag(black_en_passant));
     TEST_ASSERT_EQUAL_INT(score_move(black_pawn_takes_pawn, 0, &board, &search_state),
                           score_move(black_en_passant, 0, &board, &search_state));
+}
+
+void test_losing_capture_ordered_after_quiet_moves() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* Qxd5 loses the queen for a pawn (c6 defends), Ke2 is a quiet move with no history. */
+    setup_position("4k3/8/2p5/3p4/8/8/8/3QK3 w - - 0 1", &board, &search_state, &limits, 1);
+    const int losing = score_move(parse_move("d1d5", &board), 0, &board, &search_state);
+    const int quiet = score_move(parse_move("e1e2", &board), 0, &board, &search_state);
+    TEST_ASSERT_TRUE(losing < quiet);
+
+    /* Undefended, ordered as a normal capture. */
+    setup_position("4k3/8/8/3p4/8/8/8/3QK3 w - - 0 1", &board, &search_state, &limits, 1);
+    TEST_ASSERT_TRUE(score_move(parse_move("d1d5", &board), 0, &board, &search_state) >= 10000);
+}
+
+void test_reverse_futility_guards() {
+    /* Eval 500 above beta 0 at depth 3: 500 - 3 * RFP_MARGIN >= 0. */
+    TEST_ASSERT_TRUE(can_reverse_futility_prune(3, 500, 0, false, false, 1));
+    /* Margin grows with depth. */
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 3 * RFP_MARGIN - 1, 0, false, false, 1));
+    TEST_ASSERT_TRUE(can_reverse_futility_prune(3, 3 * RFP_MARGIN, 0, false, false, 1));
+    /* Too deep, in check, PV node, root, mate bound. */
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(RFP_MAX_DEPTH + 1, 5000, 0, false, false, 1));
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 500, 0, true, false, 1));
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 500, 0, false, true, 1));
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 500, 0, false, false, 0));
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, MATE_VALUE, MATE_VALUE - 10, false, false, 1));
+}
+
+void test_futility_guards() {
+    /* Eval 400 below alpha 0 at depth 2: -400 + 2 * FUTILITY_MARGIN <= 0. */
+    TEST_ASSERT_TRUE(is_futile(2, -400, 0, false, false));
+    TEST_ASSERT_FALSE(is_futile(2, -2 * FUTILITY_MARGIN + 1, 0, false, false));
+    TEST_ASSERT_TRUE(is_futile(2, -2 * FUTILITY_MARGIN, 0, false, false));
+    /* Too deep, in check, PV node, mate bound. */
+    TEST_ASSERT_FALSE(is_futile(FUTILITY_MAX_DEPTH + 1, -5000, 0, false, false));
+    TEST_ASSERT_FALSE(is_futile(2, -400, 0, true, false));
+    TEST_ASSERT_FALSE(is_futile(2, -400, 0, false, true));
+    TEST_ASSERT_FALSE(is_futile(2, -MATE_VALUE, -MATE_VALUE + 10, false, false));
+}
+
+void test_lmr_reduction() {
+    /* No reduction for the first moves or shallow depths. */
+    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(1, 10, false));
+    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(3, 1, false));
+
+    /* Grows with depth and with the move number, never decreasing. */
+    for (int depth = 2; depth < 40; depth++) {
+        for (int moves = 1; moves < 60; moves++) {
+            int r = lmr_reduction(depth, moves, false);
+            TEST_ASSERT_TRUE(r >= lmr_reduction(depth - 1, moves, false));
+            TEST_ASSERT_TRUE(r >= lmr_reduction(depth, moves - 1, false));
+            /* At least one ply is left to search. */
+            TEST_ASSERT_TRUE(depth - 1 - r >= 1);
+            /* PV nodes are reduced less, by one ply. */
+            int pv = lmr_reduction(depth, moves, true);
+            TEST_ASSERT_TRUE(pv == r || pv == r - 1);
+        }
+    }
+
+    /* A deep late move is reduced by more than the old flat 1. */
+    TEST_ASSERT_TRUE(lmr_reduction(12, 20, false) >= 2);
+
+    /* Moves past the end of the table use the last column. */
+    TEST_ASSERT_EQUAL_INT(lmr_reduction(20, LMR_TABLE_SIZE - 1, false), lmr_reduction(20, 200, false));
+}
+
+void test_iir_reduction() {
+    const move_t tt_move = encode_move(e2, e4, P, 0, 0, 1, 0, 0, 0);
+    TEST_ASSERT_EQUAL_INT(1, iir_reduction(IIR_MIN_DEPTH, 0));
+    TEST_ASSERT_EQUAL_INT(1, iir_reduction(12, 0));
+    TEST_ASSERT_EQUAL_INT(0, iir_reduction(IIR_MIN_DEPTH - 1, 0));
+    TEST_ASSERT_EQUAL_INT(0, iir_reduction(12, tt_move));
+}
+
+void test_aspiration_search() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* Mate in 2 from a previous score of 0, the window has to widen all the way to the mate. */
+    setup_position("r5k1/5ppp/8/8/8/8/4RPPP/4R1K1 w - - 0 1", &board, &search_state, &limits, 5);
+    TEST_ASSERT_EQUAL_INT(MATE_VALUE - 3, aspiration_search(&board, &search_state, &limits, 5, 0));
+
+    /* A previous score far too high, the search fails low and widens down to the real score. */
+    setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, 5);
+    int score = aspiration_search(&board, &search_state, &limits, 5, 800);
+    TEST_ASSERT_TRUE(score > -200 && score < 200);
+    TEST_ASSERT_EQUAL_UINT32(search_state.pv_table[0][0] != 0, 1);
+
+    /* Shallow depth, full window, same as a plain full window search. */
+    setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, 2);
+    int full = negamax(-INF, INF, 2, &board, &search_state, &limits);
+    setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, 2);
+    TEST_ASSERT_EQUAL_INT(full, aspiration_search(&board, &search_state, &limits, 2, 800));
 }

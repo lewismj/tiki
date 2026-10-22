@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include "types.h"
 
-#define BENCH_DEFAULT_DEPTH 8
+#define BENCH_DEFAULT_DEPTH 11
 #define BENCH_HASH_MB 16
 
 /**

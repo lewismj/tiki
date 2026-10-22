@@ -16,5 +16,11 @@ void test_null_move_guards();
 void test_history_bonus_and_bound();
 void test_history_stays_below_killers_and_captures();
 void test_en_passant_scored_as_pawn_capture();
+void test_losing_capture_ordered_after_quiet_moves();
+void test_reverse_futility_guards();
+void test_futility_guards();
+void test_lmr_reduction();
+void test_iir_reduction();
+void test_aspiration_search();
 
 #endif

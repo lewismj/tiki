@@ -15,6 +15,7 @@
 #include "search_state.h"
 #include "transposition.h"
 #include "limits.h"
+#include "see.h"
 
 
 static inline_always int score_move(move_t move, move_t tt_move, board_t* board, search_state_t* search_state) {
@@ -51,6 +52,11 @@ static inline_always int score_move(move_t move, move_t tt_move, board_t* board,
         int* pieces = (board->side == white) ? black_pieces : white_pieces;
         for (int i = 0; i < 6; i++) {
             if (is_bit_set(&board->pieces[pieces[i]], target)) {
+                /* Losing captures (SEE < 0) after the quiet moves. Only possible when the
+                 * attacker is worth more than the victim, so SEE is skipped otherwise. */
+                if (see_values[piece] > see_values[pieces[i]] && see(board, move) < 0) {
+                    return BAD_CAPTURE_SCORE + search_const.mvv_lva[piece][pieces[i]];
+                }
                 return 10000 + search_const.mvv_lva[piece][pieces[i]];
             }
         }
@@ -145,12 +151,64 @@ static inline_always bool can_null_move(const board_t* board,
                                         const search_state_t* search_state,
                                         int depth,
                                         int beta,
+                                        int static_eval,
                                         bool in_check,
                                         bool is_pv_node) {
     if (depth < NULL_MOVE_DEPTH_BOUND || in_check || is_pv_node || search_state->ply == 0) return false;
     if (search_state->null_move_index != 0 && search_state->null_move_index == search_state->repetition_index) return false;
     if (!has_non_pawn_material(board)) return false;
-    return evaluation(board) >= beta; /* Last, it's the most expensive. */
+    return static_eval >= beta;
+}
+
+static inline_always bool is_mate_score(int score) {
+    return score >= MATE_SCORE || score <= -MATE_SCORE;
+}
+
+/**
+ * Reverse futility (static null move) pruning: at low depth, a static eval this far above beta
+ * is very unlikely to drop below it, so the node fails high without a search. Not in check, PV
+ * nodes, at the root or near mate scores.
+ */
+static inline_always bool can_reverse_futility_prune(int depth, int static_eval, int beta, bool in_check, bool is_pv_node, int ply) {
+    return ply > 0 && !in_check && !is_pv_node && depth <= RFP_MAX_DEPTH && !is_mate_score(beta) &&
+           static_eval - RFP_MARGIN * depth >= beta;
+}
+
+/**
+ * Futility pruning: at low depth, a static eval this far below alpha means a quiet move is very
+ * unlikely to raise it, so quiet moves (after the first) are skipped. Captures, promotions and
+ * checks are still searched.
+ */
+static inline_always bool is_futile(int depth, int static_eval, int alpha, bool in_check, bool is_pv_node) {
+    return !in_check && !is_pv_node && depth <= FUTILITY_MAX_DEPTH && !is_mate_score(alpha) &&
+           static_eval + FUTILITY_MARGIN * depth <= alpha;
+}
+
+/**
+ * Late move reduction for a quiet move, from the log table, one ply less in PV nodes. Clamped so
+ * the reduced search still has at least one ply (depth - 1 - r >= 1).
+ */
+static inline_always int lmr_reduction(int depth, int moves_searched, bool is_pv_node) {
+    int r = lmr_table[depth < LMR_TABLE_SIZE ? depth : LMR_TABLE_SIZE - 1]
+                     [moves_searched < LMR_TABLE_SIZE ? moves_searched : LMR_TABLE_SIZE - 1];
+    if (is_pv_node) r--;
+    if (r > depth - 2) r = depth - 2;
+    return r > 0 ? r : 0;
+}
+
+/**
+ * Internal iterative reduction: with no TT move the move ordering is poor, so search the node one
+ * ply shallower (it's likely to be re-searched deeper later with a TT move from this search).
+ */
+static inline_always int iir_reduction(int depth, move_t tt_move) {
+    return (depth >= IIR_MIN_DEPTH && tt_move == 0) ? 1 : 0;
+}
+
+/* Whether the side to move is in check. */
+static inline_always bool side_in_check(board_t* board) {
+    return board->side == white ?
+           is_square_attacked_by_black(board, trailing_zero_count(board->pieces[K])) :
+           is_square_attacked_by_white(board, trailing_zero_count(board->pieces[k]));
 }
 
 static inline_always bool is_draw(const board_t* board, search_state_t* search_state) {
@@ -176,6 +234,13 @@ static inline_hint int quiescence(int alpha, int beta, board_t* board, search_st
     /* Captures and queen promotions only. */
     for (int i=0; i< buffer.index; i++) {
         move_t mv = pick_next_move(&buffer, scores, i);
+
+        /* Sorted best first, so from here on every capture loses material (SEE < 0). */
+        if (scores[i] < 0) break;
+
+        /* Delta pruning, even winning the piece can't bring the score up to alpha. */
+        if (!get_promoted_piece(mv) && eval + captured_value(board, mv) + DELTA_MARGIN <= alpha) continue;
+
         ++search_state->ply;
         if (make_move(board, mv)) {
             int score = -quiescence(-beta, -alpha, board, search_state, limits);
@@ -214,9 +279,7 @@ static inline int negamax(int alpha,
 
     /* Extend checks before the depth 0 test, so a check at the horizon is searched rather than
      * standing pat in qsearch (which would miss mates). */
-    bool in_check = board->side == white ?
-                    is_square_attacked_by_black(board, trailing_zero_count(board->pieces[K])) :
-                    is_square_attacked_by_white(board, trailing_zero_count(board->pieces[k]));
+    bool in_check = side_in_check(board);
 
     if (in_check) ++depth;
 
@@ -231,8 +294,15 @@ static inline int negamax(int alpha,
         return quiescence(alpha, beta, board, search_state, limits);
     }
 
+    depth -= iir_reduction(depth, tt_move);
+
+    /* Not meaningful in check, every move is searched there anyway. */
+    const int static_eval = in_check ? -INF : evaluation(board);
+
+    if (can_reverse_futility_prune(depth, static_eval, beta, in_check, is_pv_node, search_state->ply)) return beta;
+
     /* Null move pruning. */
-    if (can_null_move(board, search_state, depth, beta, in_check, is_pv_node)) {
+    if (can_null_move(board, search_state, depth, beta, static_eval, in_check, is_pv_node)) {
         make_null_move(board);
         search_state->repetition_check[++search_state->repetition_index] = board->hash;
         /* Repetitions can't span the null move, it isn't a real move. */
@@ -258,6 +328,8 @@ static inline int negamax(int alpha,
     if (search_state->follow_pv) set_follow_pv_flags(&buffer, search_state);
     score_moves(&buffer, scores, tt_move, board, search_state);
 
+    const bool futile = is_futile(depth, static_eval, alpha, in_check, is_pv_node);
+
     bool has_legal_moves = false;
     int num_moves_searched = 0;
     int score;
@@ -270,25 +342,43 @@ static inline int negamax(int alpha,
             continue;
         }
         has_legal_moves = true;
+
+        const bool is_quiet = !is_capture && !get_promoted_piece(mv);
+        /* Only needed when futility or LMR might apply, it costs an attack test. */
+        const bool may_prune = is_quiet && num_moves_searched > 0 &&
+                               (futile || (num_moves_searched >= LMR_MIN_MOVES && depth >= LMR_MIN_DEPTH && !in_check));
+        const bool gives_check = may_prune && side_in_check(board);
+
+        /* Futility pruning, quiet moves that don't give check. The first move is always searched. */
+        if (futile && num_moves_searched > 0 && is_quiet && !gives_check) {
+            pop_move(board);
+            continue;
+        }
+
+        /* Late move reduction, quiet moves late in the list. Killers, checks and moves made in
+         * check are searched at full depth. Killers are for this ply, checked before ++ply. */
+        int reduction = 0;
+        if (num_moves_searched >= LMR_MIN_MOVES && depth >= LMR_MIN_DEPTH && is_quiet && !gives_check && !in_check &&
+            mv != search_state->killer_moves[0][search_state->ply] &&
+            mv != search_state->killer_moves[1][search_state->ply]) {
+            reduction = lmr_reduction(depth, num_moves_searched, is_pv_node);
+        }
+
         ++search_state->ply;
         search_state->repetition_check[++search_state->repetition_index] = board->hash;
 
         if (num_moves_searched == 0 ) {
             score = -negamax(-beta, -alpha, depth-1, board, search_state, limits);
         } else {
-            /* Late move reduction. */
-            bool is_promoted = get_promoted_piece(mv);
-            if ( num_moves_searched >= LMR_DEPTH_BOUND && depth >= LMR_DEPTH_BOUND && !in_check && !is_capture && !is_promoted) {
-                score = -negamax(-alpha - 1, -alpha, depth - 2, board, search_state, limits);
-                if (score > alpha) {
-                    score = -negamax(-beta, -alpha, depth - 1, board, search_state, limits);
-                }
-            }
-            else { /* Principal variation search. */
+            /* Principal variation search, null window (reduced for late moves). A reduced move that
+             * beats alpha is searched again at full depth with the null window, then with the full
+             * window if it's still inside it. */
+            score = -negamax(-alpha - 1, -alpha, depth - 1 - reduction, board, search_state, limits);
+            if (score > alpha && reduction > 0) {
                 score = -negamax(-alpha - 1, -alpha, depth - 1, board, search_state, limits);
-                if (score > alpha && score < beta) {
-                    score = -negamax(-beta, -alpha, depth - 1, board, search_state, limits);
-                }
+            }
+            if (score > alpha && score < beta) {
+                score = -negamax(-beta, -alpha, depth - 1, board, search_state, limits);
             }
         }
 
@@ -347,31 +437,53 @@ static move_t inline_always first_legal_move(board_t* board) {
     return 0;
 }
 
-static move_t inline_always find_best_move(board_t* board, search_state_t* search_state, limits_t* limits) {
+/**
+ * Root search at 'depth' in a window around the previous depth's score. On a fail the failing
+ * side is widened, doubling each time, until the window is wider than ASPIRATION_MAX_DELTA and the
+ * full window is used. Shallow depths and mate scores use the full window straight away.
+ */
+static inline_always int aspiration_search(board_t* board, search_state_t* search_state, limits_t* limits,
+                                           int depth, int previous_score) {
+    int delta = ASPIRATION_WINDOW;
     int alpha = -INF;
     int beta = INF;
-    int score;
+    if (depth >= ASPIRATION_MIN_DEPTH && !is_mate_score(previous_score)) {
+        alpha = previous_score - delta;
+        beta = previous_score + delta;
+    }
+
+    while (true) {
+        search_state->follow_pv = true;
+        int score = negamax(alpha, beta, depth, board, search_state, limits);
+        if (limits->stop_search_flag) return score;
+
+        if (score <= alpha && alpha > -INF) {
+            alpha -= delta;
+        } else if (score >= beta && beta < INF) {
+            beta += delta;
+        } else {
+            return score;
+        }
+        delta *= 2;
+        if (delta > ASPIRATION_MAX_DELTA) {
+            alpha = -INF;
+            beta = INF;
+        }
+    }
+}
+
+static move_t inline_always find_best_move(board_t* board, search_state_t* search_state, limits_t* limits) {
+    int score = 0;
 
     int depth = limits->depth;
     move_t move = 0;
 
     for (int i = 1; i <= depth; i++) {
-        search_state->follow_pv = true;
-        score = negamax(alpha, beta, i, board, search_state, limits);
+        score = aspiration_search(board, search_state, limits, i, score);
 
-        /* Outside the aspiration window, re-search with a full window. */
-        if (!limits->stop_search_flag && (score <= alpha || score >= beta)) {
-            alpha = -INF;
-            beta = INF;
-            score = negamax(alpha, beta, i, board, search_state, limits);
-        }
-
-        /* Either search may have been stopped, the PV table is then partly overwritten so keep
+        /* The search may have been stopped, the PV table is then partly overwritten so keep
          * the move from the last completed depth. */
         if (limits->stop_search_flag || score == STOPPED_SEARCH) break;
-
-        alpha = score - ASPIRATION_WINDOW;
-        beta = score + ASPIRATION_WINDOW;
 
         move = search_state->pv_table[0][0];
 

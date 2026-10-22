@@ -9,5 +9,6 @@ void test_parse_move_rejects_invalid();
 void test_slider_attacks_match_reference();
 void test_generate_captures_matches_filtered_moves();
 void test_generate_captures_promotions();
+void test_see();
 
 #endif

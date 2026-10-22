@@ -1,3 +1,5 @@
+#include <math.h>
+
 #include "search_constants.h"
 
 /* Most valuable victim, least valuable attacker, used to order moves (i.e. not position evaluation).  */
@@ -18,3 +20,14 @@ const search_const_t search_const = {
         100, 200, 300, 400, 500, 600,  100, 200, 300, 400, 500, 600
     }
 };
+
+uint8_t lmr_table[LMR_TABLE_SIZE][LMR_TABLE_SIZE];
+
+void init_lmr_table() {
+    for (int depth = 0; depth < LMR_TABLE_SIZE; depth++) {
+        for (int moves = 0; moves < LMR_TABLE_SIZE; moves++) {
+            lmr_table[depth][moves] = (depth == 0 || moves == 0) ? 0 :
+                                      (uint8_t) (0.75 + log(depth) * log(moves) / 2.25);
+        }
+    }
+}

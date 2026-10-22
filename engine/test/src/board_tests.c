@@ -9,6 +9,7 @@
 #include "../../core/src/attack_mask.h"
 #include "../../core/src/move_generator.h"
 #include "../../core/src/uci.h"
+#include "../../core/src/see.h"
 
 
 void test_parse_fen_fields() {
@@ -212,4 +213,32 @@ void test_generate_captures_promotions() {
     parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
     generate_captures(&board, &buffer);
     TEST_ASSERT_EQUAL_INT(0, buffer.index);
+}
+
+
+static int see_of(const char* fen, const char* move) {
+    board_t board;
+    parse_fen(fen, &board);
+    move_t mv = parse_move(move, &board);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(0, mv, move);
+    return see(&board, mv);
+}
+
+void test_see() {
+    /* Undefended pawn. */
+    TEST_ASSERT_EQUAL_INT(100, see_of("4k3/8/8/3p4/8/8/8/3QK3 w - - 0 1", "d1d5"));
+    /* Queen takes a pawn defended by a pawn. */
+    TEST_ASSERT_EQUAL_INT(100 - 900, see_of("4k3/8/2p5/3p4/8/8/8/3QK3 w - - 0 1", "d1d5"));
+    /* Pawn takes a knight defended by a pawn. */
+    TEST_ASSERT_EQUAL_INT(320 - 100, see_of("4k3/8/2p5/3n4/4P3/8/8/4K3 w - - 0 1", "e4d5"));
+    /* Doubled rooks, the second rook (x-ray) makes the recapture lose, so black doesn't take. */
+    TEST_ASSERT_EQUAL_INT(100, see_of("3rk3/8/8/3p4/8/8/3R4/3RK3 w - - 0 1", "d2d5"));
+    /* Without the second rook black recaptures. */
+    TEST_ASSERT_EQUAL_INT(100 - 500, see_of("3rk3/8/8/3p4/8/8/3R4/4K3 w - - 0 1", "d2d5"));
+    /* The black king can't recapture, the bishop on b2 covers d4. */
+    TEST_ASSERT_EQUAL_INT(100, see_of("8/8/8/4k3/3p4/8/1B6/3RK3 w - - 0 1", "d1d4"));
+    /* En passant, the target square is empty. */
+    TEST_ASSERT_EQUAL_INT(100, see_of("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1", "e5d6"));
+    /* Black to move, rook takes a knight defended by a pawn. */
+    TEST_ASSERT_EQUAL_INT(320 - 500, see_of("4k3/3r4/8/8/3N4/4P3/8/4K3 b - - 0 1", "d7d4"));
 }

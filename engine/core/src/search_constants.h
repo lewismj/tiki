@@ -27,6 +27,13 @@ typedef struct align {
  */
 extern const search_const_t search_const;
 
+/**
+ * Late move reductions by [depth][moves searched], 0.75 + log(depth) * log(moves) / 2.25.
+ * Filled by init_lmr_table(), called at startup (on_startup).
+ */
+extern uint8_t lmr_table[64][64];
+void init_lmr_table();
+
 #define INF 900000
 #define MATE_VALUE 890000
 #define MATE_SCORE 880000
@@ -36,7 +43,18 @@ extern const search_const_t search_const;
 #define MAX_PLY 64               /* Maximum ply we can search.                                               */
 #define MAX_SEARCH_DEPTH 32      /* Iterative deepening limit when no depth is given (e.g. 'go infinite').   */
 #define NULL_MOVE_DEPTH_BOUND 4  /* Lower bound for depth to enable null move pruning.                       */
-#define LMR_DEPTH_BOUND 4        /* Lower bound for depth to enable late move reduction.                     */
-#define ASPIRATION_WINDOW 300    /* Offsets to use to narrow search window with iterative deepening.         */
+#define LMR_MIN_DEPTH 3          /* Late move reduction from this depth...                                   */
+#define LMR_MIN_MOVES 3          /* ...after this many moves have been searched at the node.                 */
+#define LMR_TABLE_SIZE 64
+#define IIR_MIN_DEPTH 4          /* Internal iterative reduction (no TT move) from this depth.               */
+#define ASPIRATION_WINDOW 25     /* Initial half-width of the root window around the previous score...       */
+#define ASPIRATION_MAX_DELTA 1000 /* ...doubled on each fail, full window once it's wider than this.         */
+#define ASPIRATION_MIN_DEPTH 4   /* Shallower depths use the full window, their scores are less stable.      */
 #define HISTORY_MAX 7000         /* History scores stay at or below this, under the killers (8000, 9000).    */
+#define BAD_CAPTURE_SCORE (-20000) /* Ordering offset for losing captures (SEE < 0), below every quiet move.  */
+#define DELTA_MARGIN 200         /* Qsearch delta pruning, skip a capture if eval + victim + margin <= alpha. */
+#define RFP_MAX_DEPTH 6          /* Reverse futility pruning up to this depth...                             */
+#define RFP_MARGIN 100           /* ...when static eval - margin * depth >= beta.                            */
+#define FUTILITY_MAX_DEPTH 3     /* Futility pruning of quiet moves up to this depth...                      */
+#define FUTILITY_MARGIN 150      /* ...when static eval + margin * depth <= alpha.                           */
 #endif

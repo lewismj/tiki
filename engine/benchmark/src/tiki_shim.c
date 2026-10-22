@@ -27,6 +27,7 @@ struct tiki_position {
 void tiki_init(unsigned short hash_mb) {
     init_attack_table();
     init_zobrist_key();
+    init_lmr_table();
     init_transposition_table(hash_mb);
 }
 

@@ -27,6 +27,7 @@ void on_shutdown() {
 void on_startup() {
     init_zobrist_key();
     init_attack_table();
+    init_lmr_table();
     init_transposition_table(256);
     atexit(on_shutdown);
 }

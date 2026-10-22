@@ -34,7 +34,7 @@ cd build && ctest -LE slow        # unit tests and bench smoke test; 'ctest' als
 ### Benchmarking
 
 - `tiki_app bench [depth]` (or `bench [depth]` in the UCI loop) searches 16 fixed positions to a fixed depth
-  (default 8) with a 16MB TT cleared before each one, and prints the total node count and nodes/second. The node count
+  (default 11) with a 16MB TT cleared before each one, and prints the total node count and nodes/second. The node count
   only changes when the search or evaluation does, so it's a signature for refactors that shouldn't change behaviour.
 - `build/engine/benchmark/tiki_benchmark` runs Google Benchmark micro-benchmarks of evaluation, move generation,
   make/undo, perft and a fixed-depth search, for comparing an evaluation change on its own.
