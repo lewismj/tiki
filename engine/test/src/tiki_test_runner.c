@@ -60,6 +60,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_make_move_hash3);
     RUN_TEST(test_undo_restores_state1);
     RUN_TEST(test_incremental_hash_matches_full);
+    RUN_TEST(test_pop_on_empty_stack_is_clamped);
     RUN_TEST(test_parse_fen_fields);
     RUN_TEST(test_parse_move_promotions);
     RUN_TEST(test_parse_move_castling);

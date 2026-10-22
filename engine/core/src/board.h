@@ -198,7 +198,9 @@ static inline_always bool is_square_attacked_by_white(board_t* board, square s) 
 
 
 static inline_always void pop_move(board_t* board) {
-    if (--board->stack_ptr == -1) return;
+    /* Nothing to undo, stay at 0 rather than going to -1 (make_move would then write stack[-1]). */
+    if (board->stack_ptr == 0) return;
+    --board->stack_ptr;
     undo_meta_t* undo_element = &board->stack[board->stack_ptr];
     move_t undo_move = undo_element->move;
 
@@ -404,6 +406,7 @@ static inline_always bool make_move(board_t* board, move_t move) {
 }
 
 static inline_always void pop_null_move(board_t* board) {
+    if (board->stack_ptr == 0) return; /* Same clamp as pop_move. */
     --board->stack_ptr;
     undo_meta_t* undo_element = &board->stack[board->stack_ptr];
     board->hash = undo_element->hash;

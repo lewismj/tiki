@@ -174,3 +174,29 @@ void test_incremental_hash_matches_full() {
         TEST_ASSERT_EQUAL_INT_MESSAGE(0, hash_mismatches(&board, positions[i].depth), positions[i].fen);
     }
 }
+
+void test_pop_on_empty_stack_is_clamped() {
+    board_t board, original;
+    parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
+    parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &original);
+
+    /* Nothing to undo, the board and stack pointer are unchanged. */
+    pop_move(&board);
+    pop_null_move(&board);
+    TEST_ASSERT_EQUAL_INT(0, board.stack_ptr);
+    TEST_ASSERT_EQUAL_UINT64(original.hash, board.hash);
+    TEST_ASSERT_EQUAL_INT(original.side, board.side);
+
+    /* A move after that is made at stack[0] and undoes normally. */
+    move_t e2e4 = encode_move(e2, e4, P, 0, 0, 1, 0, 0, 0);
+    TEST_ASSERT_TRUE(make_move(&board, e2e4));
+    TEST_ASSERT_EQUAL_INT(1, board.stack_ptr);
+    pop_move(&board);
+    TEST_ASSERT_EQUAL_INT(0, board.stack_ptr);
+    TEST_ASSERT_EQUAL_UINT64(original.hash, board.hash);
+    TEST_ASSERT_EQUAL_UINT64(original.pieces[P], board.pieces[P]);
+
+    /* One undo too many is clamped too. */
+    pop_move(&board);
+    TEST_ASSERT_EQUAL_INT(0, board.stack_ptr);
+}
