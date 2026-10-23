@@ -25,7 +25,6 @@ set (SOURCES
         src/datagen.c
         src/tools.c
         src/limits.c
-        src/hce/evaluation_mask.c
         src/nnue/nnue.c
 )
 

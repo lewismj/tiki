@@ -9,12 +9,13 @@
 #include "../../core/src/zobrist_key.h"
 #include "../../core/src/board.h"
 #include "../../core/src/move_generator.h"
-#include "../../core/src/evaluation.h"
 #include "../../core/src/search_state.h"
 #include "../../core/src/search.h"
 #include "../../core/src/transposition.h"
 #include "../../core/src/limits.h"
 #include "../../core/src/uci.h"
+#include "../../core/src/nnue/nnue.h"
+#include "../../core/include/core/tiki.h"
 
 
 struct tiki_position {
@@ -29,6 +30,7 @@ void tiki_init(unsigned short hash_mb) {
     init_zobrist_key();
     init_lmr_table();
     init_transposition_table(hash_mb);
+    if (!load_startup_network()) exit(EXIT_FAILURE);
 }
 
 tiki_position* tiki_position_new(const char* fen) {
@@ -43,7 +45,7 @@ void tiki_position_free(tiki_position* position) {
 }
 
 int tiki_evaluate(const tiki_position* position) {
-    return evaluation(&position->board);
+    return nnue_evaluate(&position->board);
 }
 
 int tiki_generate_moves(tiki_position* position) {

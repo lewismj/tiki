@@ -57,3 +57,6 @@ __pycache__/
 training/nets/
 /data/
 *.nnue
+
+# builds
+build

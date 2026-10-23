@@ -218,12 +218,25 @@ bool is_draw(const board_t* board, search_state_t* search_state) {
            contains_repetition(search_state, board->hash, board->fifty_move);
 }
 
+/* make_move / pop_move for the search, keeping the network's accumulators in step. */
+static inline_always bool search_make_move(board_t* board, search_state_t* search_state, move_t mv) {
+    bool legal = make_move(board, mv);
+    nnue_push(&search_state->nnue, board, mv);
+    return legal;
+}
+
+static inline_always void search_pop_move(board_t* board, search_state_t* search_state) {
+    pop_move(board);
+    nnue_pop(&search_state->nnue);
+}
+
 int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state, limits_t* limits) {
     if ((++search_state->nodes & 2047) == 0) node_batch(search_state, limits);
 
-    if (search_state->ply > MAX_PLY-1) return evaluation(board);
+    if (search_state->ply == 0) nnue_reset(&search_state->nnue);
+    if (search_state->ply > MAX_PLY-1) return evaluation(board, &search_state->nnue);
 
-    int eval = evaluation(board);
+    int eval = evaluation(board, &search_state->nnue);
     if (eval >= beta) return beta;
     if (eval > alpha) alpha = eval;
 
@@ -243,10 +256,10 @@ int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state
         if (!get_promoted_piece(mv) && eval + captured_value(board, mv) + DELTA_MARGIN <= alpha) continue;
 
         ++search_state->ply;
-        if (make_move(board, mv)) {
+        if (search_make_move(board, search_state, mv)) {
             int score = -quiescence(-beta, -alpha, board, search_state, limits);
             --search_state->ply;
-            pop_move(board);
+            search_pop_move(board, search_state);
 
             if (limits->stop_search_flag) return STOPPED_SEARCH;
 
@@ -256,7 +269,7 @@ int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state
             }
         } else {
             --search_state->ply;
-            pop_move(board);
+            search_pop_move(board, search_state);
         }
     }
     return alpha;
@@ -272,11 +285,14 @@ int negamax(int alpha,
 
     search_state->pv_length[search_state->ply] = search_state->ply;
 
+    /* The root, the accumulators start again from this position. */
+    if (search_state->ply == 0) nnue_reset(&search_state->nnue);
+
     /* Not at the root, so a move is always returned. */
     if (search_state->ply > 0 && is_draw(board, search_state))
         return 0;
 
-    if (search_state->ply>MAX_PLY-1) return evaluation(board);
+    if (search_state->ply>MAX_PLY-1) return evaluation(board, &search_state->nnue);
 
     /* Extend checks before the depth 0 test, so a check at the horizon is searched rather than
      * standing pat in qsearch (which would miss mates). */
@@ -298,7 +314,7 @@ int negamax(int alpha,
     depth -= iir_reduction(depth, tt_move);
 
     /* Not meaningful in check, every move is searched there anyway. */
-    const int static_eval = in_check ? -INF : evaluation(board);
+    const int static_eval = in_check ? -INF : evaluation(board, &search_state->nnue);
 
     if (can_reverse_futility_prune(depth, static_eval, beta, in_check, is_pv_node, search_state->ply)) return beta;
 
@@ -338,8 +354,8 @@ int negamax(int alpha,
     for (int i=0; i < buffer.index; i++) {
         move_t mv = pick_next_move(&buffer, scores, i);
         bool is_capture = get_capture_flag(mv);
-        if (!make_move(board,mv)) {
-            pop_move(board);
+        if (!search_make_move(board, search_state, mv)) {
+            search_pop_move(board, search_state);
             continue;
         }
         has_legal_moves = true;
@@ -352,7 +368,7 @@ int negamax(int alpha,
 
         /* Futility pruning, quiet moves that don't give check. The first move is always searched. */
         if (futile && num_moves_searched > 0 && is_quiet && !gives_check) {
-            pop_move(board);
+            search_pop_move(board, search_state);
             continue;
         }
 
@@ -386,7 +402,7 @@ int negamax(int alpha,
         ++num_moves_searched;
         --search_state->ply;
         --search_state->repetition_index;
-        pop_move(board);
+        search_pop_move(board, search_state);
 
         if (limits->stop_search_flag) return STOPPED_SEARCH;
 

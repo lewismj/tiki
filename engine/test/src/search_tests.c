@@ -157,7 +157,7 @@ void test_quiescence_sees_quiet_queen_promotion() {
 
     /* No captures, only a7a8=Q. The old qsearch skipped non-captures, so it stood pat. */
     setup_position("8/P7/8/8/8/8/k7/7K w - - 0 1", &board, &search_state, &limits, 1);
-    const int stand_pat = evaluation(&board);
+    const int stand_pat = evaluation(&board, &search_state.nnue);
     const int score = quiescence(-INF, INF, &board, &search_state, &limits);
     TEST_ASSERT_TRUE(score > stand_pat + 500);
 }
@@ -187,27 +187,27 @@ void test_null_move_guards() {
                    &board, &search_state, &limits, 5);
     search_state.ply = 1;
     search_state.repetition_index = 1;
-    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board), false, false));
+    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board, &search_state.nnue), false, false));
 
     /* Depth, check and PV node. */
-    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, NULL_MOVE_DEPTH_BOUND - 1, low_beta, evaluation(&board), false, false));
-    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board), true, false));
-    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board), false, true));
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, NULL_MOVE_DEPTH_BOUND - 1, low_beta, evaluation(&board, &search_state.nnue), false, false));
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board, &search_state.nnue), true, false));
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board, &search_state.nnue), false, true));
 
     /* Static eval below beta. */
-    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, evaluation(&board) + 1, evaluation(&board), false, false));
-    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, evaluation(&board), evaluation(&board), false, false));
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, evaluation(&board, &search_state.nnue) + 1, evaluation(&board, &search_state.nnue), false, false));
+    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, evaluation(&board, &search_state.nnue), evaluation(&board, &search_state.nnue), false, false));
 
     /* Root. */
     search_state.ply = 0;
-    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board), false, false));
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board, &search_state.nnue), false, false));
     search_state.ply = 1;
 
     /* Straight after a null move, but not two plies after one. */
     search_state.null_move_index = 1;
-    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board), false, false));
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board, &search_state.nnue), false, false));
     search_state.repetition_index = 2;
-    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board), false, false));
+    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board, &search_state.nnue), false, false));
     search_state.null_move_index = 0;
     search_state.repetition_index = 1;
 
@@ -215,11 +215,11 @@ void test_null_move_guards() {
     setup_position("4k3/8/8/2r5/8/8/PPP5/4K3 w - - 0 1", &board, &search_state, &limits, 5);
     search_state.ply = 1;
     search_state.repetition_index = 1;
-    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board), false, false));
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board, &search_state.nnue), false, false));
     setup_position("4k3/8/8/2r5/8/8/PPP5/4K3 b - - 0 1", &board, &search_state, &limits, 5);
     search_state.ply = 1;
     search_state.repetition_index = 1;
-    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board), false, false));
+    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board, &search_state.nnue), false, false));
 }
 
 void test_history_bonus_and_bound() {

@@ -15,13 +15,13 @@ extern "C" {
 
 typedef struct tiki_position tiki_position;
 
-/* Tables and a TT of 'hash_mb', call once before anything else. */
+/* Tables, a TT of 'hash_mb' and the network (TIKI_EVALFILE, exits without one), call once first. */
 void tiki_init(unsigned short hash_mb);
 
 tiki_position* tiki_position_new(const char* fen);
 void tiki_position_free(tiki_position* position);
 
-/* Static evaluation of the position. */
+/* Static evaluation of the position, the network with its accumulators from scratch. */
 int tiki_evaluate(const tiki_position* position);
 
 /* Number of pseudo-legal moves generated. */

@@ -13,7 +13,8 @@ set (SOURCES
         src/input_tests.c
         src/board_tests.c
         src/search_tests.c
-        src/nnue_tests.c)
+        src/nnue_tests.c
+        src/test_network.c)
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 
@@ -43,5 +44,6 @@ set_tests_properties(perft_full PROPERTIES TIMEOUT 3600 LABELS slow)
 
 install (TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 # The 'bench' command runs end to end (the node count is checked for determinism in the unit tests).
-add_test(NAME bench COMMAND tiki_app bench 6)
-set_tests_properties(bench PROPERTIES TIMEOUT 300 PASS_REGULAR_EXPRESSION "Nodes searched")
+# It needs a network, so it's skipped (exit 77) when TIKI_EVALFILE isn't set.
+add_test(NAME bench COMMAND sh -c "[ -n \"$TIKI_EVALFILE\" ] || exit 77; exec \"$1\" bench 6" sh $<TARGET_FILE:tiki_app>)
+set_tests_properties(bench PROPERTIES TIMEOUT 300 PASS_REGULAR_EXPRESSION "Nodes searched" SKIP_RETURN_CODE 77)

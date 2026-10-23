@@ -61,6 +61,37 @@ typedef struct {
     int16_t values[2][NNUE_HIDDEN];         /* Indexed by perspective (white, black). */
 } nnue_accumulator_t;
 
+/**
+ * Accumulators along the search path, updated lazily. Each made move pushes an entry recording
+ * the features it adds and removes (at most two of each: a castle moves the king and the rook, a
+ * capture removes the moved piece's old square and the captured piece). Nothing is computed until
+ * a position is evaluated, as many moves are made and undone without one (illegal, pruned). Then
+ * each perspective walks back to the nearest computed accumulator and applies the changes forward,
+ * or, if that side's king moved on the way (every one of its features changes), refreshes from the
+ * board. A null move changes no pieces, so it pushes nothing.
+ */
+#define NNUE_STACK_SIZE 128                 /* More than the deepest search path (MAX_PLY). */
+
+typedef struct {
+    piece pc;
+    square sq;
+} nnue_piece_square_t;
+
+typedef struct {
+    nnue_accumulator_t accumulator;
+    bool computed[2];                       /* Per perspective, whether 'accumulator' is up to date. */
+    bool refresh[2];                        /* This entry's move moved that perspective's king. */
+    int8_t added_count;
+    int8_t removed_count;
+    nnue_piece_square_t added[2];
+    nnue_piece_square_t removed[2];
+} nnue_entry_t;
+
+typedef struct {
+    nnue_entry_t entries[NNUE_STACK_SIZE];  /* entries[0] is the search root. */
+    int top;
+} nnue_stack_t;
+
 /* The loaded network, a single instance like the TT. */
 extern nnue_network_t nnue_net;
 
@@ -74,15 +105,35 @@ int nnue_active_features(const board_t* board, colour perspective, int* features
 bool nnue_allocate(void);
 void nnue_free(void);
 
-/* Loads / saves the file format above. Load returns false, leaving no network, on any mismatch. */
+/* Loads / saves the file format above. Load returns false on any mismatch, keeping the current network. */
 bool nnue_load(const char* path);
 bool nnue_save(const char* path);
-bool nnue_is_loaded(void);
 
-/* Accumulators from scratch (incremental updates in make/undo come when the net is used in search). */
+/* The file the network was loaded from, "" if none or it was built in code (nnue_allocate). */
+const char* nnue_loaded_path(void);
+
+static inline bool nnue_is_loaded(void) {
+    return nnue_net.ft_weights != NULL;
+}
+
+/* Accumulators from scratch. */
 void nnue_refresh(const board_t* board, nnue_accumulator_t* accumulator);
 
 /* Evaluation in centipawns from the side to move's point of view (refreshes the accumulator). */
 int nnue_evaluate(const board_t* board);
+
+/* Empties the stack, 'board' (whatever position it's next evaluated with) is the root. */
+void nnue_reset(nnue_stack_t* stack);
+
+/* After make_move(board, move): records the move's feature changes (legal or not). */
+void nnue_push(nnue_stack_t* stack, const board_t* board, move_t move);
+
+/* With pop_move, discards the last push. */
+static inline void nnue_pop(nnue_stack_t* stack) {
+    stack->top--;
+}
+
+/* nnue_evaluate for the position at the top of the stack, which must be 'board', incrementally. */
+int nnue_evaluate_incremental(nnue_stack_t* stack, const board_t* board);
 
 #endif

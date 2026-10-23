@@ -14,6 +14,7 @@
 #include "uci_input.h"
 #include "bench.h"
 #include "version.h"
+#include "nnue/nnue.h"
 
 
 #define startpos "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
@@ -25,6 +26,7 @@ static int search_threads = 1;
 /* Will be invoked on atexit, no need to invoke directly. */
 void on_shutdown() {
     free_transposition_table();
+    nnue_free();
 }
 
 /* Call once at program start (main), registers on_shutdown with atexit. */
@@ -354,6 +356,18 @@ void parse_setoption(const char* command) {
         if (threads < 1) threads = 1;
         if (threads > MAX_SEARCH_THREADS) threads = MAX_SEARCH_THREADS;
         search_threads = threads;
+    } else if (is_option(name, length, "EvalFile")) {
+        /* The path runs to the end of the line (it may contain spaces). */
+        size_t path_length = value ? strlen(value) : 0;
+        while (path_length > 0 && isspace((unsigned char) value[path_length - 1])) path_length--;
+        char path[1024];
+        snprintf(path, sizeof(path), "%.*s", (int) path_length, value ? value : "");
+        if (nnue_load(path)) {
+            printf("info string Loaded network %s\n", path);
+        } else {
+            printf("info string Could not load network '%s', still using %s\n", path,
+                   *nnue_loaded_path() ? nnue_loaded_path() : "the current network");
+        }
     } else {
         printf("info string Unknown option: %.*s\n", (int) length, name);
     }
@@ -366,6 +380,8 @@ bool handle_uci_command(const char* command, board_t* board, search_state_t* sea
             printf("id author %s\n", ENGINE_AUTHOR);
             printf("option name Hash type spin default %d min 1 max %d\n", TT_DEFAULT_MB, TT_MAX_MB);
             printf("option name Threads type spin default 1 min 1 max %d\n", MAX_SEARCH_THREADS);
+            printf("option name EvalFile type string default %s\n",
+                   *nnue_loaded_path() ? nnue_loaded_path() : "<empty>");
             printf("uciok\n");
             break;
         case uci_cmd_setoption:

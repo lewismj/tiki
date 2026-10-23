@@ -12,13 +12,16 @@
 #include "board_tests.h"
 #include "search_tests.h"
 #include "nnue_tests.h"
+#include "test_network.h"
 
 #include "../../core/src/attack_mask.h"
 #include "../../core/src/zobrist_key.h"
 #include "../../core/src/transposition.h"
 
-/* The pre-computed tables don't change, they're initialised once in main. */
+/* The pre-computed tables don't change, they're initialised once in main. Searching needs a network,
+ * each test starts with the material network (some tests replace or free it). */
 void setUp() {
+    load_material_network();
 }
 
 void tearDown() {
@@ -77,6 +80,9 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_nnue_evaluate_known_value);
     RUN_TEST(test_nnue_evaluate_colour_symmetric);
     RUN_TEST(test_nnue_save_load_round_trip);
+    RUN_TEST(test_nnue_incremental_matches_refresh);
+    RUN_TEST(test_nnue_setoption_evalfile);
+    RUN_TEST(test_material_network_values);
     RUN_TEST(test_datagen_output_format);
     RUN_TEST(test_datagen_deterministic);
     RUN_TEST(test_search_mate_in_one);

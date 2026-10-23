@@ -1,12 +1,14 @@
 """Training data from the Lichess database (https://database.lichess.org, CC0).
 
 Downloads monthly dumps of rated standard games and converts games analysed by
-Lichess (those with Stockfish '[%eval ...]' annotations) to the trainer's format:
+Lichess (those with Stockfish '[%eval ...]' annotations) to the trainer's
+binary format (tiki_nnue/binary.py), lichess-YYYY-MM.bin. With --text it
+writes lichess-YYYY-MM.txt instead, in the same format as 'tiki_app datagen':
 
     <fen> | <score> | <result>
 
 Score is in centipawns and result is 1.0 / 0.5 / 0.0, both from White's
-point of view, matching 'tiki_app datagen'.
+point of view.
 
 The scores are Stockfish's, so a network trained on them learns Stockfish's
 evaluation (see the README).
@@ -50,6 +52,8 @@ from rich.progress import (
 )
 
 from rich.table import Table
+
+from tiki_nnue import binary
 
 
 URL = (
@@ -249,7 +253,7 @@ def evaluated_games(path, progress=None, task=None):
 
 
 class Converter:
-    """Converts one game's PGN text to training data."""
+    """Converts one game's PGN text to training data: text lines, or binary records if 'binary'."""
 
     def __init__(
         self,
@@ -258,14 +262,20 @@ class Converter:
         min_elo,
         max_score,
         seed,
+        binary=False,
     ):
         self.skip_plies = skip_plies
         self.sample = sample
         self.min_elo = min_elo
         self.max_score = max_score
         self.seed = seed
+        self.binary = binary
 
     def __call__(self, text):
+        lines = self.lines(text)
+        return binary.encode(lines) if self.binary else lines
+
+    def lines(self, text):
         game = chess.pgn.read_game(io.StringIO(text))
 
         if game is None:
@@ -342,7 +352,8 @@ class Converter:
 
 
 def convert(path, out_path, converter, workers, max_positions):
-    """Converts a dump to training data, using a .part file until complete."""
+    """Converts a dump to training data, using a .part file until complete. The converter's output
+    is written as it comes, so it must be binary (and 'out_path' a .bin) or text to match."""
     partial = out_path + ".part"
 
     games = 0
@@ -350,7 +361,10 @@ def convert(path, out_path, converter, workers, max_positions):
     start = time.time()
     total_bytes = os.path.getsize(path)
 
-    with open(partial, "w", encoding="utf-8") as out:
+    text = not converter.binary
+    with open(partial, "w" if text else "wb", **({"encoding": "utf-8"} if text else {})) as out:
+        if not text:
+            out.write(binary.MAGIC)
         with multiprocessing.Pool(workers) as pool:
             with Progress(
                 SpinnerColumn(),
@@ -368,7 +382,10 @@ def convert(path, out_path, converter, workers, max_positions):
                     # reader. Workers convert individual games in parallel.
                     for lines in pool.imap(converter, evaluated_games(path, progress, task), chunksize=64,):
                         games += 1
-                        out.writelines(lines)
+                        if text:
+                            out.writelines(lines)
+                        else:
+                            out.write(lines.tobytes())
                         positions += len(lines)
 
                         elapsed = max(time.time() - start, 1.0)
@@ -447,6 +464,7 @@ def main():
     parser.add_argument("--max-score", type=int, default=3000, help="skip positions scored above this (centipawns)", )
     parser.add_argument("--max-positions", type=int, default=0, help="stop each month after this many (0: all)", )
     parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1), help="number of conversion worker processes", )
+    parser.add_argument("--text", action="store_true", help="write text (.txt) rather than binary (.bin) data", )
     parser.add_argument("--delete-dumps", action="store_true", help="delete each dump after converting it", )
     parser.add_argument("--seed", type=int, default=1, help="deterministic sampling seed", )
 
@@ -478,7 +496,7 @@ def main():
     os.makedirs(args.download_dir, exist_ok=True)
     os.makedirs(args.out_dir, exist_ok=True)
 
-    converter = Converter(args.skip_plies, args.sample, args.min_elo, args.max_score, args.seed,)
+    converter = Converter(args.skip_plies, args.sample, args.min_elo, args.max_score, args.seed, not args.text,)
 
     results = []
 
@@ -492,10 +510,11 @@ def main():
     for month in requested_months:
         out_path = os.path.join(
             args.out_dir,
-            f"lichess-{month}.txt",
+            f"lichess-{month}.{'txt' if args.text else 'bin'}",
         )
 
-        if os.path.exists(out_path):
+        # Either format counts, train.py reads both.
+        if any(os.path.exists(os.path.join(args.out_dir, f"lichess-{month}.{ext}")) for ext in ("txt", "bin")):
             console.print(f"[dim]{month}: already converted[/dim]")
             results.append((month, "Skipped", None, None))
             continue

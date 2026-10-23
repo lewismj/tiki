@@ -12,6 +12,8 @@
 #include "../../core/src/nnue/nnue.h"
 #include "../../core/src/datagen.h"
 #include "../../core/src/search_constants.h"
+#include "../../core/src/move_generator.h"
+#include "test_network.h"
 
 #define START_FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
@@ -186,12 +188,149 @@ void test_nnue_save_load_round_trip() {
         TEST_ASSERT_EQUAL_INT(expected[i], nnue_evaluate(&board));
     }
 
-    /* A truncated file is rejected and leaves no network. */
+    TEST_ASSERT_EQUAL_STRING(path, nnue_loaded_path());
+
+    /* A truncated or missing file is rejected, keeping the current network. */
     TEST_ASSERT_EQUAL_INT(0, truncate(path, 1000));
     TEST_ASSERT_FALSE(nnue_load(path));
-    TEST_ASSERT_FALSE(nnue_is_loaded());
     TEST_ASSERT_FALSE(nnue_load("/nonexistent/tiki.nnue"));
+    TEST_ASSERT_TRUE(nnue_is_loaded());
+    TEST_ASSERT_EQUAL_STRING(path, nnue_loaded_path());
+    board_t board;
+    parse_fen(positions[0], &board);
+    TEST_ASSERT_EQUAL_INT(expected[0], nnue_evaluate(&board));
     unlink(path);
+}
+
+/* Moves of each kind the walk made, so the test can check they were all covered. */
+typedef struct {
+    int evaluated;
+    int castles;
+    int en_passants;
+    int promotions;
+    int null_moves;
+} walk_counts_t;
+
+/**
+ * Random walk from 'board': a few random moves per node, each made with nnue_push as the search
+ * does. Evaluates at about half the nodes, so some evaluations catch up over several moves, and
+ * compares the incremental eval with a full refresh.
+ */
+static void walk(board_t* board, nnue_stack_t* stack, int depth, uint32_t* rng, walk_counts_t* counts) {
+    if (depth == 0) return;
+
+    /* As in the search, not in check (the king could then be captured). */
+    const bool in_check = board->side == white ?
+                          is_square_attacked_by_black(board, trailing_zero_count(board->pieces[K])) :
+                          is_square_attacked_by_white(board, trailing_zero_count(board->pieces[k]));
+    if (!in_check && next_random_32(rng) % 6 == 0) {
+        /* Null move: no push, the same accumulators with the other side to move. */
+        make_null_move(board);
+        TEST_ASSERT_EQUAL_INT(nnue_evaluate(board), nnue_evaluate_incremental(stack, board));
+        counts->null_moves++;
+        walk(board, stack, depth - 1, rng, counts);
+        pop_null_move(board);
+    }
+
+    move_buffer_t buffer;
+    generate_moves(board, &buffer);
+    for (int i = 0; i < buffer.index; i++) {
+        const move_t mv = buffer.moves[i];
+        const bool special = get_king_side_castle_flag(mv) || get_queen_side_castle_flag(mv) ||
+                             get_enpassant_flag(mv) || get_promoted_piece(mv);
+        /* Every special move, about one in four of the rest. */
+        if (!special && next_random_32(rng) % 4 != 0) continue;
+
+        const bool legal = make_move(board, mv);
+        nnue_push(stack, board, mv);
+        if (legal) {
+            counts->castles += get_king_side_castle_flag(mv) || get_queen_side_castle_flag(mv);
+            counts->en_passants += get_enpassant_flag(mv) != 0;
+            counts->promotions += get_promoted_piece(mv) != 0;
+            if (next_random_32(rng) & 1) {
+                TEST_ASSERT_EQUAL_INT(nnue_evaluate(board), nnue_evaluate_incremental(stack, board));
+                counts->evaluated++;
+            }
+            walk(board, stack, depth - 1, rng, counts);
+        }
+        pop_move(board);
+        nnue_pop(stack);
+    }
+}
+
+void test_nnue_incremental_matches_refresh() {
+    static const char* const walk_positions[] = {
+            /* Castling both sides, en passant after the pawn pushes. */
+            "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+            /* En passant now (c6), promotions with and without captures for both sides, castling. */
+            "r3k2r/1P4P1/8/2pP4/8/8/1p4p1/R3K2R w KQkq c6 0 1",
+            "6k1/6p1/6Pp/ppp5/3pn2P/1P3K2/1PP2P2/8 b - - 3 54",
+    };
+    static nnue_stack_t stack;
+    random_network(4242);
+    walk_counts_t counts = { 0 };
+    uint32_t rng = 99;
+
+    for (int i = 0; i < (int) (sizeof(walk_positions) / sizeof(walk_positions[0])); i++) {
+        board_t board;
+        parse_fen(walk_positions[i], &board);
+        nnue_reset(&stack);
+        TEST_ASSERT_EQUAL_INT(nnue_evaluate(&board), nnue_evaluate_incremental(&stack, &board));
+        walk(&board, &stack, 5, &rng, &counts);
+        TEST_ASSERT_EQUAL_INT(0, stack.top);
+    }
+    TEST_ASSERT_TRUE(counts.evaluated > 1000);
+    TEST_ASSERT_TRUE(counts.castles > 0);
+    TEST_ASSERT_TRUE(counts.en_passants > 0);
+    TEST_ASSERT_TRUE(counts.promotions > 0);
+    TEST_ASSERT_TRUE(counts.null_moves > 0);
+    nnue_free();
+}
+
+void test_nnue_setoption_evalfile() {
+    char path[] = "/tmp/tiki_nnue_test_XXXXXX";
+    int fd = mkstemp(path);
+    TEST_ASSERT_TRUE(fd >= 0);
+    close(fd);
+
+    random_network(31337);
+    board_t board;
+    parse_fen(positions[1], &board);
+    const int expected = nnue_evaluate(&board);
+    TEST_ASSERT_TRUE(nnue_save(path));
+    load_material_network();
+    TEST_ASSERT_NOT_EQUAL(expected, nnue_evaluate(&board));
+
+    char command[128];
+    snprintf(command, sizeof(command), "setoption name EvalFile value %s", path);
+    parse_setoption(command);
+    TEST_ASSERT_EQUAL_STRING(path, nnue_loaded_path());
+    TEST_ASSERT_EQUAL_INT(expected, nnue_evaluate(&board));
+
+    /* A bad path keeps the network. */
+    parse_setoption("setoption name EvalFile value /nonexistent/tiki.nnue");
+    TEST_ASSERT_EQUAL_STRING(path, nnue_loaded_path());
+    TEST_ASSERT_EQUAL_INT(expected, nnue_evaluate(&board));
+    unlink(path);
+}
+
+void test_material_network_values() {
+    /* The tests' material network (setUp), close to the usual piece values for the side to move. */
+    static const struct { const char* fen; int centipawns; } cases[] = {
+            { START_FEN, 0 },
+            { "rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 900 },     /* Black has no queen. */
+            { "rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1", -900 },
+            { "4k3/8/8/8/8/8/P7/4K3 w - - 0 1", 100 },
+            { "4k3/8/8/8/8/8/8/R3K3 w - - 0 1", 500 },
+            { "4k3/8/8/8/8/8/8/N3K3 b - - 0 1", -300 },
+    };
+    for (int i = 0; i < (int) (sizeof(cases) / sizeof(cases[0])); i++) {
+        board_t board;
+        parse_fen(cases[i].fen, &board);
+        const int eval = nnue_evaluate(&board);
+        /* SCReLU isn't quite linear, within 10%. */
+        TEST_ASSERT_TRUE_MESSAGE(abs(eval - cases[i].centipawns) <= abs(cases[i].centipawns) / 10 + 2, cases[i].fen);
+    }
 }
 
 

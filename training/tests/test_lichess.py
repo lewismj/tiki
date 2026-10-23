@@ -11,6 +11,7 @@ try:
 except ImportError:                     # python-chess / zstandard not installed.
     lichess = None
 
+from tiki_nnue import binary
 from tiki_nnue.data import parse_line
 
 # Analysed: an eval after every move. 4. Bxc6 and 4... dxc6 are captures, 5. O-O has a mate score.
@@ -80,6 +81,20 @@ class LichessTests(unittest.TestCase):
         # The trainer reads them, black to move turns the white-relative score and result around.
         _, _, score, result = parse_line(lines[0])
         self.assertEqual((-30.0, 0.0), (score, result))
+
+    def test_converts_to_binary(self):
+        """The binary output is the text output, encoded."""
+        _, lines = self.convert()
+        with tempfile.TemporaryDirectory() as directory:
+            dump = os.path.join(directory, "dump.pgn.zst")
+            with open(dump, "wb") as file:
+                file.write(zstandard.ZstdCompressor().compress((ANALYSED + NOT_ANALYSED + UNFINISHED).encode()))
+            out = os.path.join(directory, "out.bin")
+            converter = lichess.Converter(skip_plies=0, sample=1.0, min_elo=0, max_score=3000, seed=1, binary=True)
+            _, positions = lichess.convert(dump, out, converter, workers=1, max_positions=0)
+            records = binary.load([out])
+        self.assertEqual(len(lines), positions)
+        self.assertEqual(binary.encode(lines).tobytes(), records.tobytes())
 
     def test_filters(self):
         self.assertEqual(4, len(self.convert(skip_plies=2)[1]))         # e4 and e5 skipped.

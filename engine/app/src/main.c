@@ -11,7 +11,18 @@ int main(int argc, char* argv[]) {
     /* Initialise tables.           */
     on_startup();
 
-    /* Evaluation is HCE until a trained network replaces it. */
+    /* 'tiki_app nnue-eval <net> <fen>', the FEN may be given as several arguments. */
+    if (argc >= 4 && strcmp(argv[1], "nnue-eval") == 0) {
+        char fen[128] = "";
+        for (int i = 3; i < argc; i++) {
+            if (i > 3) strncat(fen, " ", sizeof(fen) - strlen(fen) - 1);
+            strncat(fen, argv[i], sizeof(fen) - strlen(fen) - 1);
+        }
+        return nnue_eval_fen(argv[2], fen) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+
+    /* Everything else searches, which needs the network. */
+    if (!load_startup_network()) return EXIT_FAILURE;
 
     /* 'tiki_app bench [depth]', run the benchmark and exit (e.g. for OpenBench/regression checks). */
     if (argc >= 2 && strcmp(argv[1], "bench") == 0) {
@@ -31,16 +42,6 @@ int main(int argc, char* argv[]) {
         }
         printf("%lld positions written to %s\n", (long long) written, argv[2]);
         return EXIT_SUCCESS;
-    }
-
-    /* 'tiki_app nnue-eval <net> <fen>', the FEN may be given as several arguments. */
-    if (argc >= 4 && strcmp(argv[1], "nnue-eval") == 0) {
-        char fen[128] = "";
-        for (int i = 3; i < argc; i++) {
-            if (i > 3) strncat(fen, " ", sizeof(fen) - strlen(fen) - 1);
-            strncat(fen, argv[i], sizeof(fen) - strlen(fen) - 1);
-        }
-        return nnue_eval_fen(argv[2], fen) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
     }
 
     /* Run main UCI loop.           */

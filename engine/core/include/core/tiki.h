@@ -1,7 +1,11 @@
 #ifndef TIKI_H
 #define TIKI_H
 
+#include <stdbool.h>
 #include <stdint.h>
+
+/* Environment variable naming the network file, read by load_startup_network. */
+#define TIKI_EVALFILE_ENV "TIKI_EVALFILE"
 
 /**
  * Public interface of the engine library. The internals (board, search, etc.) are in
@@ -10,6 +14,13 @@
 
 /* Initialise the tables and the transposition table, call once before anything else. */
 void on_startup(void);
+
+/**
+ * Loads the network tiki evaluates with, required before searching (there's no other
+ * evaluation): for now the file named by TIKI_EVALFILE. Prints the reason to stderr and returns
+ * false if there's no network. A network built into the binary would be loaded here instead.
+ */
+bool load_startup_network(void);
 
 /* Run the UCI loop on stdin until 'quit' or end of input. */
 void uci_main(void);

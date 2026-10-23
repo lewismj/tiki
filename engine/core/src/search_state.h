@@ -5,6 +5,9 @@
 #include <string.h>
 #include <stdatomic.h>
 #include "search_constants.h"
+#include "nnue/nnue.h"
+
+static_assert(NNUE_STACK_SIZE > MAX_PLY + 1, "the NNUE stack must hold the deepest search path");
 
 
 typedef struct align {
@@ -27,6 +30,7 @@ typedef struct align {
     int score;                 /* Score of the last completed iteration (side to move). */
     int thread_id;             /* 0 for the main thread, which checks the clock and reports. */
     _Atomic uint64_t shared_nodes; /* Helper threads publish 'nodes' here for the main thread. */
+    nnue_stack_t nnue;         /* Accumulators along the search path (when a network is loaded). */
 } search_state_t;
 
 
@@ -45,6 +49,7 @@ static inline_always void init_search_state(search_state_t* search_state) {
     memset(search_state->history_moves, 0, sizeof (search_state->history_moves));
     memset(search_state->killer_moves, 0, sizeof (search_state->killer_moves));
     memset(search_state->repetition_check, 0ULL, sizeof(search_state->repetition_check));
+    nnue_reset(&search_state->nnue);
 }
 
 /**
@@ -63,6 +68,7 @@ static inline_always void clear_pv_table(search_state_t* search_state) {
     memset(search_state->pv_length, 0ULL, sizeof(search_state->pv_length));
     memset(search_state->history_moves, 0, sizeof (search_state->history_moves));
     memset(search_state->killer_moves, 0, sizeof (search_state->killer_moves));
+    nnue_reset(&search_state->nnue);
 }
 
 /**

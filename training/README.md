@@ -38,8 +38,10 @@ implement the features and the integer evaluation, and the tests check that they
    results. The script:
    - downloads each month to `--download-dir`, resuming if a download is interrupted;
    - reads the `.pgn.zst` dump without unpacking it, and skips the games without evals unparsed;
-   - writes the same `fen | score | result` format, with the same quiet-position filter, to
-     `--out-dir/lichess-YYYY-MM.txt`.
+   - keeps the same positions as datagen (the same quiet-position filter), written straight to the
+     trainer's binary format as `--out-dir/lichess-YYYY-MM.bin`. With `--text` it writes
+     `lichess-YYYY-MM.txt` in datagen's `fen | score | result` format instead, which is easier to
+     inspect.
 
        python3 lichess.py --download-dir /mnt/f/lichess --out-dir /mnt/f/lichess/data \
                           --months 2024-01:2024-03 --max-positions 20000000
@@ -62,17 +64,23 @@ implement the features and the integer evaluation, and the tests check that they
        cd training
        python3 train.py --data ../data/*.txt --out nets --epochs 20
 
-   Or use `run_training.sh`, which runs the tests first and then trains on every `.txt` file in
-   one or more data directories. It writes a log to `<out>/train.log`, and passes any other options
-   to `train.py`:
+   Or use `run_training.sh`, which runs the tests first and then trains on every `.txt` and `.bin`
+   file in one or more data directories, passing any other options to `train.py`:
 
        training/run_training.sh --data-dir /mnt/f/lichess/data --data-dir data --out /mnt/f/tiki/nets --epochs 20
 
-   The data is loaded into memory, about 100 bytes per position, so 50M positions needs around
-   5 GB of RAM. Cap each month with `lichess.py --max-positions` if needed.
+   - **Binary data:** training reads `.bin` files (`tiki_nnue/binary.py`), 68 bytes per position:
+     the pieces, the score, the result and the side to move. A `.txt` file is converted to a
+     `.bin` beside it on first use (`--workers` sets the number of processes), and again if the
+     `.txt` changes. The features of each batch are computed on the GPU, so training never parses
+     FENs.
+   - **Memory:** the data is loaded into memory, so 50M positions needs about 3.4 GB of RAM. Cap
+     each month with `lichess.py --max-positions` if needed.
 
    After each epoch this writes `nets/tiki-<epoch>.pt` (a checkpoint, for `--resume`) and
-   `nets/tiki-<epoch>.nnue` (the engine format). Options:
+   `nets/tiki-<epoch>.nnue` (the engine format). Progress bars show the loss, positions per second
+   and time remaining, and progress is also logged to `<out>/train.log` (every 10% of an epoch),
+   so `tail -f` it to check on a run from another terminal. Options:
    - `--wdl` sets the weight of the game result against the search score (default 0.3).
    - `--lr` and `--lr-drop` set the learning rate schedule.
    - `--device` defaults to CUDA when it's available.
@@ -81,8 +89,14 @@ implement the features and the integer evaluation, and the tests check that they
 
        build/engine/app/tiki_app nnue-eval nets/tiki-20.nnue "<fen>"
 
-   This prints the evaluation from the side to move's point of view. The engine still searches
-   with the hand-crafted eval; using the net in search comes next (see Next steps).
+   This prints the evaluation from the side to move's point of view.
+
+5. **Search with it:** the engine evaluates with the network named by `TIKI_EVALFILE` (or the
+   `EvalFile` UCI option), and won't start without one:
+
+       TIKI_EVALFILE=nets/tiki-20.nnue build/engine/app/tiki_app bench
+
+   `tiki_app datagen` searches with it too, so self-play data then comes from tiki's own net.
 
 ### Tests
 
@@ -99,23 +113,27 @@ implement the features and the integer evaluation, and the tests check that they
   - a small training run reducing the loss.
 - `test_cross_check.py`: exports a network and checks that `tiki_app nnue-eval` gives exactly
   `quantised_eval()`. It's skipped unless `TIKI_APP` is set.
+- `test_data.py`:
+  - the batch features computed from binary records match `parse_line` and `collate`, including
+    on positions from random games (with python-chess);
+  - converting text to binary (blank lines, CRLF, a missing final newline, any number of
+    workers) and loading the result;
+  - rejecting files that aren't binary data or are truncated.
 - `test_lichess.py`: converts a small `.pgn.zst` built in the test, and checks:
   - only analysed games are parsed;
   - the quiet-position, mate-score and opening filters;
   - the Elo, score and sample filters;
-  - that the output reads back in the trainer.
+  - that the output reads back in the trainer, and that the binary output is the text output
+    encoded.
 
   It's skipped if `python-chess` or `zstandard` isn't installed.
 
 ### Next steps
 
-- **Use the net in search:**
-  - keep the accumulators in make/undo, updated incrementally, with a full refresh when the
-    king's bucket or mirror changes;
-  - add a UCI `EvalFile` option;
-  - add SIMD (AVX2) for the accumulator and the output layer;
-  - then compare with the HCE in games (SPRT).
+- **Faster inference:** SIMD (AVX2) for the accumulator and the output layer, and a refresh cache
+  for king moves.
+- **Compare nets in games** (SPRT), a new net against the current one.
 - **Data:**
-  - a binary format and multi-threaded datagen once the text format becomes the bottleneck;
+  - multi-threaded datagen, writing the binary format directly;
   - a node limit instead of a depth limit.
 - **Bigger nets:** a larger L1 and output buckets (by material), once there is enough data.

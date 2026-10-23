@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
-# Runs the trainer's tests, then trains on every .txt file in the data directories.
+# Runs the trainer's tests, then trains on every .txt and .bin file in the data directories.
 #
 #   training/run_training.sh --data-dir /mnt/f/lichess/data --out /mnt/f/tiki/nets [train.py options]
 #
 # --data-dir can be given more than once (e.g. Lichess data and tiki's own datagen output).
 # Anything else is passed to train.py (--epochs, --batch-size, --wdl, --lr, --resume, ...).
-# The output goes to <out>/train.log as well. Set TIKI_APP to the tiki_app binary to include the
-# engine cross-check in the tests, and use --skip-tests to go straight to training.
+# Progress is logged to <out>/train.log as well ('tail -f' it from another terminal). Set TIKI_APP
+# to the tiki_app binary to include the engine cross-check in the tests, and use --skip-tests to go
+# straight to training.
 
 set -euo pipefail
 
 usage() {
-    sed -n '2,10s/^# \{0,1\}//p' "$0"
+    sed -n '2,11s/^# \{0,1\}//p' "$0"
 }
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -38,10 +39,10 @@ fi
 shopt -s nullglob
 files=()
 for dir in "${data_dirs[@]}"; do
-    files+=("$dir"/*.txt)
+    files+=("$dir"/*.txt "$dir"/*.bin)
 done
 if [ ${#files[@]} -eq 0 ]; then
-    echo "No .txt data files in: ${data_dirs[*]}" >&2
+    echo "No .txt or .bin data files in: ${data_dirs[*]}" >&2
     exit 1
 fi
 
@@ -52,5 +53,5 @@ if [ -z "$skip_tests" ]; then
 fi
 
 mkdir -p "$out_dir"
-echo "Training on ${#files[@]} file(s), writing to $out_dir"
-python3 train.py --data "${files[@]}" --out "$out_dir" "${extra[@]}" 2>&1 | tee -a "$out_dir/train.log"
+echo "Found ${#files[@]} data file(s), writing to $out_dir"
+python3 train.py --data "${files[@]}" --out "$out_dir" "${extra[@]}"

@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "../include/core/tiki.h"
 #include "datagen.h"
@@ -21,6 +22,19 @@ int64_t datagen_to_file(const char* path, int games, int depth, uint32_t seed) {
     uint64_t written = datagen(out, &options);
     fclose(out);
     return (int64_t) written;
+}
+
+bool load_startup_network(void) {
+    const char* path = getenv(TIKI_EVALFILE_ENV);
+    if (path == NULL || *path == '\0') {
+        fprintf(stderr, "No network: set %s to a .nnue file (see training/README.md).\n", TIKI_EVALFILE_ENV);
+        return false;
+    }
+    if (!nnue_load(path)) {
+        fprintf(stderr, "Could not load the network '%s' (%s).\n", path, TIKI_EVALFILE_ENV);
+        return false;
+    }
+    return true;
 }
 
 int nnue_eval_fen(const char* net_path, const char* fen) {

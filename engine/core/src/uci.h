@@ -39,7 +39,8 @@ uci_command_t parse_uci_command(const char* command);
 
 /**
  * 'setoption name <name> value <value>'. The options are 'Hash' (MB, the TT is resized and
- * cleared) and 'Threads' (Lazy SMP, used from the next 'go').
+ * cleared), 'Threads' (Lazy SMP, used from the next 'go') and 'EvalFile' (the network to load, the
+ * current one is kept if it can't be loaded).
  */
 void parse_setoption(const char* command);
 int get_search_threads();
