@@ -37,6 +37,11 @@ if(TIKI_USE_PEXT)
     target_compile_options(${PROJECT_NAME} PUBLIC "-mbmi2")
 endif()
 
+# Only the network code, so AVX2 instructions can't appear anywhere else.
+if(TIKI_USE_AVX2)
+    set_source_files_properties(src/nnue/nnue.c PROPERTIES COMPILE_OPTIONS "-mavx2")
+endif()
+
 tiki_target_warnings(${PROJECT_NAME})
 
 find_package(Threads REQUIRED)

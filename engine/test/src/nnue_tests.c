@@ -265,8 +265,12 @@ void test_nnue_incremental_matches_refresh() {
             /* En passant now (c6), promotions with and without captures for both sides, castling. */
             "r3k2r/1P4P1/8/2pP4/8/8/1p4p1/R3K2R w KQkq c6 0 1",
             "6k1/6p1/6Pp/ppp5/3pn2P/1P3K2/1PP2P2/8 b - - 3 54",
+            /* Mostly king moves, each one a refresh through the cache. */
+            "8/2k5/8/3p4/4P3/8/5K2/8 w - - 0 1",
     };
+    /* One stack for every position, so the refresh cache also starts from unrelated positions. */
     static nnue_stack_t stack;
+    nnue_stack_init(&stack);
     random_network(4242);
     walk_counts_t counts = { 0 };
     uint32_t rng = 99;
@@ -284,6 +288,68 @@ void test_nnue_incremental_matches_refresh() {
     TEST_ASSERT_TRUE(counts.en_passants > 0);
     TEST_ASSERT_TRUE(counts.promotions > 0);
     TEST_ASSERT_TRUE(counts.null_moves > 0);
+    nnue_free();
+}
+
+void test_nnue_output_simd_matches_scalar() {
+    /* Accumulators over the whole int16 range (below 0, above QA) and weights up to the int16
+     * limits, the worst case for overflow. */
+    random_network(5150);
+    uint32_t rng = 7;
+    nnue_accumulator_t accumulator;
+    for (int trial = 0; trial < 200; trial++) {
+        const int16_t extreme = (int16_t) (trial % 2 ? 32767 : -32768);
+        for (int i = 0; i < 2 * NNUE_HIDDEN; i++) {
+            nnue_net.out_weights[i] = (int16_t) (trial % 4 < 2 ? extreme : (int) (next_random_32(&rng) % 65536) - 32768);
+        }
+        for (int c = white; c <= black; c++) {
+            for (int i = 0; i < NNUE_HIDDEN; i++) {
+                accumulator.values[c][i] = (int16_t) (trial % 3 == 0 ? NNUE_QA + (int) (next_random_32(&rng) % 4)
+                                                                     : (int) (next_random_32(&rng) % 65536) - 32768);
+            }
+        }
+        for (int side = white; side <= black; side++) {
+            TEST_ASSERT_EQUAL_INT(nnue_output_scalar(&accumulator, side), nnue_output(&accumulator, side));
+        }
+    }
+    nnue_free();
+}
+
+void test_nnue_refresh_matches_plain_sum() {
+    /* The accumulator code (SIMD if built) against a plain sum of the feature rows. */
+    random_network(2718);
+    int features[NNUE_MAX_ACTIVE];
+    for (int i = 0; i < POSITION_COUNT; i++) {
+        board_t board;
+        parse_fen(positions[i], &board);
+        nnue_accumulator_t accumulator;
+        nnue_refresh(&board, &accumulator);
+        for (int c = white; c <= black; c++) {
+            int n = nnue_active_features(&board, c, features);
+            for (int j = 0; j < NNUE_HIDDEN; j++) {
+                int sum = nnue_net.ft_bias[j];
+                for (int f = 0; f < n; f++) sum += nnue_net.ft_weights[(size_t) features[f] * NNUE_HIDDEN + j];
+                TEST_ASSERT_EQUAL_INT16_MESSAGE((int16_t) sum, accumulator.values[c][j], positions[i]);
+            }
+        }
+    }
+    nnue_free();
+}
+
+void test_nnue_cache_rebuilt_for_new_network() {
+    static nnue_stack_t stack;
+    nnue_stack_init(&stack);
+    board_t board;
+    parse_fen(positions[2], &board);
+
+    /* Fill the cache with one network, then evaluate the same position with another. */
+    random_network(1);
+    nnue_reset(&stack);
+    TEST_ASSERT_EQUAL_INT(nnue_evaluate(&board), nnue_evaluate_incremental(&stack, &board));
+    random_network(2);
+    nnue_reset(&stack);
+    TEST_ASSERT_EQUAL_INT(nnue_evaluate(&board), nnue_evaluate_incremental(&stack, &board));
+    TEST_ASSERT_EQUAL_UINT32(nnue_generation(), stack.cache_generation);
     nnue_free();
 }
 

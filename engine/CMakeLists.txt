@@ -23,6 +23,16 @@ int main(void) {
 option(TIKI_USE_PEXT "Use BMI2 PEXT for slider attacks (requires a BMI2 CPU)" ${TIKI_HOST_HAS_BMI2})
 message(STATUS "TIKI_USE_PEXT: ${TIKI_USE_PEXT}")
 
+# AVX2 for the network's accumulator and output layer (only nnue.c is built with -mavx2, a plain
+# C version is used otherwise). The default is whether the build machine supports AVX2.
+check_c_source_runs("
+int main(void) {
+    __builtin_cpu_init();
+    return __builtin_cpu_supports(\"avx2\") ? 0 : 1;
+}" TIKI_HOST_HAS_AVX2)
+option(TIKI_USE_AVX2 "Use AVX2 for the network (requires an AVX2 CPU)" ${TIKI_HOST_HAS_AVX2})
+message(STATUS "TIKI_USE_AVX2: ${TIKI_USE_AVX2}")
+
 # Sanitizers for all targets (including Unity), e.g. -DTIKI_SANITIZE=address,undefined or thread.
 set(TIKI_SANITIZE "" CACHE STRING "Comma separated -fsanitize list, empty for none")
 if (TIKI_SANITIZE)

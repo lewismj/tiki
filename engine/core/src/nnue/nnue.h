@@ -87,9 +87,22 @@ typedef struct {
     nnue_piece_square_t removed[2];
 } nnue_entry_t;
 
+/**
+ * Refresh cache ("Finny table"): when a king moves, every feature of its side changes, but most
+ * pieces are where they were the last time that king stood on that square. Each entry holds a
+ * perspective's accumulator for a king square and the pieces it was computed from, so a refresh
+ * only applies the pieces that differ (usually a few) rather than adding all of them.
+ */
+typedef struct {
+    int16_t values[NNUE_HIDDEN];
+    bitboard pieces[12];
+} nnue_cache_entry_t;
+
 typedef struct {
     nnue_entry_t entries[NNUE_STACK_SIZE];  /* entries[0] is the search root. */
     int top;
+    nnue_cache_entry_t cache[2][64];        /* [perspective][that side's king square] */
+    uint32_t cache_generation;              /* The network the cache was built for (nnue_generation). */
 } nnue_stack_t;
 
 /* The loaded network, a single instance like the TT. */
@@ -122,7 +135,21 @@ void nnue_refresh(const board_t* board, nnue_accumulator_t* accumulator);
 /* Evaluation in centipawns from the side to move's point of view (refreshes the accumulator). */
 int nnue_evaluate(const board_t* board);
 
-/* Empties the stack, 'board' (whatever position it's next evaluated with) is the root. */
+/* Changes whenever the network is replaced (nnue_allocate, nnue_load), so caches built for the old one are rebuilt. */
+uint32_t nnue_generation(void);
+
+/* "avx2" or "scalar", the accumulator and output code compiled in (TIKI_USE_AVX2). */
+const char* nnue_simd(void);
+
+/* The output layer, as nnue_evaluate uses it (SIMD if compiled in) and the plain C reference. */
+int nnue_output(const nnue_accumulator_t* accumulator, colour side);
+int nnue_output_scalar(const nnue_accumulator_t* accumulator, colour side);
+
+/* A new stack: empty, and its refresh cache to be built on first use. */
+void nnue_stack_init(nnue_stack_t* stack);
+
+/* Empties the stack, 'board' (whatever position it's next evaluated with) is the root. The refresh
+ * cache is kept, it stays valid for the same network. */
 void nnue_reset(nnue_stack_t* stack);
 
 /* After make_move(board, move): records the move's feature changes (legal or not). */

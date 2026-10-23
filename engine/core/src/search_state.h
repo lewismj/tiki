@@ -49,7 +49,7 @@ static inline_always void init_search_state(search_state_t* search_state) {
     memset(search_state->history_moves, 0, sizeof (search_state->history_moves));
     memset(search_state->killer_moves, 0, sizeof (search_state->killer_moves));
     memset(search_state->repetition_check, 0ULL, sizeof(search_state->repetition_check));
-    nnue_reset(&search_state->nnue);
+    nnue_stack_init(&search_state->nnue);
 }
 
 /**

@@ -81,6 +81,9 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_nnue_evaluate_colour_symmetric);
     RUN_TEST(test_nnue_save_load_round_trip);
     RUN_TEST(test_nnue_incremental_matches_refresh);
+    RUN_TEST(test_nnue_output_simd_matches_scalar);
+    RUN_TEST(test_nnue_refresh_matches_plain_sum);
+    RUN_TEST(test_nnue_cache_rebuilt_for_new_network);
     RUN_TEST(test_nnue_setoption_evalfile);
     RUN_TEST(test_material_network_values);
     RUN_TEST(test_datagen_output_format);

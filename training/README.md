@@ -130,8 +130,6 @@ implement the features and the integer evaluation, and the tests check that they
 
 ### Next steps
 
-- **Faster inference:** SIMD (AVX2) for the accumulator and the output layer, and a refresh cache
-  for king moves.
 - **Compare nets in games** (SPRT), a new net against the current one.
 - **Data:**
   - multi-threaded datagen, writing the binary format directly;

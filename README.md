@@ -36,7 +36,9 @@ A UCI chess engine in C (C23), for Linux and other POSIX systems (on Windows, ru
 - **Evaluation**: tiki's own HalfKAv2_hm network (22528 → 256×2 → 1), see [NNUE](#nnue). There's no hand-crafted
   evaluation, so tiki needs a network to run: set `TIKI_EVALFILE` to a `.nnue` file (the `EvalFile` UCI option
   changes it at runtime). The accumulators are updated incrementally along the search path, lazily: only when a
-  position is evaluated, and refreshed for a side when its king moves.
+  position is evaluated. When a king moves, its side is refreshed through a cache of accumulators per king square
+  ("Finny tables"), so only the pieces that differ from the cached position are applied. The accumulator updates
+  and the output layer use AVX2 when it's built in.
 
 ### Building and testing
 
@@ -53,6 +55,8 @@ test runs `tiki_app`, so it's skipped unless `TIKI_EVALFILE` is set.
 
 - `-DTIKI_USE_PEXT=OFF` uses magic bitboards. PEXT is on by default when the build machine has BMI2; turn it off on
   AMD Zen 1/2, where PEXT is slow.
+- `-DTIKI_USE_AVX2=OFF` uses plain C for the network instead of AVX2 (on by default when the build machine has
+  AVX2). Only `nnue.c` is built with `-mavx2`, and both versions give exactly the same evaluations.
 - `-DTIKI_SANITIZE=address,undefined` (or `thread`) builds everything with sanitizers.
 - `-DTIKI_BUILD_BENCHMARKS=OFF` skips fetching and building Google Benchmark.
 - Use Release (or RelWithDebInfo). Debug (`-O0`) doesn't build yet, because some `always_inline` functions are
@@ -117,8 +121,6 @@ The trainer's tests check its features and integer evaluation against the engine
 
 ### Next steps
 
-- **Faster network inference:** SIMD (AVX2) for the accumulator updates and the output layer, and a refresh
-  cache ("Finny tables") so a king move doesn't rebuild the whole accumulator.
 - **A built-in network:** embed the `.nnue` file in the binary at build time, loaded by `load_startup_network`
   (`tiki.h`), so `TIKI_EVALFILE` becomes optional.
 - **Strength testing:** a match setup (SPRT) to check search changes and tune their margins, and to measure the
