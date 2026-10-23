@@ -62,6 +62,20 @@ test runs `tiki_app`, so it's skipped unless `TIKI_EVALFILE` is set.
 - Use Release (or RelWithDebInfo). Debug (`-O0`) doesn't build yet, because some `always_inline` functions are
   called through function pointers in the move generator.
 
+#### Windows
+
+Builds with LLVM clang targeting the MSVC ABI (`clang`/`clang++`, not `cl` or `clang-cl`), using the Visual Studio
+Windows SDK and linker (tested with Visual Studio 2026 and LLVM 22), and Ninja (Visual Studio ships one). The bench signature matches the Linux build.
+
+```
+cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+cmake --build build-win
+```
+
+`engine/platform/win32` provides the POSIX headers tiki uses (`pthread.h`, `unistd.h`, `strings.h`, `sys/time.h`)
+over Win32, and is on the include path only for Windows builds. The CRT is linked statically, so `tiki_app.exe`
+runs without the Visual C++ redistributable.
+
 ### Running
 
 Every command except `nnue-eval` needs the network, `TIKI_EVALFILE=/mnt/f/tiki/nets/tiki-11.nnue` for example, and
@@ -81,12 +95,15 @@ On Windows, `scripts/run_engine_wsl.bat` starts the engine in WSL for a Windows 
 
 Pushing a tag `v<version>` matching `ENGINE_VERSION` in `engine/core/src/version.h` (e.g. `v0.0.1`) runs
 `.github/workflows/release.yml`, which publishes a GitHub release with a package per CPU variant
-(`x86-64-bmi2`, `x86-64-avx2`, `x86-64`). Each unpacks to `tiki-v<version>/` with `bin/tiki` (statically
-linked, so it runs on any x86-64 Linux), the networks from `models/`, and `scripts/run.sh`, which starts tiki with
-the last network in `models/` by name (set `TIKI_EVALFILE` to override). Running the workflow by hand builds the
-packages as a workflow artifact without releasing.
+(`x86-64-bmi2`, `x86-64-avx2`, `x86-64`) and platform. Each Linux package unpacks to `tiki-v<version>/` with
+`bin/tiki` (statically linked, so it runs on any x86-64 Linux), the networks from `models/`, and `scripts/run.sh`,
+which starts tiki with the last network in `models/` by name (set `TIKI_EVALFILE` to override). The Windows packages
+(`.zip`) hold `bin/tiki.exe` (the CRT linked statically, it needs only Windows' own DLLs) and `scripts/run.bat`,
+which does the same. The release is only published if all six packages give the same bench signature. Running the
+workflow by hand builds the packages as a workflow artifact without releasing.
 
-`scripts/package.sh <variant> [cmake options]` builds, tests and packages one variant locally, into `dist/`.
+`scripts/package.sh <variant> [cmake options]` builds, tests and packages one variant locally, into `dist/`, and
+`scripts/package_windows.sh` does the same on Windows (from Git Bash).
 
 ### Benchmarking
 
@@ -128,6 +145,7 @@ The trainer's tests check its features and integer evaluation against the engine
 | `engine/app` | The `tiki_app` executable. |
 | `engine/test` | Unity tests, run through CTest. |
 | `engine/benchmark` | Google Benchmark micro-benchmarks (C++, through a C shim). |
+| `engine/platform/win32` | POSIX headers over Win32, for Windows builds only. |
 | `engine/magic_generator` | Generates the magic numbers for the magic bitboard lookups. |
 | `training` | PyTorch NNUE trainer and its tests. |
 

@@ -37,7 +37,7 @@ if (TIKI_BUILD_BENCHMARKS)
     FetchContent_Declare(
             googlebenchmark
             GIT_REPOSITORY https://github.com/google/benchmark.git
-            GIT_TAG        v1.9.1
+            GIT_TAG        v1.10.0
     )
 
     FetchContent_MakeAvailable(googlebenchmark)

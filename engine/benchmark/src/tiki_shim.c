@@ -94,7 +94,11 @@ uint64_t tiki_search(tiki_position* position, int depth) {
 
     /* find_best_move prints 'info' lines, keep them out of the benchmark output. */
     static int dev_null = -1;
+#ifdef _WIN32
+    if (dev_null == -1) dev_null = open("NUL", O_WRONLY);
+#else
     if (dev_null == -1) dev_null = open("/dev/null", O_WRONLY);
+#endif
     fflush(stdout);
     int saved = dup(STDOUT_FILENO);
     dup2(dev_null, STDOUT_FILENO);

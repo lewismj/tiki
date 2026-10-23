@@ -11,3 +11,7 @@
 -- *run.sh* Starts tiki from a release package with the network shipped in it (see Releases in the main README).
 
 -- *package.sh* Builds, tests and packages a release variant into `dist/`, used by the release workflow.
+
+-- *run.bat* The Windows version of *run.sh*, in the Windows release packages.
+
+-- *package_windows.sh* The Windows version of *package.sh* (run from Git Bash), used by the release workflow.

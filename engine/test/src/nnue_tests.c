@@ -165,7 +165,11 @@ void test_nnue_evaluate_colour_symmetric() {
 }
 
 void test_nnue_save_load_round_trip() {
+#ifdef _WIN32
+    char path[] = "tiki_nnue_test_XXXXXX";      /* No /tmp, the current directory. */
+#else
     char path[] = "/tmp/tiki_nnue_test_XXXXXX";
+#endif
     int fd = mkstemp(path);
     TEST_ASSERT_TRUE(fd >= 0);
     close(fd);
@@ -354,7 +358,11 @@ void test_nnue_cache_rebuilt_for_new_network() {
 }
 
 void test_nnue_setoption_evalfile() {
+#ifdef _WIN32
+    char path[] = "tiki_nnue_test_XXXXXX";      /* No /tmp, the current directory. */
+#else
     char path[] = "/tmp/tiki_nnue_test_XXXXXX";
+#endif
     int fd = mkstemp(path);
     TEST_ASSERT_TRUE(fd >= 0);
     close(fd);
