@@ -63,12 +63,18 @@ training/nets/
 # builds
 build
 /build-release/
-/build-win/
-/dist/
+/build-win*/
+/build-linux/
+
 build-linux/
 build-linux-embed/
 build-win-embed/
 build-windows/
 matches/
 tools/
+dist/
+
+# Match tools (fastchess, opening books) and results, see scripts/match.sh.
+/tools/
+/matches/
 

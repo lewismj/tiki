@@ -50,8 +50,11 @@ cmake --build build
 cd build && ctest -LE slow        # unit tests and bench smoke test; 'ctest' also runs the full perft file
 ```
 
+Or `scripts/build-linux-wsl.sh` (Linux or WSL) and `scripts\build-windows.bat` (Windows), which take the options
+below as flags, e.g. `--embed --test` (see `scripts/README.md`, or `--help`).
+
 The unit tests build a small material-counting network in code, so they don't need a network file. The bench smoke
-test runs `tiki_app`, so it's skipped unless `TIKI_EVALFILE` is set.
+test runs `tiki_app`, so it's skipped unless `TIKI_EVALFILE` is set or a network is built in.
 
 - `-DTIKI_USE_PEXT=OFF` uses magic bitboards. PEXT is on by default when the build machine has BMI2; turn it off on
   AMD Zen 1/2, where PEXT is slow.
@@ -59,6 +62,11 @@ test runs `tiki_app`, so it's skipped unless `TIKI_EVALFILE` is set.
   AVX2). Only `nnue.c` is built with `-mavx2`, and both versions give exactly the same evaluations.
 - `-DTIKI_SANITIZE=address,undefined` (or `thread`) builds everything with sanitizers.
 - `-DTIKI_BUILD_BENCHMARKS=OFF` skips fetching and building Google Benchmark.
+- `-DTIKI_EMBED_NETWORK=ON` builds a network into `tiki_app`, so it runs with no `.nnue` file, `TIKI_EVALFILE` or
+  run script (for tournaments, or a GUI that only accepts an executable). It's the newest network in `models/` by
+  the date in its name (`tiki-2026-11-05.nnue` over `tiki-2026-10-23.nnue`; git doesn't keep file times), or
+  `-DTIKI_EMBED_NETWORK_FILE=<path>`. CMake picks up a new network in `models/` on the next build. The binary grows by
+  the network's size (about 11.5 MB), and evaluates exactly as with the file (the same bench signature).
 - Use Release (or RelWithDebInfo). Debug (`-O0`) doesn't build yet, because some `always_inline` functions are
   called through function pointers in the move generator.
 
@@ -72,6 +80,9 @@ cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=c
 cmake --build build-win
 ```
 
+`scripts\build-windows.bat` does this (finding Visual Studio's CMake and Ninja if they aren't on the `PATH`), e.g.
+`scripts\build-windows.bat --embed` for an exe that runs on its own.
+
 `engine/platform/win32` provides the POSIX headers tiki uses (`pthread.h`, `unistd.h`, `strings.h`, `sys/time.h`)
 over Win32, and is on the include path only for Windows builds. The CRT is linked statically, so `tiki_app.exe`
 runs without the Visual C++ redistributable.
@@ -79,7 +90,9 @@ runs without the Visual C++ redistributable.
 ### Running
 
 Every command except `nnue-eval` needs the network, `TIKI_EVALFILE=/mnt/f/tiki/nets/tiki-11.nnue` for example, and
-exits with an error without one.
+exits with an error without one. A binary built with `-DTIKI_EMBED_NETWORK=ON` uses its built in network when
+`TIKI_EVALFILE` isn't set. The UCI `EvalFile` option loads another network; its default is the network in use, and
+for a built in one that's its name (`tiki-2026-10-23.nnue`), which selects it again.
 
 | Command | |
 |---|---|
@@ -102,8 +115,13 @@ which starts tiki with the last network in `models/` by name (set `TIKI_EVALFILE
 which does the same. The release is only published if all six packages give the same bench signature. Running the
 workflow by hand builds the packages as a workflow artifact without releasing.
 
+The network can also be built into the release binaries (`-DTIKI_EMBED_NETWORK=ON`), so `bin/tiki` and
+`bin/tiki.exe` run on their own: tick 'embed_network' when running the workflow by hand, and for tag pushes set the
+repository variable `TIKI_EMBED_NETWORK` to `true` (Settings > Secrets and variables > Actions > Variables).
+
 `scripts/package.sh <variant> [cmake options]` builds, tests and packages one variant locally, into `dist/`, and
-`scripts/package_windows.sh` does the same on Windows (from Git Bash).
+`scripts/package_windows.sh` does the same on Windows (from Git Bash). Add `-DTIKI_EMBED_NETWORK=ON` to the options
+to build the network in.
 
 ### Benchmarking
 
@@ -115,6 +133,24 @@ workflow by hand builds the packages as a workflow artifact without releasing.
   - Timings vary between runs and sessions, so only compare times from back-to-back runs.
 - `build/engine/benchmark/tiki_benchmark` runs Google Benchmark micro-benchmarks of evaluation, move generation,
   make/undo, perft and a fixed-depth search. Use it to compare an evaluation change on its own.
+
+### Testing strength
+
+The bench shows whether behaviour changed, not whether tiki got stronger. For that, play matches with
+`scripts/match.sh` (Linux, WSL, macOS) or `scripts\match.bat` (Windows), which download
+[fastchess](https://github.com/Disservin/fastchess) and an opening book into `tools/` the first time:
+
+```
+scripts/match.sh sprt build/engine/app/tiki_app base/engine/app/tiki_app     # a change vs the build before it
+scripts/match.sh gauntlet build/engine/app/tiki_app /path/to/engine1 /path/to/engine2
+```
+
+- `sprt` plays until a sequential probability ratio test decides whether the new build gains (bounds `[0, 5]`
+  normalized Elo by default), usually a few thousand games at 8+0.08. Test every search change this way.
+- `gauntlet` plays a fixed number of games (200) against each engine and reports the Elo differences. With engines
+  of known CCRL ratings this places tiki on that scale.
+- Settings come from the environment (`TC`, `CONCURRENCY`, `GAMES`, `ELO0`/`ELO1`, `NEW_EVALFILE`/`BASE_EVALFILE` to
+  test networks, ...), see the top of either script. Games and results go to `matches/`.
 
 ### NNUE
 

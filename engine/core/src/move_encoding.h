@@ -86,5 +86,9 @@ static inline_always int get_queen_side_castle_flag(move_t m) {
 
 void print_move(move_t m, showable_t options);
 
+/* The move in UCI notation ("e2e4", promotions lowercase whatever the colour: "e7e8q"), into
+ * 'out', which holds at least 6 characters. Returns 'out'. */
+char* move_to_uci(move_t m, char* out);
+
 
 #endif

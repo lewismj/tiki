@@ -58,6 +58,33 @@ implement the features and the integer evaluation, and the tests check that they
      plan to enter. Retraining on tiki's self-play once the net is in search makes later nets
      tiki's own.
 
+   **Or use Leela Chess Zero's self-play** (`lc0.py`). Lc0 publishes its training games at
+   https://storage.lczero.org/files/training_data under the Open Database License (ODbL 1.0: a net
+   trained on them should credit "Leela Chess Zero training data, ODbL", see the `LICENSE.txt`
+   there). Each run (`test80`, ...) adds a `.tar` of games about every hour, 1-2 GB each, so there is
+   far more of it than of analysed Lichess games: test80 alone has around 12,000 tars. The script:
+   - streams each tar from the server and converts it as it arrives, one output file per tar,
+     `--out-dir/lc0-<run>-<YYYYMMDD>-<HHMM>.bin`, so only the output is stored (`--download-dir`
+     keeps the tars too). A tar already converted is skipped, so you can run the same command again.
+   - reads lc0's training records (V6) and keeps the same quiet positions as datagen (not in check,
+     lc0's best move not a capture or promotion). Positions are from the side to move's point of view,
+     written as the same position with White to move, which tiki's network evaluates identically.
+   - scores each position with lc0's search value for its best move (`--q best`, or `root` /
+     `played`), converted from Q to centipawns as lc0 does, and takes the result from the game.
+
+         python3 lc0.py --out-dir /mnt/f/lc0/data --run test80 --dates 2024-04-01:2024-04-30 --per-day 2
+
+   - **Size:** with the defaults a typical tar gives about 1M positions (68 MB), in under a minute or
+     two with all cores. `--per-day` (default 2) picks that many tars spread over each day; 0 takes
+     all of them (about 24 a day).
+   - **Filters:** `--skip-plies` (default 16, lc0 plays its opening moves with some randomness),
+     `--sample` (default 0.25), `--max-score`.
+   - **Checks:** it stops if more than 1% of a tar's records aren't valid positions, which would mean
+     the records aren't V6. Some runs mix in Chess960 games; their later positions are ordinary chess
+     positions, and they're kept.
+   - **Lc0's judgement:** as with Lichess's Stockfish scores, a net trained on lc0's scores learns
+     lc0's evaluation, with the same caveat for rating lists and events.
+
 3. **Train:**
 
        pip install -r training/requirements.txt
@@ -75,7 +102,26 @@ implement the features and the integer evaluation, and the tests check that they
      `.txt` changes. The features of each batch are computed on the GPU, so training never parses
      FENs.
    - **Memory:** the data is loaded into memory, so 50M positions needs about 3.4 GB of RAM. Cap
-     each month with `lichess.py --max-positions` if needed.
+     each month with `lichess.py --max-positions` if needed, or stream it (below).
+
+   **Streaming** (`train_streaming.py`, or `run_training.sh --streaming`) trains on any amount of
+   data with fixed memory: months of Lichess data, lc0's, and datagen's together.
+
+       python3 train_streaming.py --data /mnt/f/lichess/data /mnt/f/lc0/data --out nets --epochs 20
+
+   - `--data` takes files or directories (their `.bin` and `.txt` files; `.part` files of a
+     conversion still running are left out).
+   - Each pass reads chunks of consecutive positions (about 17 MB) in a random order across all the
+     files, and shuffles them in a buffer of `--buffer` positions (default 8M, about 0.5 GB), so a batch
+     mixes many games, months and sources. The next buffer is read in the background while the GPU
+     trains, so about two buffers are in memory. Reading from a Windows drive in WSL runs at over 1M
+     positions a second, faster than training.
+   - `--epoch-positions N` makes an epoch N positions rather than a whole pass, for data too large to
+     pass over often: each epoch still ends with validation, a checkpoint, an exported net and the
+     `--lr-drop` schedule. `--validation-max` (default 2M) caps the positions validated each epoch.
+   - Validation is whole games held out of each file, chosen from the file's name and `--seed`, so
+     adding files later doesn't change what the others hold out.
+   - Checkpoints are the same as `train.py`'s, so either can `--resume` the other's.
 
    After each epoch this writes `nets/tiki-<epoch>.pt` (a checkpoint, for `--resume`) and
    `nets/tiki-<epoch>.nnue` (the engine format). Progress bars show the loss, positions per second
@@ -131,6 +177,17 @@ implement the features and the integer evaluation, and the tests check that they
     encoded.
 
   It's skipped if `python-chess` or `zstandard` isn't installed.
+- `test_stream.py`: the streaming trainer's data:
+  - training and validation cover every record of every file once, and validation stays the same
+    when files are added;
+  - a pass yields every training record once, mixed across files, and the next pass reorders them;
+  - epochs of a fixed number of batches, and the validation limit;
+  - a small `train_streaming.py` run that trains and exports.
+- `test_lc0.py`: builds lc0 records as lc0 encodes them and checks:
+  - the decoded positions have the real position's features, for either side to move;
+  - the policy move table against lc0's published one;
+  - the quiet-position filter (captures, en passant, promotions, check) and the other filters;
+  - rejecting records that aren't positions or V6.
 
 ### Next steps
 

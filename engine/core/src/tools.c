@@ -27,7 +27,9 @@ int64_t datagen_to_file(const char* path, int games, int depth, uint32_t seed) {
 bool load_startup_network(void) {
     const char* path = getenv(TIKI_EVALFILE_ENV);
     if (path == NULL || *path == '\0') {
-        fprintf(stderr, "No network: set %s to a .nnue file (see training/README.md).\n", TIKI_EVALFILE_ENV);
+        if (nnue_load_embedded()) return true;
+        fprintf(stderr, "No network: set %s to a .nnue file, or build with -DTIKI_EMBED_NETWORK=ON "
+                        "(see the README).\n", TIKI_EVALFILE_ENV);
         return false;
     }
     if (!nnue_load(path)) {

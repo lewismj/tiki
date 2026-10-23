@@ -5,6 +5,8 @@
 #
 # --data-dir can be given more than once (e.g. Lichess data and tiki's own datagen output).
 # Anything else is passed to train.py (--epochs, --batch-size, --wdl, --lr, --resume, ...).
+# --streaming trains with train_streaming.py instead, which reads the data from disk as it goes
+# rather than loading it all (for more data than fits in memory).
 # Progress is logged to <out>/train.log as well ('tail -f' it from another terminal). Set TIKI_APP
 # to the tiki_app binary to include the engine cross-check in the tests, and use --skip-tests to go
 # straight to training.
@@ -12,13 +14,14 @@
 set -euo pipefail
 
 usage() {
-    sed -n '2,11s/^# \{0,1\}//p' "$0"
+    sed -n '2,13s/^# \{0,1\}//p' "$0"
 }
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 data_dirs=()
 out_dir=""
 skip_tests=""
+trainer=train.py
 extra=()
 
 while [ $# -gt 0 ]; do
@@ -26,6 +29,7 @@ while [ $# -gt 0 ]; do
         --data-dir) data_dirs+=("$2"); shift 2 ;;
         --out) out_dir="$2"; shift 2 ;;
         --skip-tests) skip_tests=1; shift ;;
+        --streaming) trainer=train_streaming.py; shift ;;
         -h|--help) usage; exit 0 ;;
         *) extra+=("$1"); shift ;;
     esac
@@ -54,4 +58,4 @@ fi
 
 mkdir -p "$out_dir"
 echo "Found ${#files[@]} data file(s), writing to $out_dir"
-python3 train.py --data "${files[@]}" --out "$out_dir" "${extra[@]}"
+python3 "$trainer" --data "${files[@]}" --out "$out_dir" "${extra[@]}"

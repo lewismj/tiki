@@ -17,8 +17,9 @@ void on_startup(void);
 
 /**
  * Loads the network tiki evaluates with, required before searching (there's no other
- * evaluation): for now the file named by TIKI_EVALFILE. Prints the reason to stderr and returns
- * false if there's no network. A network built into the binary would be loaded here instead.
+ * evaluation): the file named by TIKI_EVALFILE if it's set, otherwise the network built into the
+ * binary (TIKI_EMBED_NETWORK=ON in CMake). Prints the reason to stderr and returns false if
+ * there's no network, or the TIKI_EVALFILE one can't be loaded.
  */
 bool load_startup_network(void);
 

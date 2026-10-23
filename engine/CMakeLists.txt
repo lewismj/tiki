@@ -77,6 +77,27 @@ endif()
 # A fully static tiki_app, so a release binary runs on any x86-64 Linux whatever its glibc version.
 option(TIKI_STATIC "Link tiki_app statically" OFF)
 
+# A network built into the engine, so tiki_app runs without a .nnue file or TIKI_EVALFILE (which
+# still overrides it). The newest network in models/ by the date in its name (tiki-2026-10-23.nnue,
+# file times aren't kept by git), or TIKI_EMBED_NETWORK_FILE. CMake reconfigures when a network is
+# added to models/, and the engine is rebuilt when the embedded file changes.
+option(TIKI_EMBED_NETWORK "Build the newest network in models/ into the engine" OFF)
+set(TIKI_EMBED_NETWORK_FILE "" CACHE FILEPATH "Network to build in with TIKI_EMBED_NETWORK, empty for the newest in models/")
+if (TIKI_EMBED_NETWORK)
+    if (TIKI_EMBED_NETWORK_FILE)
+        get_filename_component(TIKI_EMBEDDED_NETWORK "${TIKI_EMBED_NETWORK_FILE}" ABSOLUTE)
+    else()
+        get_filename_component(models_dir "${CMAKE_CURRENT_SOURCE_DIR}/../models" ABSOLUTE)
+        file(GLOB TIKI_NETWORKS CONFIGURE_DEPENDS "${models_dir}/*.nnue")
+        list(SORT TIKI_NETWORKS COMPARE NATURAL)
+        list(POP_BACK TIKI_NETWORKS TIKI_EMBEDDED_NETWORK)
+    endif()
+    if (NOT TIKI_EMBEDDED_NETWORK OR NOT EXISTS "${TIKI_EMBEDDED_NETWORK}")
+        message(FATAL_ERROR "TIKI_EMBED_NETWORK: no network found ('${TIKI_EMBED_NETWORK_FILE}', or models/*.nnue)")
+    endif()
+    message(STATUS "TIKI_EMBED_NETWORK: ${TIKI_EMBEDDED_NETWORK}")
+endif()
+
 # Google Benchmark micro-benchmarks (C++, fetched in extern/). 'bench' in the engine doesn't need it.
 option(TIKI_BUILD_BENCHMARKS "Build the Google Benchmark micro-benchmarks" ON)
 
