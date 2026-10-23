@@ -362,7 +362,11 @@ void parse_setoption(const char* command) {
         while (path_length > 0 && isspace((unsigned char) value[path_length - 1])) path_length--;
         char path[1024];
         snprintf(path, sizeof(path), "%.*s", (int) path_length, value ? value : "");
-        if (nnue_load(path)) {
+        /* The built in network's name (the option's default when there is one, GUIs send it back) selects it. */
+        const char* embedded = nnue_embedded_name();
+        if (embedded != NULL && strcmp(path, embedded) == 0 && nnue_load_embedded()) {
+            printf("info string Loaded the built in network %s\n", embedded);
+        } else if (nnue_load(path)) {
             printf("info string Loaded network %s\n", path);
         } else {
             printf("info string Could not load network '%s', still using %s\n", path,

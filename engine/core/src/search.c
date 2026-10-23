@@ -618,15 +618,6 @@ void print_bestmove(move_t mv) {
         return;
     }
 
-    piece maybe_promoted = get_promoted_piece(mv);
-    if (maybe_promoted == 0) {
-        printf("bestmove %s%s\n",
-               square_to_str[get_source_square(mv)],
-               square_to_str[get_target_square(mv)]);
-    } else {
-        printf("bestmove %s%s%c\n",
-               square_to_str[get_source_square(mv)],
-               square_to_str[get_target_square(mv)],
-               piece_to_char[maybe_promoted]);
-    }
+    char uci[6];
+    printf("bestmove %s\n", move_to_uci(mv, uci));
 }

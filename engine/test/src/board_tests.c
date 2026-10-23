@@ -62,6 +62,19 @@ void test_parse_move_promotions() {
     TEST_ASSERT_EQUAL_INT(r, get_promoted_piece(rook));
 }
 
+void test_move_to_uci() {
+    board_t board;
+    char uci[6];
+    parse_fen("8/P6k/8/8/8/8/p6K/8 w - - 0 1", &board);
+    TEST_ASSERT_EQUAL_STRING("h2g3", move_to_uci(parse_move("h2g3", &board), uci));
+
+    /* Promotions are lower case for both colours (GUIs reject "a7a8Q" as an illegal move). */
+    TEST_ASSERT_EQUAL_STRING("a7a8q", move_to_uci(parse_move("a7a8q", &board), uci));
+    TEST_ASSERT_EQUAL_STRING("a7a8n", move_to_uci(parse_move("a7a8n", &board), uci));
+    parse_fen("8/P6k/8/8/8/8/p6K/8 b - - 0 1", &board);
+    TEST_ASSERT_EQUAL_STRING("a2a1r", move_to_uci(parse_move("a2a1r", &board), uci));
+}
+
 void test_parse_move_castling() {
     board_t board;
     parse_fen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", &board);

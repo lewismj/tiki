@@ -44,6 +44,11 @@ set_tests_properties(perft_full PROPERTIES TIMEOUT 3600 LABELS slow)
 
 install (TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 # The 'bench' command runs end to end (the node count is checked for determinism in the unit tests).
-# It needs a network, so it's skipped (exit 77) when TIKI_EVALFILE isn't set.
-add_test(NAME bench COMMAND sh -c "[ -n \"$TIKI_EVALFILE\" ] || exit 77; exec \"$1\" bench 6" sh $<TARGET_FILE:tiki_app>)
+# It needs a network, so it's skipped (exit 77) when TIKI_EVALFILE isn't set, unless one is built in.
+if (TIKI_EMBED_NETWORK)
+    add_test(NAME bench COMMAND $<TARGET_FILE:tiki_app> bench 6)
+    set_tests_properties(bench PROPERTIES ENVIRONMENT_MODIFICATION "TIKI_EVALFILE=unset:")
+else()
+    add_test(NAME bench COMMAND sh -c "[ -n \"$TIKI_EVALFILE\" ] || exit 77; exec \"$1\" bench 6" sh $<TARGET_FILE:tiki_app>)
+endif()
 set_tests_properties(bench PROPERTIES TIMEOUT 300 PASS_REGULAR_EXPRESSION "Nodes searched" SKIP_RETURN_CODE 77)

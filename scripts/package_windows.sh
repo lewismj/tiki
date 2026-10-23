@@ -3,6 +3,7 @@
 # with LLVM clang, CMake and Ninja on the PATH, see 'Windows' in the main README):
 #     scripts/package_windows.sh <variant> [cmake options...]
 #     scripts/package_windows.sh x86-64-bmi2 -DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=ON
+#     scripts/package_windows.sh x86-64-bmi2 -DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=ON -DTIKI_EMBED_NETWORK=ON
 # Writes dist/tiki-v<version>-windows-<variant>.zip (the version is ENGINE_VERSION in version.h)
 # holding tiki-v<version>/{bin/tiki.exe, models/*.nnue, scripts/run.bat, README.md, LICENSE}, and
 # dist/bench-windows-<variant>.txt, the packaged engine's bench output.

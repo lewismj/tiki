@@ -206,6 +206,100 @@ void test_nnue_save_load_round_trip() {
     unlink(path);
 }
 
+#ifdef _WIN32
+#define TEMP_TEMPLATE "tiki_nnue_test_XXXXXX"       /* No /tmp, the current directory. */
+#else
+#define TEMP_TEMPLATE "/tmp/tiki_nnue_test_XXXXXX"
+#endif
+
+/* The current network in the file format, plus one spare byte. The caller frees it. */
+static uint8_t* saved_network(size_t* size) {
+    char path[] = TEMP_TEMPLATE;
+    int fd = mkstemp(path);
+    TEST_ASSERT_TRUE(fd >= 0);
+    close(fd);
+    TEST_ASSERT_TRUE(nnue_save(path));
+
+    FILE* file = fopen(path, "rb");
+    TEST_ASSERT_NOT_NULL(file);
+    fseek(file, 0, SEEK_END);
+    *size = (size_t) ftell(file);
+    fseek(file, 0, SEEK_SET);
+    uint8_t* data = malloc(*size + 1);
+    TEST_ASSERT_NOT_NULL(data);
+    TEST_ASSERT_EQUAL_size_t(*size, fread(data, 1, *size, file));
+    fclose(file);
+    unlink(path);
+    return data;
+}
+
+void test_nnue_load_memory() {
+    random_network(4242);
+    int expected[POSITION_COUNT];
+    for (int i = 0; i < POSITION_COUNT; i++) {
+        board_t board;
+        parse_fen(positions[i], &board);
+        expected[i] = nnue_evaluate(&board);
+    }
+    size_t size;
+    uint8_t* data = saved_network(&size);
+    nnue_free();
+
+    TEST_ASSERT_TRUE(nnue_load_memory(data, size, "memory"));
+    TEST_ASSERT_EQUAL_STRING("memory", nnue_loaded_path());
+    for (int i = 0; i < POSITION_COUNT; i++) {
+        board_t board;
+        parse_fen(positions[i], &board);
+        TEST_ASSERT_EQUAL_INT(expected[i], nnue_evaluate(&board));
+    }
+
+    /* Short, long or with the wrong magic, rejected keeping the current network. */
+    data[size] = 0;
+    TEST_ASSERT_FALSE(nnue_load_memory(data, size - 1, "short"));
+    TEST_ASSERT_FALSE(nnue_load_memory(data, size + 1, "long"));
+    TEST_ASSERT_FALSE(nnue_load_memory(NULL, 0, "none"));
+    data[0] ^= 1;
+    TEST_ASSERT_FALSE(nnue_load_memory(data, size, "magic"));
+    data[0] ^= 1;
+    TEST_ASSERT_EQUAL_STRING("memory", nnue_loaded_path());
+
+    /* A file with anything after the network is rejected too. */
+    char path[] = TEMP_TEMPLATE;
+    int fd = mkstemp(path);
+    TEST_ASSERT_TRUE(fd >= 0);
+    TEST_ASSERT_EQUAL_INT((int) (size + 1), (int) write(fd, data, (unsigned) (size + 1)));
+    close(fd);
+    TEST_ASSERT_FALSE(nnue_load(path));
+    TEST_ASSERT_EQUAL_STRING("memory", nnue_loaded_path());
+    unlink(path);
+
+    free(data);
+    nnue_free();
+}
+
+void test_nnue_embedded_network() {
+    const char* name = nnue_embedded_name();
+    if (name == NULL) {
+        /* Built without TIKI_EMBED_NETWORK. */
+        TEST_ASSERT_FALSE(nnue_load_embedded());
+        return;
+    }
+    TEST_ASSERT_TRUE(nnue_load_embedded());
+    TEST_ASSERT_EQUAL_STRING(name, nnue_loaded_path());
+    board_t board;
+    parse_fen(START_FEN, &board);
+    const int start = nnue_evaluate(&board);
+    TEST_ASSERT_TRUE(start > -100 && start < 100);
+
+    /* Its name through EvalFile selects it again, whatever the current directory holds. */
+    load_material_network();
+    char command[256];
+    snprintf(command, sizeof(command), "setoption name EvalFile value %s", name);
+    parse_setoption(command);
+    TEST_ASSERT_EQUAL_STRING(name, nnue_loaded_path());
+    TEST_ASSERT_EQUAL_INT(start, nnue_evaluate(&board));
+}
+
 /* Moves of each kind the walk made, so the test can check they were all covered. */
 typedef struct {
     int evaluated;

@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <stdio.h>
 
 #include "move_encoding.h"
@@ -14,15 +15,17 @@ void print_move(move_t m, showable_t options) {
         printf("%c ", get_queen_side_castle_flag(m) != 0 ? 't' : 'f');
     }
     if (options & min) {
-        piece maybe_promoted = get_promoted_piece(m);
-        if (maybe_promoted == 0 )
-            printf("%s%s",
-                   square_to_str[get_source_square(m)],
-                   square_to_str[get_target_square(m)]);
-        else
-            printf("%s%s%c",
-                   square_to_str[get_source_square(m)],
-                   square_to_str[get_target_square(m)],
-                   piece_to_char[maybe_promoted]);
+        char uci[6];
+        printf("%s", move_to_uci(m, uci));
     }
+}
+
+char* move_to_uci(move_t m, char* out) {
+    const piece promoted = get_promoted_piece(m);
+    snprintf(out, 6, "%s%s", square_to_str[get_source_square(m)], square_to_str[get_target_square(m)]);
+    if (promoted) {
+        out[4] = (char) tolower(piece_to_char[promoted]);
+        out[5] = '\0';
+    }
+    return out;
 }
