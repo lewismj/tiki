@@ -63,4 +63,5 @@ training/nets/
 # builds
 build
 /build-release/
+/build-win/
 /dist/

@@ -1,3 +1,4 @@
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
@@ -526,13 +527,13 @@ static uint64_t total_nodes(const search_state_t* search_state, const search_hel
 static void print_info(int score, int depth, uint64_t nodes, const search_state_t* search_state, const limits_t* limits) {
     const uint64_t time = clock_time_ms() - limits->start_time;
     if (score > -MATE_VALUE && score < -MATE_SCORE) {
-        printf("info score mate %d depth %d nodes %lu time %lu nps %lu pv ",
+        printf("info score mate %d depth %d nodes %" PRIu64 " time %" PRIu64 " nps %" PRIu64 " pv ",
                -(score + MATE_VALUE) / 2 - 1, depth, nodes, time, nodes * 1000 / (time ? time : 1));
     } else if (score > MATE_SCORE && score < MATE_VALUE) {
-        printf("info score mate %d depth %d nodes %lu time %lu nps %lu pv ",
+        printf("info score mate %d depth %d nodes %" PRIu64 " time %" PRIu64 " nps %" PRIu64 " pv ",
                (MATE_VALUE - score) / 2 + 1, depth, nodes, time, nodes * 1000 / (time ? time : 1));
     } else {
-        printf("info score cp %d depth %d nodes %lu time %lu nps %lu pv ",
+        printf("info score cp %d depth %d nodes %" PRIu64 " time %" PRIu64 " nps %" PRIu64 " pv ",
                score, depth, nodes, time, nodes * 1000 / (time ? time : 1));
     }
 

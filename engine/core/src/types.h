@@ -1,7 +1,7 @@
 #ifndef TIKI_TYPES_H
 #define TIKI_TYPES_H
 
-#if defined __linux__ || defined __MINGW32__
+#if defined __linux__ || defined __MINGW32__ || defined _WIN32
     #include <stdint.h>
     #include <stdbool.h>
     #include <stdalign.h>
@@ -10,7 +10,7 @@
     #define uint64_t unsigned long long
 #endif
 
-#ifdef __linux__
+#if defined __linux__ || (defined _WIN32 && defined __clang__)
 #define inline_always inline __attribute__((always_inline))
 #else
 #define inline_always inline

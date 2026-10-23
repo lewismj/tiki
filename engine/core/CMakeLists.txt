@@ -45,7 +45,14 @@ endif()
 tiki_target_warnings(${PROJECT_NAME})
 
 find_package(Threads REQUIRED)
-target_link_libraries(${PROJECT_NAME} PRIVATE atomic Threads::Threads m)
+if (WIN32)
+    # <pthread.h>, <unistd.h>, <strings.h> and <sys/time.h> over Win32, PUBLIC so the app and tests get them too.
+    target_sources(${PROJECT_NAME} PRIVATE ../platform/win32/src/posix_win32.c)
+    target_include_directories(${PROJECT_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../platform/win32/include)
+    target_link_libraries(${PROJECT_NAME} PRIVATE Threads::Threads)
+else()
+    target_link_libraries(${PROJECT_NAME} PRIVATE atomic Threads::Threads m)
+endif()
 
 
 if(CMAKE_C_COMPILER_ID STREQUAL "Clang")
