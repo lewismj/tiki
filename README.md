@@ -95,12 +95,15 @@ On Windows, `scripts/run_engine_wsl.bat` starts the engine in WSL for a Windows 
 
 Pushing a tag `v<version>` matching `ENGINE_VERSION` in `engine/core/src/version.h` (e.g. `v0.0.1`) runs
 `.github/workflows/release.yml`, which publishes a GitHub release with a package per CPU variant
-(`x86-64-bmi2`, `x86-64-avx2`, `x86-64`). Each unpacks to `tiki-v<version>/` with `bin/tiki` (statically
-linked, so it runs on any x86-64 Linux), the networks from `models/`, and `scripts/run.sh`, which starts tiki with
-the last network in `models/` by name (set `TIKI_EVALFILE` to override). Running the workflow by hand builds the
-packages as a workflow artifact without releasing.
+(`x86-64-bmi2`, `x86-64-avx2`, `x86-64`) and platform. Each Linux package unpacks to `tiki-v<version>/` with
+`bin/tiki` (statically linked, so it runs on any x86-64 Linux), the networks from `models/`, and `scripts/run.sh`,
+which starts tiki with the last network in `models/` by name (set `TIKI_EVALFILE` to override). The Windows packages
+(`.zip`) hold `bin/tiki.exe` (the CRT linked statically, it needs only Windows' own DLLs) and `scripts/run.bat`,
+which does the same. The release is only published if all six packages give the same bench signature. Running the
+workflow by hand builds the packages as a workflow artifact without releasing.
 
-`scripts/package.sh <variant> [cmake options]` builds, tests and packages one variant locally, into `dist/`.
+`scripts/package.sh <variant> [cmake options]` builds, tests and packages one variant locally, into `dist/`, and
+`scripts/package_windows.sh` does the same on Windows (from Git Bash).
 
 ### Benchmarking
 
