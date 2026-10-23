@@ -33,11 +33,43 @@ implement the features and the integer evaluation, and the tests check that they
    process. A first useful net needs millions of positions; more data matters more than more
    epochs.
 
+   **Or use Lichess games** (`lichess.py`). The monthly dumps from https://database.lichess.org (CC0)
+   include the games Lichess analysed, which have a Stockfish eval after every move, and their
+   results. The script:
+   - downloads each month to `--download-dir`, resuming if a download is interrupted;
+   - reads the `.pgn.zst` dump without unpacking it, and skips the games without evals unparsed;
+   - writes the same `fen | score | result` format, with the same quiet-position filter, to
+     `--out-dir/lichess-YYYY-MM.txt`.
+
+       python3 lichess.py --download-dir /mnt/f/lichess --out-dir /mnt/f/lichess/data \
+                          --months 2024-01:2024-03 --max-positions 20000000
+
+   - **Size:** a recent month is 30 GB or more to download, and scanning it takes a while.
+     `--delete-dumps` removes each dump once it's converted.
+   - **Re-running:** months already converted are skipped, so you can run the same command again.
+   - **Filters:** `--skip-plies` (default 16) drops the opening, `--sample` (default 0.5) the
+     fraction of positions kept, `--min-elo` the minimum rating of both players, and
+     `--max-score` the largest score kept.
+   - **Stockfish's judgement:** the scores are Stockfish's, so a net trained on them learns
+     Stockfish's evaluation. That's the quick way to a strong first net, but it isn't tiki's own.
+     Some rating lists and events care where a net's data came from, so check their rules if you
+     plan to enter. Retraining on tiki's self-play once the net is in search makes later nets
+     tiki's own.
+
 3. **Train:**
 
        pip install -r training/requirements.txt
        cd training
        python3 train.py --data ../data/*.txt --out nets --epochs 20
+
+   Or use `run_training.sh`, which runs the tests first and then trains on every `.txt` file in
+   one or more data directories. It writes a log to `<out>/train.log`, and passes any other options
+   to `train.py`:
+
+       training/run_training.sh --data-dir /mnt/f/lichess/data --data-dir data --out /mnt/f/tiki/nets --epochs 20
+
+   The data is loaded into memory, about 100 bytes per position, so 50M positions needs around
+   5 GB of RAM. Cap each month with `lichess.py --max-positions` if needed.
 
    After each epoch this writes `nets/tiki-<epoch>.pt` (a checkpoint, for `--resume`) and
    `nets/tiki-<epoch>.nnue` (the engine format). Options:
@@ -67,6 +99,13 @@ implement the features and the integer evaluation, and the tests check that they
   - a small training run reducing the loss.
 - `test_cross_check.py`: exports a network and checks that `tiki_app nnue-eval` gives exactly
   `quantised_eval()`. It's skipped unless `TIKI_APP` is set.
+- `test_lichess.py`: converts a small `.pgn.zst` built in the test, and checks:
+  - only analysed games are parsed;
+  - the quiet-position, mate-score and opening filters;
+  - the Elo, score and sample filters;
+  - that the output reads back in the trainer.
+
+  It's skipped if `python-chess` or `zstandard` isn't installed.
 
 ### Next steps
 

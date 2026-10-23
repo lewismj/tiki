@@ -74,10 +74,15 @@ The network, the training data format and the trainer are described in [`trainin
 In short:
 
 ```
-build/engine/app/tiki_app datagen data/d8-s1.txt 10000 8 1      # several processes, different seeds
-cd training && python3 train.py --data ../data/*.txt --out nets  # PyTorch, CUDA if available
+build/engine/app/tiki_app datagen data/d8-s1.txt 10000 8 1      # self-play: several processes, different seeds
+python3 training/lichess.py --download-dir /mnt/f/lichess --out-dir /mnt/f/lichess/data --months 2024-01:2024-03
+training/run_training.sh --data-dir data --data-dir /mnt/f/lichess/data --out training/nets   # tests, then train.py
 build/engine/app/tiki_app nnue-eval training/nets/tiki-20.nnue "<fen>"
 ```
+
+There are two data sources. Self-play (`datagen`) labels positions with tiki's own search. Lichess's analysed games
+(`lichess.py`) are labelled with Stockfish evals: a stronger teacher than the hand-crafted eval, but a net trained on
+them learns Stockfish's judgement (see the training README).
 
 The trainer's tests check its features and integer evaluation against the engine's
 (`TIKI_APP=... python3 -m unittest discover -s tests`).

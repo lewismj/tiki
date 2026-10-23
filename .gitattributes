@@ -1,1 +1,4 @@
 *.ipynb -linguist-detectable
+
+# Shell scripts must keep LF line endings (core.autocrlf would give them CRLF on Windows checkouts).
+*.sh text eol=lf
