@@ -2,3 +2,10 @@
 
 # Shell scripts must keep LF line endings (core.autocrlf would give them CRLF on Windows checkouts).
 *.sh text eol=lf
+
+# Batch files need CRLF line endings (cmd mishandles labels with LF).
+*.bat text eol=crlf
+scripts/run_engine.wsl.example text eol=crlf
+
+# Networks are binary, never convert their line endings.
+*.nnue binary

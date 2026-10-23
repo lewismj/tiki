@@ -83,6 +83,10 @@ implement the features and the integer evaluation, and the tests check that they
    so `tail -f` it to check on a run from another terminal. Options:
    - `--wdl` sets the weight of the game result against the search score (default 0.3).
    - `--lr` and `--lr-drop` set the learning rate schedule.
+   - `--validation` sets the fraction held out for the validation loss (default 0.02). It's held out
+     in blocks of 4,096 consecutive positions, and the data files keep each game's positions together,
+     so validation is whole games the network never trains on (positions from a game it trained on
+     would make the validation loss look better than it is).
    - `--device` defaults to CUDA when it's available.
 
 4. **Check a network in the engine:**

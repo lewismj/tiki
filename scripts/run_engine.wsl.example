@@ -1,0 +1,33 @@
+@echo off
+rem Starts the engine inside WSL, so a Windows GUI (Fritz, Cute Chess, ...) can load it as a UCI engine.
+rem Copy to run_engine_wsl.bat and set TIKI_APP and TIKI_EVALFILE, or set them in the environment, to
+rem tiki_app and the network. Either may be a Windows path or a WSL path, e.g.
+rem   set TIKI_APP=C:\Users\<you>\develop\tiki\build\engine\app\tiki_app
+rem   set TIKI_EVALFILE=/mnt/f/tiki/release/tiki-2026-10-23.nnue
+
+if "%TIKI_APP%"=="" (
+    echo Set TIKI_APP to the path of tiki_app. 1>&2
+    exit /b 1
+)
+if "%TIKI_EVALFILE%"=="" (
+    echo Set TIKI_EVALFILE to the path of the network. 1>&2
+    exit /b 1
+)
+
+call :to_wsl TIKI_APP
+call :to_wsl TIKI_EVALFILE
+
+rem Windows environment variables don't reach WSL by default, so pass the network's path explicitly.
+wsl env TIKI_EVALFILE="%TIKI_EVALFILE%" "%TIKI_APP%"
+exit /b %errorlevel%
+
+rem Converts the variable named %1 from a Windows path to a WSL one (C:\x -> /mnt/c/x). A path without
+rem a drive letter is left as it is. Backslashes become slashes first, WSL's shell would drop them.
+:to_wsl
+setlocal enabledelayedexpansion
+set "value=!%1!"
+if not "!value:~1,1!"==":" endlocal & exit /b 0
+set "value=!value:\=/!"
+for /f "delims=" %%p in ('wsl wslpath -u "!value!" ^< nul') do set "value=%%p"
+endlocal & set "%1=%value%"
+exit /b 0

@@ -82,3 +82,21 @@ def batch_tensors(records, device="cpu"):
     score = tensor(records["score"]).float()
     result = tensor(records["result"]).float() / 2
     return stm_indices, stm_offsets, nstm_indices, nstm_offsets, score, result
+
+
+VALIDATION_BLOCK = 4096
+
+
+def validation_split(count, fraction, rng, block=VALIDATION_BLOCK):
+    """Splits record indices 0..count-1 into (training, validation), holding out random blocks of
+    consecutive records rather than single positions. Each game's positions are consecutive in the
+    data files, so validation is (nearly) whole games the network never trains on: only the game cut
+    at each block's edge is on both sides. Small data sets get smaller blocks, so there are enough
+    to choose from."""
+    block = max(1, min(block, count // 100))
+    blocks = -(-count // block)
+    held = min(max(1, round(blocks * fraction)), max(1, blocks - 1))
+    chosen = np.zeros(blocks, dtype=bool)
+    chosen[rng.choice(blocks, held, replace=False)] = True
+    validating = np.repeat(chosen, block)[:count]
+    return np.flatnonzero(~validating), np.flatnonzero(validating)

@@ -1,0 +1,72 @@
+# Builds, tests and packages tiki for x86-64 Linux (scripts/package.sh), and on a version tag
+# (v<ENGINE_VERSION>, e.g. v0.0.1) publishes the packages as a GitHub release. Run it by hand
+# (Actions > Release > Run workflow) to build the packages as a workflow artifact without releasing.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    env:
+      CC: clang
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the engine version
+        if: github.ref_type == 'tag'
+        run: |
+          version=v$(sed -n 's/^#define ENGINE_VERSION *"\(.*\)".*/\1/p' engine/core/src/version.h | tr -d '\r')
+          if [ "$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match ENGINE_VERSION ($version) in engine/core/src/version.h"
+            exit 1
+          fi
+
+      # bmi2: AVX2 and PEXT (Intel Haswell+, AMD Zen 3+). avx2: no PEXT, which is slow on AMD Zen 1/2.
+      # x86-64: neither, for any x86-64 CPU.
+      - name: Build, test and package
+        run: |
+          sh scripts/package.sh x86-64-bmi2 -DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=ON
+          sh scripts/package.sh x86-64-avx2 -DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=OFF
+          sh scripts/package.sh x86-64 -DTIKI_USE_AVX2=OFF -DTIKI_USE_PEXT=OFF
+
+      # Every variant must search exactly the same tree.
+      - name: Check the variants' bench signatures match
+        run: |
+          grep -h "Nodes searched" dist/bench-*.txt
+          [ "$(grep -h "Nodes searched" dist/bench-*.txt | sort -u | wc -l)" -eq 1 ]
+          cd dist && sha256sum *.tar.gz > SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tiki-packages
+          path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          nodes=$(grep -h "Nodes searched" dist/bench-x86-64-bmi2.txt | tr -dc '0-9')
+          cat > notes.md <<EOF
+          Unpack one package and run \`tiki-$GITHUB_REF_NAME/scripts/run.sh\` (or point a UCI GUI at it).
+          The network is in \`models/\`; set \`TIKI_EVALFILE\` to use another.
+
+          | Package | CPUs |
+          |---|---|
+          | \`linux-x86-64-bmi2\` | Intel Haswell (2013) or later, AMD Zen 3 (2020) or later |
+          | \`linux-x86-64-avx2\` | AMD Zen 1/2 (AVX2, but PEXT is slow) |
+          | \`linux-x86-64\` | Any x86-64 CPU |
+
+          Bench signature: $nodes nodes.
+          EOF
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/SHA256SUMS \
+            --title "tiki $GITHUB_REF_NAME" --notes-file notes.md --generate-notes

@@ -74,15 +74,27 @@ exits with an error without one.
 | `tiki_app datagen <file> [games] [depth] [seed]` | Self-play NNUE training data. |
 | `tiki_app nnue-eval <net> <fen>` | Evaluation of a position by a trained network. |
 
-On Windows, `scripts/run_engine.bat.example` starts the engine in WSL for a Windows GUI (Fritz, Cute Chess, ...).
+On Windows, `scripts/run_engine_wsl.bat` starts the engine in WSL for a Windows GUI (Fritz, Cute Chess, ...), see
+`scripts/README.md`.
+
+### Releases
+
+Pushing a tag `v<version>` matching `ENGINE_VERSION` in `engine/core/src/version.h` (e.g. `v0.0.1`) runs
+`.github/workflows/release.yml`, which publishes a GitHub release with a package per CPU variant
+(`x86-64-bmi2`, `x86-64-avx2`, `x86-64`). Each unpacks to `tiki-v<version>/` with `bin/tiki` (statically
+linked, so it runs on any x86-64 Linux), the networks from `models/`, and `scripts/run.sh`, which starts tiki with
+the last network in `models/` by name (set `TIKI_EVALFILE` to override). Running the workflow by hand builds the
+packages as a workflow artifact without releasing.
+
+`scripts/package.sh <variant> [cmake options]` builds, tests and packages one variant locally, into `dist/`.
 
 ### Benchmarking
 
 - `tiki_app bench [depth]` (or `bench [depth]` in the UCI loop) searches 16 fixed positions to a fixed depth
   (default 11), with a 16 MB TT cleared before each one, and prints the total node count and nodes/second.
   - The node count only changes when the search or evaluation does, so it's a signature for refactors that shouldn't
-    change behaviour. It depends on the network too, so compare signatures with the same one: with `tiki-11.nnue`
-    it's **3,244,657** nodes.
+    change behaviour. It depends on the network too, so compare signatures with the same one: with
+    `models/tiki-2026-10-23.nnue` it's **3,652,233** nodes.
   - Timings vary between runs and sessions, so only compare times from back-to-back runs.
 - `build/engine/benchmark/tiki_benchmark` runs Google Benchmark micro-benchmarks of evaluation, move generation,
   make/undo, perft and a fixed-depth search. Use it to compare an evaluation change on its own.

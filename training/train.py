@@ -29,7 +29,7 @@ from rich.progress import (
 )
 
 from tiki_nnue import binary
-from tiki_nnue.data import batch_tensors
+from tiki_nnue.data import batch_tensors, validation_split
 from tiki_nnue.export import export
 from tiki_nnue.model import TikiNNUE, loss_fn
 
@@ -140,7 +140,8 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--lr-drop", type=int, default=10, help="multiply the learning rate by 0.1 every N epochs")
     parser.add_argument("--wdl", type=float, default=0.3, help="weight of the game result vs the search score")
-    parser.add_argument("--validation", type=float, default=0.02, help="fraction held out for validation")
+    parser.add_argument("--validation", type=float, default=0.02,
+                        help="fraction held out for validation, in blocks of consecutive positions (whole games)")
     parser.add_argument("--workers", type=int, default=4, help="processes for converting .txt data to .bin")
     parser.add_argument("--resume", help="checkpoint (.pt) to continue from")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -161,11 +162,11 @@ def main():
     with progress_bar("Loading data") as progress:
         task = progress.add_task("", total=sum(os.path.getsize(path) for path in paths))
         records = binary.load(paths, lambda size: progress.update(task, advance=size))
-    order = rng.permutation(len(records))
-    held_out = max(1, int(len(records) * args.validation))
-    train_batches = Batches(records, order[held_out:], args.batch_size, args.device, rng)
-    validation_batches = Batches(records, np.sort(order[:held_out]), args.batch_size, args.device)
-    summary = f"{len(records) - held_out:,} training positions, {held_out:,} validation"
+    # Held out in blocks of consecutive positions, so validation is games the network never sees.
+    training, validation = validation_split(len(records), args.validation, rng)
+    train_batches = Batches(records, training, args.batch_size, args.device, rng)
+    validation_batches = Batches(records, validation, args.batch_size, args.device)
+    summary = f"{len(training):,} training positions, {len(validation):,} validation (whole games)"
     console.print(summary)
     log(summary)
 

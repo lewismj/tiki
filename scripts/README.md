@@ -1,9 +1,13 @@
 ### Scripts
 
+-- *run_engine_wsl.bat* A Windows batch file that starts the engine (a Linux binary) inside WSL, so it can be
+   loaded into Fritz, Cute Chess, etc., or run from a Windows shell for ad-hoc testing. By default it runs the
+   CLion release build (`cmake-build-release-wsl-clang`) with the last network in `models\` by name. Set
+   `TIKI_APP` or `TIKI_EVALFILE` to override them, as Windows paths (`C:\...`) or WSL paths (`/mnt/c/...`).
 
+-- *run_engine.wsl.example* The same without default paths, copy it to a `.bat` and set `TIKI_APP` and
+   `TIKI_EVALFILE`.
 
--- *run_engine.bat* This script is used to start the engine (only runs on Linux) via WSL. 
-   So that it can be loaded into Fritz, Cute Chess, etc.
+-- *run.sh* Starts tiki from a release package with the network shipped in it (see Releases in the main README).
 
--- *run_engine.bat.example* The same without user specific paths, copy it to `run_engine.bat` and set
-   `TIKI_APP` and `TIKI_EVALFILE` to the WSL paths of `tiki_app` and the network.
+-- *package.sh* Builds, tests and packages a release variant into `dist/`, used by the release workflow.

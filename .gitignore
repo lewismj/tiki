@@ -57,6 +57,10 @@ __pycache__/
 training/nets/
 /data/
 *.nnue
+# Networks for release (packaged by scripts/package.sh).
+!models/*.nnue
 
 # builds
 build
+/build-release/
+/dist/

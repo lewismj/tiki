@@ -309,9 +309,13 @@ class Converter:
         lines = []
         node = game
         ply = 0
+        # One board, moved along the game. node.board() would replay the game from the start at
+        # every ply, which made conversion quadratic in the game's length.
+        board = game.board()
 
         while node.variations:
             node = node.variations[0]
+            board.push(node.move)
             ply += 1
 
             score = node.eval()
@@ -333,7 +337,6 @@ class Converter:
             if cp is None or abs(cp) > self.max_score:
                 continue
 
-            board = node.board()
             following = node.variations[0].move
 
             # Quiet positions only, as in datagen.

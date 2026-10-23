@@ -20,4 +20,8 @@ target_include_directories(${PROJECT_NAME} PRIVATE ${PROJECT_SOURCE_DIR}/../core
 
 target_link_libraries(${PROJECT_NAME} tiki_engine_core Threads::Threads)
 
+if (TIKI_STATIC)
+    target_link_options(${PROJECT_NAME} PRIVATE -static)
+endif()
+
 install (TARGETS ${PROJECT_NAME} RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

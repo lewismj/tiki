@@ -41,6 +41,9 @@ if (TIKI_SANITIZE)
     add_link_options(-fsanitize=${TIKI_SANITIZE})
 endif()
 
+# A fully static tiki_app, so a release binary runs on any x86-64 Linux whatever its glibc version.
+option(TIKI_STATIC "Link tiki_app statically" OFF)
+
 # Google Benchmark micro-benchmarks (C++, fetched in extern/). 'bench' in the engine doesn't need it.
 option(TIKI_BUILD_BENCHMARKS "Build the Google Benchmark micro-benchmarks" ON)
 

@@ -9,7 +9,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from tiki_nnue import binary
-from tiki_nnue.data import batch_tensors, collate, parse_line
+from tiki_nnue.data import batch_tensors, collate, parse_line, validation_split
 
 try:
     import chess
@@ -95,6 +95,35 @@ class BinaryTest(unittest.TestCase):
             with open(path, "wb") as file:
                 file.write(binary.MAGIC + binary.encode(LINES[:1]).tobytes()[:-1])
             self.assertRaises(ValueError, binary.count, path)
+
+
+class ValidationSplitTest(unittest.TestCase):
+    def test_holds_out_whole_games(self):
+        # Games of 5 to 30 consecutive positions, as lichess.py writes them.
+        rng = np.random.default_rng(1)
+        game = np.repeat(np.arange(40_000), rng.integers(5, 31, size=40_000))
+        training, validation = validation_split(len(game), 0.02, np.random.default_rng(2))
+
+        self.assertEqual(len(training) + len(validation), len(game))
+        self.assertEqual(len(np.union1d(training, validation)), len(game))
+        self.assertAlmostEqual(len(validation) / len(game), 0.02, delta=0.005)
+        # Only games cut at a block's edge are on both sides, at most two per held out run of blocks.
+        shared = np.intersect1d(game[training], game[validation])
+        runs = np.count_nonzero(np.diff(validation) > 1) + 1
+        self.assertLessEqual(len(shared), 2 * runs)
+        self.assertLess(len(shared), 0.05 * len(np.unique(game[validation])))
+
+    def test_is_reproducible(self):
+        first = validation_split(100_000, 0.02, np.random.default_rng(7))
+        second = validation_split(100_000, 0.02, np.random.default_rng(7))
+        np.testing.assert_array_equal(first[1], second[1])
+
+    def test_small_data(self):
+        for count in (2, 10, 150, 5000):
+            training, validation = validation_split(count, 0.02, np.random.default_rng(1))
+            self.assertGreater(len(training), 0)
+            self.assertGreater(len(validation), 0)
+            self.assertEqual(len(training) + len(validation), count)
 
 
 if __name__ == "__main__":
