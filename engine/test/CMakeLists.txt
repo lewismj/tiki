@@ -12,7 +12,8 @@ set (SOURCES
         src/tt_tests.c
         src/input_tests.c
         src/board_tests.c
-        src/search_tests.c)
+        src/search_tests.c
+        src/nnue_tests.c)
 
 add_executable(${PROJECT_NAME} ${SOURCES})
 

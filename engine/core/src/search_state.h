@@ -23,6 +23,7 @@ typedef struct align {
     uint16_t null_move_index;  /* repetition_check index of the position after the last null move (0 if none). */
     bool follow_pv;
     bool score_pv;
+    int score;                 /* Score of the last completed iteration (side to move). */
 } search_state_t;
 
 
@@ -31,6 +32,7 @@ static inline_always void init_search_state(search_state_t* search_state) {
     search_state->ply = 0;
     search_state->repetition_index = 0;
     search_state->null_move_index = 0;
+    search_state->score = 0;
     search_state->score_pv = false;
     search_state->follow_pv = true;
     memset(search_state->pv_table, 0ULL, sizeof(search_state->pv_table));
@@ -48,6 +50,7 @@ static inline_always void clear_pv_table(search_state_t* search_state) {
     search_state->nodes = 0;
     search_state->ply = 0;
     search_state->null_move_index = 0;
+    search_state->score = 0;
     search_state->score_pv = false;
     search_state->follow_pv = true;
     memset(search_state->pv_table, 0ULL, sizeof(search_state->pv_table));

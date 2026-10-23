@@ -4,12 +4,10 @@
 #include "types.h"
 #include "board.h"
 
-#include "nnue/evaluation.h"
 #include "hce/evaluation.h"
 
 static inline_always int evaluation(const board_t* const board) {
-    /* HCE until the NNUE evaluation is replaced. */
-    //return eval_nnue(board)/1000;
+    /* HCE until a trained network replaces it (see nnue/nnue.h and training/). */
     return eval_hce(board);
 }
 

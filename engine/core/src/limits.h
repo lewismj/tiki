@@ -20,6 +20,7 @@ typedef struct align {
     int increment;
     bool time_set;
     bool infinite;
+    bool quiet;               /* No 'info' output (datagen, bench tools).           */
     /* Set by the input thread ('stop', 'quit') while the search reads them. */
     atomic_bool stop_search_flag;
     atomic_bool stop_engine_flag;
@@ -30,6 +31,7 @@ static inline_always void reset_time_control(limits_t* limits) {
     limits->stop_engine_flag = false;
     limits->time_set = false;
     limits->infinite = false;
+    limits->quiet = false;
     limits->moves_to_go = 30;
     limits->move_time = -1;
     limits->time = -1;

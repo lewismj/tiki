@@ -51,3 +51,9 @@ Folder.DotSettings.user
 
 REVIEW.md
 
+
+# NNUE training data and networks.
+__pycache__/
+training/nets/
+/data/
+*.nnue

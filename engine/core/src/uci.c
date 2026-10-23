@@ -109,6 +109,41 @@ void parse_fen(const char* fen, board_t* board) {
     recalculate_hash(board);
 }
 
+void board_to_fen(const board_t* board, int fullmove, char* fen, size_t size) {
+    char out[128];
+    int n = 0;
+
+    for (int rank = 0; rank < 8; rank++) {
+        int empty = 0;
+        for (int file = 0; file < 8; file++) {
+            square sq = rank * 8 + file;
+            int found = -1;
+            for (int pc = P; pc <= k; pc++) {
+                if (is_bit_set(&board->pieces[pc], sq)) { found = pc; break; }
+            }
+            if (found < 0) { empty++; continue; }
+            if (empty) { out[n++] = (char) ('0' + empty); empty = 0; }
+            out[n++] = piece_to_char[found];
+        }
+        if (empty) out[n++] = (char) ('0' + empty);
+        if (rank < 7) out[n++] = '/';
+    }
+
+    out[n++] = ' ';
+    out[n++] = board->side == white ? 'w' : 'b';
+    out[n++] = ' ';
+    if (board->castle_flag & white_king_side) out[n++] = 'K';
+    if (board->castle_flag & white_queen_side) out[n++] = 'Q';
+    if (board->castle_flag & black_king_side) out[n++] = 'k';
+    if (board->castle_flag & black_queen_side) out[n++] = 'q';
+    if (!board->castle_flag) out[n++] = '-';
+    out[n] = '\0';
+
+    snprintf(fen, size, "%s %s %d %d", out,
+             board->en_passant == none_sq ? "-" : square_to_str[board->en_passant],
+             board->fifty_move, fullmove);
+}
+
 move_t parse_move(const char* input, board_t* board) {
     /* Parse the move and validate the move. */
     move_buffer_t buffer;

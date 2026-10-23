@@ -22,10 +22,11 @@ set (SOURCES
         src/uci.c
         src/uci_input.c
         src/bench.c
-        src/nnue/misc.c
-        src/nnue/nnue.c
+        src/datagen.c
+        src/tools.c
         src/limits.c
         src/hce/evaluation_mask.c
+        src/nnue/nnue.c
 )
 
 add_library(${PROJECT_NAME} ${SOURCES})

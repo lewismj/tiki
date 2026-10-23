@@ -242,3 +242,21 @@ void test_see() {
     /* Black to move, rook takes a knight defended by a pawn. */
     TEST_ASSERT_EQUAL_INT(320 - 500, see_of("4k3/3r4/8/8/3N4/4P3/8/4K3 b - - 0 1", "d7d4"));
 }
+
+void test_board_to_fen_round_trip() {
+    static const char* const fens[] = {
+            "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            "r3k2r/p1ppqpb1/bn2pnp1/3PN3/Pp2P3/2N2Q1p/1PPBBPPP/R3K2R b Kq a3 12 30",
+            "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 11",
+            "4k3/8/8/8/8/8/8/4K2R w K - 99 70",
+    };
+    char fen[128];
+    for (size_t i = 0; i < sizeof(fens) / sizeof(fens[0]); i++) {
+        board_t board;
+        parse_fen(fens[i], &board);
+        /* The full move number isn't on the board, take it from the input. */
+        const char* fullmove = strrchr(fens[i], ' ') + 1;
+        board_to_fen(&board, atoi(fullmove), fen, sizeof(fen));
+        TEST_ASSERT_EQUAL_STRING(fens[i], fen);
+    }
+}

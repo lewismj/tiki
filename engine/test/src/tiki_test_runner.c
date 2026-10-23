@@ -11,6 +11,7 @@
 #include "input_tests.h"
 #include "board_tests.h"
 #include "search_tests.h"
+#include "nnue_tests.h"
 
 #include "../../core/src/attack_mask.h"
 #include "../../core/src/zobrist_key.h"
@@ -69,6 +70,15 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_generate_captures_matches_filtered_moves);
     RUN_TEST(test_generate_captures_promotions);
     RUN_TEST(test_see);
+    RUN_TEST(test_board_to_fen_round_trip);
+    RUN_TEST(test_nnue_feature_index_known_values);
+    RUN_TEST(test_nnue_features_in_range_and_unique);
+    RUN_TEST(test_nnue_feature_symmetry);
+    RUN_TEST(test_nnue_evaluate_known_value);
+    RUN_TEST(test_nnue_evaluate_colour_symmetric);
+    RUN_TEST(test_nnue_save_load_round_trip);
+    RUN_TEST(test_datagen_output_format);
+    RUN_TEST(test_datagen_deterministic);
     RUN_TEST(test_search_mate_in_one);
     RUN_TEST(test_search_stalemate_root);
     RUN_TEST(test_search_checkmated_root);

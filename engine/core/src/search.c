@@ -473,8 +473,9 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
         if (limits->stop_search_flag || score == STOPPED_SEARCH) break;
 
         move = search_state->pv_table[0][0];
+        search_state->score = score;
 
-        if (search_state->pv_length[0]) {
+        if (search_state->pv_length[0] && !limits->quiet) {
             if (score > -MATE_VALUE && score < -MATE_SCORE) {
                 printf("info score mate %d depth %d nodes %lu time %lu pv ",
                        -(score + MATE_VALUE) / 2 - 1,

@@ -11,6 +11,8 @@
 void on_startup();
 void parse_fen(const char* fen, board_t* board);
 move_t parse_move(const char* input, board_t* board); /* 0 if not a pseudo-legal move here. */
+/* Writes the position as FEN. The board doesn't track the full move number, so it's passed in. */
+void board_to_fen(const board_t* board, int fullmove, char* fen, size_t size);
 void parse_position(const char* position, board_t* board, search_state_t* search_state);
 void parse_go(const char* command, board_t* board, search_state_t* search_state, limits_t* limits);
 void parse_go_limits(const char* command, const board_t* board, limits_t* limits);

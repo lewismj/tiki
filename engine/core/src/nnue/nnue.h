@@ -1,130 +1,88 @@
-#ifndef NNUE_H
-#define NNUE_H
+#ifndef TIKI_NNUE_H
+#define TIKI_NNUE_H
 
 #include <stdbool.h>
-#include <stdalign.h>
+#include <stdint.h>
 
-#include "misc.h"
+#include "../types.h"
+#include "../board.h"
 
-#ifdef __cplusplus
-#   define EXTERNC extern "C"
-#else
-#   define EXTERNC
-#endif
-#if defined (_WIN32)
-#   define _CDECL __cdecl
-#ifdef DLL_EXPORT
-#   define DLLExport EXTERNC __declspec(dllexport)
-#else
-#   define DLLExport EXTERNC __declspec(dllimport)
-#endif
-#else
-#   define _CDECL
-#   define DLLExport EXTERNC
-#endif
+/**
+ * Tiki's NNUE: HalfKAv2_hm features -> 256 x 2 accumulator -> SCReLU -> 1 output.
+ * The trainer (training/tiki_nnue) implements the same features and quantisation, any change
+ * here must be made there too (training/tests check the two agree).
+ *
+ * Features (HalfKAv2_hm), per perspective (the side whose accumulator it is):
+ *   - Squares are oriented so the perspective plays "up": tiki's square index (a8 = 0) as is for
+ *     white, rank flipped (sq ^ 56) for black.
+ *   - If the perspective's (oriented) king is on files e-h, every square is mirrored (sq ^ 7),
+ *     so the king is always on files a-d ("_hm": horizontal mirror).
+ *   - King bucket = rank * 4 + file of that king square, 32 buckets.
+ *   - Piece kind: own pawn, their pawn, own knight, their knight, ... own queen, their queen
+ *     (type * 2 + (colour != perspective)), and 10 for either king ("A": both kings share one).
+ *   - index = bucket * 704 + kind * 64 + oriented square. 32 * 11 * 64 = 22528 inputs.
+ *
+ * Quantisation (what the trainer exports):
+ *   accumulator = ft_bias + sum of ft_weights rows for active features, int16, scale QA.
+ *   SCReLU(x) = clamp(x, 0, QA)^2.
+ *   eval = (sum(SCReLU(acc_stm) * out_w[0..255]) + sum(SCReLU(acc_nstm) * out_w[256..511])) / QA
+ *          + out_bias, then * SCALE / (QA * QB). Integer division truncates (C semantics).
+ *   Float model: y = SCReLU_f(acc_f) . w + b with acc_f = acc / QA, w = out_w / QB,
+ *   b = out_bias / (QA * QB), and eval in centipawns = y * SCALE.
+ *
+ * File format (little endian):
+ *   char magic[8] = "TIKINNUE", uint32 version, uint32 inputs, uint32 hidden,
+ *   int16 ft_weights[inputs][hidden] (row per feature), int16 ft_bias[hidden],
+ *   int16 out_weights[2 * hidden] (side to move half first), int32 out_bias.
+ */
 
-/*pieces*/
-//enum colors {
-//    white,black
-//};
-enum chessmen {
-    blank,king,queen,rook,bishop,knight,pawn
-};
-static const int pic_tab[14] = {
-    blank,king,queen,rook,bishop,knight,pawn,
-    king,queen,rook,bishop,knight,pawn,blank
-};
+#define NNUE_KING_BUCKETS 32
+#define NNUE_PIECE_KINDS 11
+#define NNUE_PIECE_SQUARES (NNUE_PIECE_KINDS * 64)              /* 704   */
+#define NNUE_INPUTS (NNUE_KING_BUCKETS * NNUE_PIECE_SQUARES)    /* 22528 */
+#define NNUE_HIDDEN 256
+#define NNUE_MAX_ACTIVE 32                                      /* One feature per piece. */
 
-#define PIECE(x)         (pic_tab[x])
-#define COMBINE(c,x)     ((x) + (c) * 6) 
+#define NNUE_QA 255
+#define NNUE_QB 64
+#define NNUE_SCALE 400
 
-/*nnue data*/
-#if 0
-typedef struct DirtyPiece {
-  int dirtyNum;
-  int pc[3];
-  int from[3];
-  int to[3];
-} DirtyPiece;
-#endif
+#define NNUE_MAGIC "TIKINNUE"
+#define NNUE_VERSION 1
 
 typedef struct {
-  alignas(64) int16_t accumulation[2][256];
-  bool computedAccumulation;
-} Accumulator;
+    int16_t* ft_weights;                    /* [NNUE_INPUTS][NNUE_HIDDEN] */
+    int16_t ft_bias[NNUE_HIDDEN];
+    int16_t out_weights[2 * NNUE_HIDDEN];   /* Side to move, then the other side. */
+    int32_t out_bias;
+} nnue_network_t;
 
-/*fen_position*/
-typedef struct Position {
-  int player;
-  int* pieces;
-  int* squares;
-  Accumulator accumulator;
-#if 0
-  DirtyPiece dirtyPiece;
-#endif
-} Position;
+typedef struct {
+    int16_t values[2][NNUE_HIDDEN];         /* Indexed by perspective (white, black). */
+} nnue_accumulator_t;
 
-int nnue_evaluate_pos(Position* pos);
+/* The loaded network, a single instance like the TT. */
+extern nnue_network_t nnue_net;
 
-/**
-* Load NNUE file
-*/
+/* Feature index of piece 'pc' on 'sq', for 'perspective' whose king is on 'king'. */
+int nnue_feature_index(colour perspective, square king, piece pc, square sq);
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+/* Writes the active feature indices for 'perspective' to 'features', returns how many. */
+int nnue_active_features(const board_t* board, colour perspective, int* features);
 
-void nnue_init(
-  const char * evalFile             /** Path to NNUE file */
-);
+/* Allocates (zeroed) weights, so a network can be built in code (tests). */
+bool nnue_allocate(void);
+void nnue_free(void);
 
-#ifdef __cplusplus
-}
-#endif
+/* Loads / saves the file format above. Load returns false, leaving no network, on any mismatch. */
+bool nnue_load(const char* path);
+bool nnue_save(const char* path);
+bool nnue_is_loaded(void);
 
+/* Accumulators from scratch (incremental updates in make/undo come when the net is used in search). */
+void nnue_refresh(const board_t* board, nnue_accumulator_t* accumulator);
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-/**
-* Evaluate on FEN string
-*/
-int nnue_evaluate_fen(
-  const char* fen                   /** FEN string to probe evaluation for */
-);
-
-#ifdef __cplusplus
-}
-#endif
-
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-/**
-* Evaluation subroutine suitable for chess engines.
-* -------------------------------------------------
-* Piece codes are
-*     wking=1, wqueen=2, wrook=3, wbishop= 4, wknight= 5, wpawn= 6,
-*     bking=7, bqueen=8, brook=9, bbishop=10, bknight=11, bpawn=12,
-* Square are
-*     A1=0, B1=1 ... H8=63
-* Input format:
-*     piece[0] is white king, square[0] is its location
-*     piece[1] is black king, square[1] is its location
-*     ..
-*     piece[x], square[x] can be in any order
-*     ..
-*     piece[n+1] is set to 0 to represent end of array
-*/
-int nnue_evaluate(
-  int player,                       /** Side to move */
-  int* pieces,                      /** Array of pieces */
-  int* squares                      /** Corresponding array of squares the piece stand on */
-);
-#ifdef __cplusplus
-}
-#endif
+/* Evaluation in centipawns from the side to move's point of view (refreshes the accumulator). */
+int nnue_evaluate(const board_t* board);
 
 #endif
