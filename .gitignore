@@ -65,3 +65,10 @@ build
 /build-release/
 /build-win/
 /dist/
+build-linux/
+build-linux-embed/
+build-win-embed/
+build-windows/
+matches/
+tools/
+
