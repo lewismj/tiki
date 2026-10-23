@@ -11,5 +11,7 @@ void test_go_clock_limits();
 void test_search_input_stop();
 void test_search_input_quit();
 void test_search_input_isready();
+void test_setoption_hash();
+void test_setoption_threads();
 
 #endif

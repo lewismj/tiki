@@ -3,6 +3,7 @@
 
 #include <unistd.h>
 #include <string.h>
+#include <stdatomic.h>
 #include "search_constants.h"
 
 
@@ -24,11 +25,15 @@ typedef struct align {
     bool follow_pv;
     bool score_pv;
     int score;                 /* Score of the last completed iteration (side to move). */
+    int thread_id;             /* 0 for the main thread, which checks the clock and reports. */
+    _Atomic uint64_t shared_nodes; /* Helper threads publish 'nodes' here for the main thread. */
 } search_state_t;
 
 
 static inline_always void init_search_state(search_state_t* search_state) {
     search_state->nodes = 0;
+    search_state->thread_id = 0;
+    atomic_init(&search_state->shared_nodes, 0);
     search_state->ply = 0;
     search_state->repetition_index = 0;
     search_state->null_move_index = 0;
@@ -48,6 +53,7 @@ static inline_always void init_search_state(search_state_t* search_state) {
  */
 static inline_always void clear_pv_table(search_state_t* search_state) {
     search_state->nodes = 0;
+    atomic_init(&search_state->shared_nodes, 0);
     search_state->ply = 0;
     search_state->null_move_index = 0;
     search_state->score = 0;

@@ -386,3 +386,69 @@ void test_aspiration_search() {
     setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, 2);
     TEST_ASSERT_EQUAL_INT(full, aspiration_search(&board, &search_state, &limits, 2, 800));
 }
+
+/* Doubled rooks on the e-file, Re8+ Rxe8 Rxe8#, mate in 2. */
+#define SMP_MATE_IN_2_FEN "r5k1/5ppp/8/8/8/8/4RPPP/4R1K1 w - - 0 1"
+
+void test_smp_search_finds_mate() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    setup_position(SMP_MATE_IN_2_FEN, &board, &search_state, &limits, 6);
+    limits.threads = 4;
+    move_t mv = find_best_move(&board, &search_state, &limits);
+
+    TEST_ASSERT_EQUAL_INT(MATE_VALUE - 3, search_state.score);
+    TEST_ASSERT_EQUAL_INT(e2, get_source_square(mv));
+    TEST_ASSERT_EQUAL_INT(e8, get_target_square(mv));
+    /* The main thread finished, the helpers were stopped. */
+    TEST_ASSERT_TRUE(limits.stop_search_flag);
+}
+
+void test_smp_matches_single_thread_move() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* Back rank, Rd8#, every thread count must find it. */
+    for (int threads = 1; threads <= 8; threads *= 2) {
+        setup_position("6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1", &board, &search_state, &limits, 5);
+        limits.threads = threads;
+        move_t mv = find_best_move(&board, &search_state, &limits);
+        TEST_ASSERT_EQUAL_INT(d1, get_source_square(mv));
+        TEST_ASSERT_EQUAL_INT(d8, get_target_square(mv));
+    }
+}
+
+void test_smp_stopped_search_returns_legal_move() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* Stopped before anything completes, helpers must exit and a legal move is still returned. */
+    setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, 20);
+    limits.threads = 4;
+    limits.stop_search_flag = true;
+    move_t mv = find_best_move(&board, &search_state, &limits);
+    TEST_ASSERT_NOT_EQUAL(0, mv);
+    TEST_ASSERT_TRUE(make_move(&board, mv));
+}
+
+void test_smp_time_limit_stops_helpers() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* Already out of time, the main thread's first clock check stops every thread. */
+    setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, MAX_SEARCH_DEPTH);
+    limits.threads = 4;
+    limits.time_set = true;
+    limits.stop_time = 0;
+    limits.soft_stop_time = UINT64_MAX;
+
+    move_t mv = find_best_move(&board, &search_state, &limits);
+    TEST_ASSERT_TRUE(limits.stop_search_flag);
+    TEST_ASSERT_EQUAL_UINT64(1, limits.time_checks); /* Only the main thread checks the clock. */
+    TEST_ASSERT_TRUE(make_move(&board, mv));
+}

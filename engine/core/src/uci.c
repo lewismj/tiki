@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <ctype.h>
 
 #include "uci.h"
@@ -17,6 +18,9 @@
 
 #define startpos "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
+/* 'Threads' option, used by each 'go'. */
+static int search_threads = 1;
+
 
 /* Will be invoked on atexit, no need to invoke directly. */
 void on_shutdown() {
@@ -28,7 +32,8 @@ void on_startup() {
     init_zobrist_key();
     init_attack_table();
     init_lmr_table();
-    init_transposition_table(256);
+    init_transposition_table(TT_DEFAULT_MB);
+    search_threads = 1;
     atexit(on_shutdown);
 }
 
@@ -230,6 +235,7 @@ uci_command_t parse_uci_command(const char* command) {
     if (is_token(command, "go")) return uci_cmd_go;
     if (is_token(command, "stop")) return uci_cmd_stop;
     if (is_token(command, "quit")) return uci_cmd_quit;
+    if (is_token(command, "setoption")) return uci_cmd_setoption;
     if (is_token(command, "bench")) return uci_cmd_bench;
     return uci_cmd_unknown;
 }
@@ -299,6 +305,7 @@ void parse_go(const char* command, board_t* board, search_state_t* search_state,
     clear_pv_table(search_state); /* Preserves the game history from 'position' for repetition checks. */
     tt_new_search(); /* The TT is kept between moves, it's only cleared on 'ucinewgame'. */
     parse_go_limits(command, board, limits);
+    limits->threads = search_threads;
     input_search_started(limits); /* After the limits are reset, a queued 'stop' may set the flag. */
 
     move_t mv = find_best_move(board, search_state, limits);
@@ -316,12 +323,53 @@ void new_game(board_t* board, search_state_t* search_state) {
     parse_position("position startpos", board, search_state);
 }
 
+int get_search_threads() {
+    return search_threads;
+}
+
+/* Case insensitive, GUIs differ in how they send option names. */
+static bool is_option(const char* name, size_t length, const char* option) {
+    return length == strlen(option) && strncasecmp(name, option, length) == 0;
+}
+
+void parse_setoption(const char* command) {
+    const char* name = strstr(command, "name ");
+    if (name == NULL) return;
+    name += 5;
+    while (*name == ' ') name++;
+
+    /* The name runs up to ' value' (option names may contain spaces), or the end of the line. */
+    const char* value = strstr(name, " value ");
+    size_t length = value ? (size_t) (value - name) : strlen(name);
+    while (length > 0 && isspace((unsigned char) name[length - 1])) length--;
+    if (value) value += 7;
+
+    if (is_option(name, length, "Hash") && value) {
+        long mb = atol(value);
+        if (mb < 1) mb = 1;
+        if (mb > TT_MAX_MB) mb = TT_MAX_MB;
+        init_transposition_table((size_t) mb);
+    } else if (is_option(name, length, "Threads") && value) {
+        int threads = atoi(value);
+        if (threads < 1) threads = 1;
+        if (threads > MAX_SEARCH_THREADS) threads = MAX_SEARCH_THREADS;
+        search_threads = threads;
+    } else {
+        printf("info string Unknown option: %.*s\n", (int) length, name);
+    }
+}
+
 bool handle_uci_command(const char* command, board_t* board, search_state_t* search_state, limits_t* limits) {
     switch (parse_uci_command(command)) {
         case uci_cmd_uci:
             printf("id name %s %s\n", ENGINE_NAME, ENGINE_VERSION);
             printf("id author %s\n", ENGINE_AUTHOR);
+            printf("option name Hash type spin default %d min 1 max %d\n", TT_DEFAULT_MB, TT_MAX_MB);
+            printf("option name Threads type spin default 1 min 1 max %d\n", MAX_SEARCH_THREADS);
             printf("uciok\n");
+            break;
+        case uci_cmd_setoption:
+            parse_setoption(command);
             break;
         case uci_cmd_isready:
             printf("readyok\n");

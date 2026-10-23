@@ -9,10 +9,17 @@
 #include "limits.h"
 
 
+#define MAX_SEARCH_THREADS 256
+
 /**
  * Iterative deepening search to limits->depth (or until stopped), printing 'info' lines.
  * Returns the best move from the last completed depth, the first legal move if none completed,
  * or 0 when there are no legal moves.
+ *
+ * With limits->threads > 1 the search is Lazy SMP: helper threads search the same position on
+ * their own board and search state, sharing only the TT. The main thread (this one) checks the
+ * clock, prints 'info' with the total nodes and returns the move. When it finishes the helpers
+ * are stopped by setting stop_search_flag, except with 'go infinite' where they run until 'stop'.
  */
 move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* limits);
 

@@ -3,8 +3,8 @@
 
 #include <stddef.h>
 #include <string.h>
+#include <stdbool.h>
 #include <stdatomic.h>
-#include <pthread.h>
 
 #include "types.h"
 #include "search_constants.h"
@@ -12,13 +12,6 @@
 /**
  * Even if we have multi-threaded search, we will only ever have a single instance of the transposition table.
  * The size must be configurable as UCI parameter.
- */
-
-/**
- * Multithreading choice - pack/unpack the entry so that we can use an Atomic __uint128_t and
- * have atomic load/store. Or, use r/w lock. It isn't 100% that we would have any speed advantage by
- * making structure lock-less. Also relying on non-determinism (spawning threads for each depth when
- * iterative deepening may not yield any results?).
  */
 
 
@@ -29,20 +22,35 @@ typedef enum {
 } tt_entry_type;
 
 /**
+ * Lock-less entry (Hyatt's XOR scheme), safe to share between search threads. The entry is two
+ * 64-bit words, 'data' and 'check' = hash ^ data, each loaded and stored atomically. A torn entry
+ * (words from two different saves) fails the check and is treated as a miss.
+ *
  * Packed to 16 bytes, four entries per cache line. The low bits of the hash give the index
- * (the table size is a power of two), so only the upper 32 bits are stored as a check.
+ * (the table size is a power of two), the full hash is kept in the check.
+ *
+ * 'data' layout:
+ *   bits  0-24  move        (25 bits, see move_encoding.h)
+ *   bits 25-45  score       (21 bits, signed)
+ *   bits 46-53  depth
+ *   bits 54-55  entry type
+ *   bits 56-63  generation
  */
 typedef struct {
-    uint32_t            key;
-    move_t              move;
-    int32_t             score;
-    uint8_t             depth;
-    uint8_t             entry_type;
-    uint8_t             generation;
-    uint8_t             padding;
+    _Atomic uint64_t    check;
+    _Atomic uint64_t    data;
 } transposition_node_t;
 
 _Static_assert(sizeof(transposition_node_t) == 16, "transposition_node_t should be 16 bytes");
+
+#define TT_MOVE_BITS 25
+#define TT_SCORE_BITS 21
+#define TT_SCORE_SHIFT 25
+#define TT_DEPTH_SHIFT 46
+#define TT_TYPE_SHIFT 54
+#define TT_GENERATION_SHIFT 56
+
+_Static_assert(INF < (1 << (TT_SCORE_BITS - 1)), "scores must fit in the TT score field");
 
 extern transposition_node_t* t_table;
 extern size_t tt_size;
@@ -51,16 +59,65 @@ extern uint8_t tt_generation;
 
 #define TT_NOT_FOUND 999999
 
-void init_transposition_table(unsigned short mb);
+#define TT_DEFAULT_MB 256
+#define TT_MAX_MB 65536
+
+/**
+ * Allocates an empty table of 'mb' megabytes (clamped to 1..TT_MAX_MB), rounded down to a power
+ * of two entries. If that fails the previous size is allocated again, returns false.
+ */
+bool init_transposition_table(size_t mb);
 void free_transposition_table();
 
 
-static inline_always uint32_t tt_key(const uint64_t position_hash) {
-    return (uint32_t) (position_hash >> 32);
+static inline_always uint64_t tt_pack(const move_t move,
+                                      const int score,
+                                      const int depth,
+                                      const tt_entry_type entry_type,
+                                      const uint8_t generation) {
+    return ((uint64_t) move & ((1ULL << TT_MOVE_BITS) - 1)) |
+           (((uint64_t) (uint32_t) score & ((1ULL << TT_SCORE_BITS) - 1)) << TT_SCORE_SHIFT) |
+           ((uint64_t) (uint8_t) depth << TT_DEPTH_SHIFT) |
+           ((uint64_t) entry_type << TT_TYPE_SHIFT) |
+           ((uint64_t) generation << TT_GENERATION_SHIFT);
+}
+
+static inline_always move_t tt_data_move(const uint64_t data) {
+    return (move_t) (data & ((1ULL << TT_MOVE_BITS) - 1));
+}
+
+static inline_always int tt_data_score(const uint64_t data) {
+    /* Sign extend the 21-bit field. */
+    const int32_t sign = 1 << (TT_SCORE_BITS - 1);
+    const int32_t raw = (int32_t) ((data >> TT_SCORE_SHIFT) & ((1ULL << TT_SCORE_BITS) - 1));
+    return (raw ^ sign) - sign;
+}
+
+static inline_always int tt_data_depth(const uint64_t data) {
+    return (int) ((data >> TT_DEPTH_SHIFT) & 0xff);
+}
+
+static inline_always tt_entry_type tt_data_type(const uint64_t data) {
+    return (tt_entry_type) ((data >> TT_TYPE_SHIFT) & 0x3);
+}
+
+static inline_always uint8_t tt_data_generation(const uint64_t data) {
+    return (uint8_t) (data >> TT_GENERATION_SHIFT);
 }
 
 static inline_always transposition_node_t* tt_entry(const uint64_t position_hash) {
     return &t_table[position_hash & (tt_size - 1)];
+}
+
+/**
+ * Loads the entry's data, true if it belongs to this position (and wasn't torn by a concurrent
+ * save). 'data' is written either way, so a save can see what it would replace.
+ */
+static inline_always bool tt_load(const uint64_t position_hash, uint64_t* data) {
+    transposition_node_t* entry = tt_entry(position_hash);
+    *data = atomic_load_explicit(&entry->data, memory_order_relaxed);
+    const uint64_t check = atomic_load_explicit(&entry->check, memory_order_relaxed);
+    return (check ^ *data) == position_hash;
 }
 
 /**
@@ -73,21 +130,22 @@ static inline_always int tt_probe(const uint64_t position_hash,
                                   int alpha,
                                   int beta,
                                   move_t* tt_move) {
-    const transposition_node_t* entry = tt_entry(position_hash);
+    uint64_t data;
     *tt_move = 0;
 
-    if (entry->key != tt_key(position_hash)) return TT_NOT_FOUND;
-    *tt_move = entry->move;
+    if (!tt_load(position_hash, &data)) return TT_NOT_FOUND;
+    *tt_move = tt_data_move(data);
 
-    if (entry->depth >= depth) {
+    if (tt_data_depth(data) >= depth) {
         /* Stored relative to this node, convert back to distance from the root. */
-        int score = entry->score;
+        int score = tt_data_score(data);
         if (score < -MATE_SCORE) score += ply;
         if (score > MATE_SCORE) score -= ply;
 
-        if (entry->entry_type == tt_exact) return score;
-        if (entry->entry_type == tt_alpha && score <= alpha) return alpha;
-        if (entry->entry_type == tt_beta && score >= beta) return beta;
+        const tt_entry_type entry_type = tt_data_type(data);
+        if (entry_type == tt_exact) return score;
+        if (entry_type == tt_alpha && score <= alpha) return alpha;
+        if (entry_type == tt_beta && score >= beta) return beta;
     }
     return TT_NOT_FOUND;
 }
@@ -100,24 +158,22 @@ static inline_always void tt_save(const uint64_t position_hash,
                                   int score,
                                   move_t move) {
     transposition_node_t* entry = tt_entry(position_hash);
-    const uint32_t key = tt_key(position_hash);
+    uint64_t old;
+    const bool same_position = tt_load(position_hash, &old);
 
     /* Keep deeper entries from the current search, entries from earlier searches are replaced. */
-    if (entry->generation == tt_generation && entry->depth > depth) return;
+    if (tt_data_generation(old) == tt_generation && tt_data_depth(old) > depth) return;
 
     /* A fail-low has no best move, keep the one already stored for this position. */
-    if (move == 0 && entry->key == key) move = entry->move;
+    if (move == 0 && same_position) move = tt_data_move(old);
 
     /* Store mate scores relative to this node, so they're valid at any ply. */
     if (score < -MATE_SCORE) score -= ply;
     if (score > MATE_SCORE) score += ply;
 
-    entry->key = key;
-    entry->move = move;
-    entry->score = score;
-    entry->depth = (uint8_t) depth;
-    entry->entry_type = (uint8_t) hash_flag;
-    entry->generation = tt_generation;
+    const uint64_t data = tt_pack(move, score, depth, hash_flag, tt_generation);
+    atomic_store_explicit(&entry->data, data, memory_order_relaxed);
+    atomic_store_explicit(&entry->check, position_hash ^ data, memory_order_relaxed);
 }
 
 /**

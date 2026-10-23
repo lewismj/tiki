@@ -5,6 +5,8 @@
 #include "../../core/src/limits.h"
 #include "../../core/src/search_state.h"
 #include "../../core/src/uci.h"
+#include "../../core/src/search.h"
+#include "../../core/src/transposition.h"
 
 
 void test_uci_command_tokens() {
@@ -17,6 +19,7 @@ void test_uci_command_tokens() {
     TEST_ASSERT_EQUAL_INT(uci_cmd_go, parse_uci_command("go"));
     TEST_ASSERT_EQUAL_INT(uci_cmd_stop, parse_uci_command("stop"));
     TEST_ASSERT_EQUAL_INT(uci_cmd_quit, parse_uci_command("quit"));
+    TEST_ASSERT_EQUAL_INT(uci_cmd_setoption, parse_uci_command("setoption name Hash value 64"));
     TEST_ASSERT_EQUAL_INT(uci_cmd_unknown, parse_uci_command("gopher"));
     TEST_ASSERT_EQUAL_INT(uci_cmd_unknown, parse_uci_command("stopped"));
     TEST_ASSERT_EQUAL_INT(uci_cmd_unknown, parse_uci_command(""));
@@ -115,4 +118,36 @@ void test_search_input_isready() {
     handle_search_input(&limits, "isready");
     TEST_ASSERT_FALSE(limits.stop_search_flag);
     TEST_ASSERT_FALSE(limits.stop_engine_flag);
+}
+
+void test_setoption_hash() {
+    parse_setoption("setoption name Hash value 4");
+    TEST_ASSERT_EQUAL_size_t(4 * 0x100000, tt_size * sizeof(transposition_node_t));
+
+    /* Not a power of two, rounded down. */
+    parse_setoption("setoption name hash value 3");
+    TEST_ASSERT_EQUAL_size_t(2 * 0x100000, tt_size * sizeof(transposition_node_t));
+
+    /* Out of range, clamped to 1MB. */
+    parse_setoption("setoption name Hash value 0");
+    TEST_ASSERT_EQUAL_size_t(0x100000, tt_size * sizeof(transposition_node_t));
+}
+
+void test_setoption_threads() {
+    parse_setoption("setoption name Threads value 4");
+    TEST_ASSERT_EQUAL_INT(4, get_search_threads());
+
+    parse_setoption("setoption name threads value 0");
+    TEST_ASSERT_EQUAL_INT(1, get_search_threads());
+
+    parse_setoption("setoption name Threads value 100000");
+    TEST_ASSERT_EQUAL_INT(MAX_SEARCH_THREADS, get_search_threads());
+
+    /* Unknown options and a missing value are ignored. */
+    parse_setoption("setoption name Threads");
+    parse_setoption("setoption name Move Overhead value 10");
+    TEST_ASSERT_EQUAL_INT(MAX_SEARCH_THREADS, get_search_threads());
+
+    parse_setoption("setoption name Threads value 1");
+    TEST_ASSERT_EQUAL_INT(1, get_search_threads());
 }

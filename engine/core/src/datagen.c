@@ -136,6 +136,6 @@ uint64_t datagen(FILE* out, const datagen_options_t* options) {
     }
     fflush(out);
 
-    init_transposition_table(previous_mb ? (unsigned short) previous_mb : DATAGEN_HASH_MB);
+    init_transposition_table(previous_mb ? previous_mb : DATAGEN_HASH_MB);
     return written;
 }

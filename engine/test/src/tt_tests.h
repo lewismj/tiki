@@ -3,6 +3,8 @@
 
 
 void test_tt_entry_layout();
+void test_tt_pack_round_trip();
+void test_tt_torn_entry_is_miss();
 void test_tt_mate_score_round_trip();
 void test_tt_stores_best_move();
 void test_tt_replacement();

@@ -1,4 +1,6 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
 
 #include "search.h"
 #include "evaluation.h"
@@ -115,6 +117,18 @@ static inline_always void check_time(limits_t* limits) {
     }
 }
 
+/**
+ * Every 2048 nodes. The main thread checks the clock (its stop flag stops the helpers too), the
+ * helpers publish their node count for the main thread's 'info' output.
+ */
+static inline_always void node_batch(search_state_t* search_state, limits_t* limits) {
+    if (search_state->thread_id == 0) {
+        check_time(limits);
+    } else {
+        atomic_store_explicit(&search_state->shared_nodes, search_state->nodes, memory_order_relaxed);
+    }
+}
+
 /* KvK, KNvK and KBvK (either side), neither side can mate. */
 bool is_insufficient_material(const board_t* board) {
     if (board->pieces[P] | board->pieces[p] | board->pieces[R] | board->pieces[r] | board->pieces[Q] | board->pieces[q])
@@ -205,7 +219,7 @@ bool is_draw(const board_t* board, search_state_t* search_state) {
 }
 
 int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state, limits_t* limits) {
-    if ((++search_state->nodes & 2047) == 0) check_time(limits);
+    if ((++search_state->nodes & 2047) == 0) node_batch(search_state, limits);
 
     if (search_state->ply > MAX_PLY-1) return evaluation(board);
 
@@ -307,7 +321,7 @@ int negamax(int alpha,
     }
 
     /* Check straight after counting, so the check runs once per 2048 counted nodes. */
-    if ((++search_state->nodes & 2047) == 0) check_time(limits);
+    if ((++search_state->nodes & 2047) == 0) node_batch(search_state, limits);
 
     move_buffer_t buffer;
     int scores[MOVE_BUFFER_SIZE];
@@ -459,11 +473,103 @@ int aspiration_search(board_t* board, search_state_t* search_state, limits_t* li
     }
 }
 
+/**
+ * Lazy SMP helper: its own board and search state, the TT is shared. It searches the same root
+ * as the main thread and its results reach the main thread only through the TT. Odd helpers
+ * search one ply deeper, so the threads spread over more of the tree.
+ */
+typedef struct {
+    board_t board;
+    search_state_t search_state;
+    limits_t* limits;
+    pthread_t thread;
+} search_helper_t;
+
+static void* helper_search(void* arg) {
+    search_helper_t* helper = arg;
+    limits_t* limits = helper->limits;
+    const int extra = helper->search_state.thread_id & 1;
+    int score = 0;
+
+    for (int i = 1; i <= limits->depth && !limits->stop_search_flag; i++) {
+        const int depth = i + extra <= limits->depth ? i + extra : limits->depth;
+        score = aspiration_search(&helper->board, &helper->search_state, limits, depth, score);
+    }
+    atomic_store_explicit(&helper->search_state.shared_nodes, helper->search_state.nodes, memory_order_relaxed);
+    return NULL;
+}
+
+static uint64_t total_nodes(const search_state_t* search_state, const search_helper_t* helpers, int helper_count) {
+    uint64_t nodes = search_state->nodes;
+    for (int i = 0; i < helper_count; i++) {
+        nodes += atomic_load_explicit(&helpers[i].search_state.shared_nodes, memory_order_relaxed);
+    }
+    return nodes;
+}
+
+static void print_info(int score, int depth, uint64_t nodes, const search_state_t* search_state, const limits_t* limits) {
+    const uint64_t time = clock_time_ms() - limits->start_time;
+    if (score > -MATE_VALUE && score < -MATE_SCORE) {
+        printf("info score mate %d depth %d nodes %lu time %lu nps %lu pv ",
+               -(score + MATE_VALUE) / 2 - 1, depth, nodes, time, nodes * 1000 / (time ? time : 1));
+    } else if (score > MATE_SCORE && score < MATE_VALUE) {
+        printf("info score mate %d depth %d nodes %lu time %lu nps %lu pv ",
+               (MATE_VALUE - score) / 2 + 1, depth, nodes, time, nodes * 1000 / (time ? time : 1));
+    } else {
+        printf("info score cp %d depth %d nodes %lu time %lu nps %lu pv ",
+               score, depth, nodes, time, nodes * 1000 / (time ? time : 1));
+    }
+
+    for (int count = 0; count < search_state->pv_length[0]; count++) {
+        print_move(search_state->pv_table[0][count], min);
+        printf(" ");
+    }
+    printf("\n");
+}
+
+/**
+ * Starts limits->threads - 1 helpers on copies of the root position and search state, returns
+ * the number started (fewer if memory or thread creation fails).
+ */
+static int start_helpers(board_t* board, search_state_t* search_state, limits_t* limits, search_helper_t** helpers) {
+    const int count = limits->threads - 1;
+    *helpers = NULL;
+    if (count <= 0) return 0;
+
+    *helpers = malloc((size_t) count * sizeof(search_helper_t));
+    if (*helpers == NULL) return 0;
+
+    int started = 0;
+    for (; started < count; started++) {
+        search_helper_t* helper = &(*helpers)[started];
+        memcpy(&helper->board, board, sizeof(board_t));
+        memcpy(&helper->search_state, search_state, sizeof(search_state_t));
+        helper->search_state.thread_id = started + 1;
+        atomic_init(&helper->search_state.shared_nodes, 0);
+        helper->limits = limits;
+        if (pthread_create(&helper->thread, NULL, helper_search, helper) != 0) break;
+    }
+    return started;
+}
+
+static void stop_helpers(limits_t* limits, search_helper_t* helpers, int count) {
+    if (count > 0) {
+        /* With 'go infinite' the helpers carry on until 'stop', as the main thread waits for it anyway. */
+        if (!limits->infinite) limits->stop_search_flag = true;
+        for (int i = 0; i < count; i++) pthread_join(helpers[i].thread, NULL);
+    }
+    free(helpers);
+}
+
 move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* limits) {
     int score = 0;
 
     int depth = limits->depth;
     move_t move = 0;
+
+    search_state->thread_id = 0;
+    search_helper_t* helpers;
+    const int helper_count = start_helpers(board, search_state, limits, &helpers);
 
     for (int i = 1; i <= depth; i++) {
         score = aspiration_search(board, search_state, limits, i, score);
@@ -476,37 +582,14 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
         search_state->score = score;
 
         if (search_state->pv_length[0] && !limits->quiet) {
-            if (score > -MATE_VALUE && score < -MATE_SCORE) {
-                printf("info score mate %d depth %d nodes %lu time %lu pv ",
-                       -(score + MATE_VALUE) / 2 - 1,
-                       i,
-                       search_state->nodes,
-                       clock_time_ms() - limits->start_time);
-            }
-            else if (score > MATE_SCORE && score < MATE_VALUE) {
-                printf("info score mate %d depth %d nodes %lu time %lu pv ", (MATE_VALUE - score) / 2 + 1,
-                       i,
-                       search_state->nodes,
-                       clock_time_ms() - limits->start_time);
-            }
-            else {
-                printf("info score cp %d depth %d nodes %lu time %lu pv ", score,
-                       i,
-                       search_state->nodes,
-                       clock_time_ms() - limits->start_time);
-            }
-
-            for (int count = 0; count < search_state->pv_length[0]; count++) {
-                print_move(search_state->pv_table[0][count], min);
-                printf(" ");
-            }
-            printf("\n");
+            print_info(score, i, total_nodes(search_state, helpers, helper_count), search_state, limits);
         }
 
         /* Soft limit, the next depth is unlikely to complete in the time left. */
         if (limits->time_set && clock_time_ms() > limits->soft_stop_time) break;
     }
 
+    stop_helpers(limits, helpers, helper_count);
     return move ? move : first_legal_move(board);
 }
 

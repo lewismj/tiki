@@ -22,5 +22,9 @@ void test_futility_guards();
 void test_lmr_reduction();
 void test_iir_reduction();
 void test_aspiration_search();
+void test_smp_search_finds_mate();
+void test_smp_matches_single_thread_move();
+void test_smp_stopped_search_returns_legal_move();
+void test_smp_time_limit_stops_helpers();
 
 #endif

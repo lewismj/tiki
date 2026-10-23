@@ -99,9 +99,15 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_lmr_reduction);
     RUN_TEST(test_iir_reduction);
     RUN_TEST(test_aspiration_search);
+    RUN_TEST(test_smp_search_finds_mate);
+    RUN_TEST(test_smp_matches_single_thread_move);
+    RUN_TEST(test_smp_stopped_search_returns_legal_move);
+    RUN_TEST(test_smp_time_limit_stops_helpers);
     RUN_TEST(test_uci_command_tokens);
     RUN_TEST(test_uci_stop_does_not_quit);
     RUN_TEST(test_uci_quit_exits);
+    RUN_TEST(test_setoption_hash);
+    RUN_TEST(test_setoption_threads);
     RUN_TEST(test_uci_newgame_resets_position);
     RUN_TEST(test_go_infinite_limits);
     RUN_TEST(test_go_clock_limits);
@@ -122,6 +128,8 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_insufficient_material);
     RUN_TEST(test_search_scores_insufficient_material_as_draw);
     RUN_TEST(test_tt_entry_layout);
+    RUN_TEST(test_tt_pack_round_trip);
+    RUN_TEST(test_tt_torn_entry_is_miss);
     RUN_TEST(test_tt_mate_score_round_trip);
     RUN_TEST(test_tt_stores_best_move);
     RUN_TEST(test_tt_replacement);

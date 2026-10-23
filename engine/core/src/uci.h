@@ -28,6 +28,7 @@ typedef enum {
     uci_cmd_go,
     uci_cmd_stop,
     uci_cmd_quit,
+    uci_cmd_setoption,
     uci_cmd_bench      /* Not UCI, 'bench [depth]' runs the fixed benchmark (see bench.h). */
 } uci_command_t;
 
@@ -35,6 +36,13 @@ typedef enum {
  * Identify a UCI command by its first token.
  */
 uci_command_t parse_uci_command(const char* command);
+
+/**
+ * 'setoption name <name> value <value>'. The options are 'Hash' (MB, the TT is resized and
+ * cleared) and 'Threads' (Lazy SMP, used from the next 'go').
+ */
+void parse_setoption(const char* command);
+int get_search_threads();
 
 /**
  * Handle a single UCI command, returns false once the engine should exit.

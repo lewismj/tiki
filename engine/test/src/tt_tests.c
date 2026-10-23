@@ -29,6 +29,35 @@ void test_tt_entry_layout() {
     TEST_ASSERT_EQUAL_size_t(0, tt_size & (tt_size - 1)); /* Power of two, indexed with a mask. */
 }
 
+void test_tt_pack_round_trip() {
+    const move_t mv = encode_move(e7, e8, p, q, 1, 0, 0, 0, 1); /* All flag bits set. */
+    const int scores[] = {0, 1, -1, INF, -INF, MATE_VALUE + MAX_PLY, -MATE_VALUE - MAX_PLY};
+
+    for (size_t i = 0; i < sizeof(scores) / sizeof(scores[0]); i++) {
+        const uint64_t data = tt_pack(mv, scores[i], 255, tt_beta, 254);
+        TEST_ASSERT_EQUAL_UINT32(mv, tt_data_move(data));
+        TEST_ASSERT_EQUAL_INT(scores[i], tt_data_score(data));
+        TEST_ASSERT_EQUAL_INT(255, tt_data_depth(data));
+        TEST_ASSERT_EQUAL_INT(tt_beta, tt_data_type(data));
+        TEST_ASSERT_EQUAL_UINT8(254, tt_data_generation(data));
+    }
+}
+
+void test_tt_torn_entry_is_miss() {
+    move_t tt_move;
+    uint64_t data;
+    tt_clear();
+
+    tt_save(TEST_HASH, tt_exact, 4, 0, 100, 0);
+    TEST_ASSERT_TRUE(tt_load(TEST_HASH, &data));
+
+    /* Another thread's save overwrote 'data' only, the check no longer matches. */
+    transposition_node_t* entry = tt_entry(TEST_HASH);
+    atomic_store(&entry->data, tt_pack(0, -100, 9, tt_exact, tt_generation));
+    TEST_ASSERT_FALSE(tt_load(TEST_HASH, &data));
+    TEST_ASSERT_EQUAL_INT(TT_NOT_FOUND, tt_probe(TEST_HASH, 0, 0, -INF, INF, &tt_move));
+}
+
 void test_tt_mate_score_round_trip() {
     move_t tt_move;
     tt_clear();
@@ -118,10 +147,10 @@ void test_search_stores_exact_root() {
     parse_position("position startpos", &board, &search_state);
     int score = search_score(&board, &search_state, 3);
 
-    const transposition_node_t* entry = tt_entry(board.hash);
-    TEST_ASSERT_EQUAL_UINT32(tt_key(board.hash), entry->key);
-    TEST_ASSERT_EQUAL_UINT8(tt_exact, entry->entry_type);
-    TEST_ASSERT_EQUAL_UINT32(search_state.pv_table[0][0], entry->move);
+    uint64_t data;
+    TEST_ASSERT_TRUE(tt_load(board.hash, &data));
+    TEST_ASSERT_EQUAL_INT(tt_exact, tt_data_type(data));
+    TEST_ASSERT_EQUAL_UINT32(search_state.pv_table[0][0], tt_data_move(data));
     TEST_ASSERT_EQUAL_INT(score, tt_probe(board.hash, 3, 0, -INF, INF, &tt_move));
 }
 

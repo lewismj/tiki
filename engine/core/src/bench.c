@@ -68,6 +68,6 @@ uint64_t bench(int depth) {
     printf("Nodes searched  : %" PRIu64 "\n", nodes);
     printf("Nodes/second    : %" PRIu64 "\n", elapsed ? nodes * 1000 / elapsed : nodes);
 
-    init_transposition_table(previous_mb ? (unsigned short) previous_mb : BENCH_HASH_MB);
+    init_transposition_table(previous_mb ? previous_mb : BENCH_HASH_MB);
     return nodes;
 }
