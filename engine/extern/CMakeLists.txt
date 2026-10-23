@@ -37,17 +37,8 @@ if (TIKI_BUILD_BENCHMARKS)
     FetchContent_Declare(
             googlebenchmark
             GIT_REPOSITORY https://github.com/google/benchmark.git
-            GIT_TAG        v1.9.1
+            GIT_TAG        v1.10.0
     )
 
     FetchContent_MakeAvailable(googlebenchmark)
-
-    # Clang 22 reports __COUNTER__ (used by benchmark.h) as a C2y extension, an error under the
-    # -pedantic-errors benchmark builds itself with.
-    include(CheckCXXCompilerFlag)
-    check_cxx_compiler_flag(-Wno-c2y-extensions TIKI_HAS_WNO_C2Y_EXTENSIONS)
-    if (TIKI_HAS_WNO_C2Y_EXTENSIONS)
-        target_compile_options(benchmark PRIVATE -Wno-c2y-extensions)
-        target_compile_options(benchmark_main PRIVATE -Wno-c2y-extensions)
-    endif()
 endif()
