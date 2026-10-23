@@ -7,6 +7,11 @@
 #include <stdatomic.h>
 #include "types.h"
 
+/* 'Move Overhead' option (ms): kept back from the clock for what every move loses outside the
+ * search (the GUI, process switching, output), so the engine doesn't lose on time. */
+#define MOVE_OVERHEAD_DEFAULT 30
+#define MOVE_OVERHEAD_MAX 5000
+
 
 typedef struct align {
     uint64_t start_time;
