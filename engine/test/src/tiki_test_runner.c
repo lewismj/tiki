@@ -67,6 +67,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_pop_on_empty_stack_is_clamped);
     RUN_TEST(test_parse_fen_fields);
     RUN_TEST(test_parse_move_promotions);
+    RUN_TEST(test_move_to_uci);
     RUN_TEST(test_parse_move_castling);
     RUN_TEST(test_parse_move_rejects_invalid);
     RUN_TEST(test_slider_attacks_match_reference);
@@ -85,6 +86,8 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_nnue_refresh_matches_plain_sum);
     RUN_TEST(test_nnue_cache_rebuilt_for_new_network);
     RUN_TEST(test_nnue_setoption_evalfile);
+    RUN_TEST(test_nnue_load_memory);
+    RUN_TEST(test_nnue_embedded_network);
     RUN_TEST(test_material_network_values);
     RUN_TEST(test_datagen_output_format);
     RUN_TEST(test_datagen_deterministic);

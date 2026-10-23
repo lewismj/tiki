@@ -2,6 +2,7 @@
 # Builds, tests and packages one release variant of tiki for x86-64 Linux:
 #     scripts/package.sh <variant> [cmake options...]
 #     scripts/package.sh x86-64-bmi2 -DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=ON
+#     scripts/package.sh x86-64-bmi2 -DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=ON -DTIKI_EMBED_NETWORK=ON
 # Writes dist/tiki-v<version>-linux-<variant>.tar.gz (the version is ENGINE_VERSION in version.h)
 # holding tiki-v<version>/{bin/tiki, models/*.nnue, scripts/run.sh, README.md, LICENSE}, and
 # dist/bench-<variant>.txt, the packaged engine's bench output.

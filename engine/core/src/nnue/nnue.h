@@ -2,6 +2,7 @@
 #define TIKI_NNUE_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "../types.h"
@@ -121,6 +122,16 @@ void nnue_free(void);
 /* Loads / saves the file format above. Load returns false on any mismatch, keeping the current network. */
 bool nnue_load(const char* path);
 bool nnue_save(const char* path);
+
+/* Loads the file format above from memory, 'name' is then reported by nnue_loaded_path. */
+bool nnue_load_memory(const void* data, size_t size, const char* name);
+
+/* The network built into the binary (TIKI_EMBED_NETWORK in CMake, see nnue_embedded.c): its file
+ * name (e.g. tiki-2026-10-23.nnue), or NULL if there isn't one. */
+const char* nnue_embedded_name(void);
+
+/* Loads the built in network, false if there isn't one. */
+bool nnue_load_embedded(void);
 
 /* The file the network was loaded from, "" if none or it was built in code (nnue_allocate). */
 const char* nnue_loaded_path(void);

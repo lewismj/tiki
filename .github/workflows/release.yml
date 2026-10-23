@@ -2,15 +2,27 @@
 # (scripts/package_windows.sh), and on a version tag (v<ENGINE_VERSION>, e.g. v0.0.1) publishes the
 # packages as a GitHub release. Run it by hand (Actions > Release > Run workflow) to build the
 # packages as a workflow artifact without releasing.
+#
+# The network can be built into the binaries (TIKI_EMBED_NETWORK, the newest in models/), so they run
+# without a .nnue file or the run scripts: the 'embed_network' input when run by hand, and for tag
+# pushes (which have no inputs) the repository variable TIKI_EMBED_NETWORK set to 'true'.
 name: Release
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      embed_network:
+        description: "Build the newest network in models/ into the binaries"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
+
+env:
+  EMBED: ${{ ((github.event_name == 'workflow_dispatch' && inputs.embed_network) || (github.event_name == 'push' && vars.TIKI_EMBED_NETWORK == 'true')) && '-DTIKI_EMBED_NETWORK=ON' || '' }}
 
 jobs:
   linux:
@@ -33,9 +45,9 @@ jobs:
       # x86-64: neither, for any x86-64 CPU.
       - name: Build, test and package
         run: |
-          sh scripts/package.sh x86-64-bmi2 -DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=ON
-          sh scripts/package.sh x86-64-avx2 -DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=OFF
-          sh scripts/package.sh x86-64 -DTIKI_USE_AVX2=OFF -DTIKI_USE_PEXT=OFF
+          sh scripts/package.sh x86-64-bmi2 -DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=ON $EMBED
+          sh scripts/package.sh x86-64-avx2 -DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=OFF $EMBED
+          sh scripts/package.sh x86-64 -DTIKI_USE_AVX2=OFF -DTIKI_USE_PEXT=OFF $EMBED
 
       - uses: actions/upload-artifact@v4
         with:
@@ -62,9 +74,9 @@ jobs:
       # The same variants as Linux.
       - name: Build, test and package
         run: |
-          sh scripts/package_windows.sh x86-64-bmi2 -DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=ON
-          sh scripts/package_windows.sh x86-64-avx2 -DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=OFF
-          sh scripts/package_windows.sh x86-64 -DTIKI_USE_AVX2=OFF -DTIKI_USE_PEXT=OFF
+          sh scripts/package_windows.sh x86-64-bmi2 -DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=ON $EMBED
+          sh scripts/package_windows.sh x86-64-avx2 -DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=OFF $EMBED
+          sh scripts/package_windows.sh x86-64 -DTIKI_USE_AVX2=OFF -DTIKI_USE_PEXT=OFF $EMBED
 
       - uses: actions/upload-artifact@v4
         with:
@@ -103,10 +115,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           nodes=$(grep -h "Nodes searched" dist/bench-x86-64-bmi2.txt | tr -dc '0-9')
+          embedded=""
+          if [ -n "$EMBED" ]; then
+            embedded="It's also built into \`bin/tiki\` and \`bin/tiki.exe\`, so a GUI can run them directly (\`TIKI_EVALFILE\` or the \`EvalFile\` option still override it)."
+          fi
           cat > notes.md <<EOF
           Unpack one package and run \`tiki-$GITHUB_REF_NAME/scripts/run.sh\` on Linux or
           \`tiki-$GITHUB_REF_NAME\\scripts\\run.bat\` on Windows (or point a UCI GUI at it).
           The network is in \`models/\`; set \`TIKI_EVALFILE\` to use another.
+          $embedded
 
           | Package | CPUs |
           |---|---|

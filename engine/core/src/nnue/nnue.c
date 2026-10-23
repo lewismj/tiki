@@ -86,27 +86,37 @@ static bool little_endian_host(void) {
     return *(const uint8_t*) &one == 1;
 }
 
-bool nnue_load(const char* path) {
-    if (!little_endian_host()) return false;
-    FILE* file = fopen(path, "rb");
-    if (file == NULL) return false;
+/* Size of a network in the file format, every valid file is exactly this long. */
+#define NNUE_FT_COUNT ((size_t) NNUE_INPUTS * NNUE_HIDDEN)
+#define NNUE_FILE_SIZE (8 + 3 * sizeof(uint32_t) + NNUE_FT_COUNT * sizeof(int16_t) + \
+                        NNUE_HIDDEN * sizeof(int16_t) + 2 * NNUE_HIDDEN * sizeof(int16_t) + sizeof(int32_t))
+
+/* Copies the next 'bytes' of 'data' to 'out', false if fewer are left. */
+static bool take(const uint8_t* data, size_t size, size_t* at, void* out, size_t bytes) {
+    if (size - *at < bytes) return false;
+    memcpy(out, data + *at, bytes);
+    *at += bytes;
+    return true;
+}
+
+bool nnue_load_memory(const void* data, size_t size, const char* name) {
+    if (!little_endian_host() || data == NULL) return false;
 
     /* Read into a new network, the current one is only replaced once this one is complete. */
-    const size_t ft_count = (size_t) NNUE_INPUTS * NNUE_HIDDEN;
-    nnue_network_t net = { .ft_weights = malloc(ft_count * sizeof(int16_t)) };
+    nnue_network_t net = { .ft_weights = malloc(NNUE_FT_COUNT * sizeof(int16_t)) };
     char magic[8];
     uint32_t header[3];
+    size_t at = 0;
     bool ok = net.ft_weights != NULL &&
-              fread(magic, 1, sizeof(magic), file) == sizeof(magic) &&
+              take(data, size, &at, magic, sizeof(magic)) &&
               memcmp(magic, NNUE_MAGIC, sizeof(magic)) == 0 &&
-              fread(header, sizeof(uint32_t), 3, file) == 3 &&
+              take(data, size, &at, header, sizeof(header)) &&
               header[0] == NNUE_VERSION && header[1] == NNUE_INPUTS && header[2] == NNUE_HIDDEN &&
-              fread(net.ft_weights, sizeof(int16_t), ft_count, file) == ft_count &&
-              fread(net.ft_bias, sizeof(int16_t), NNUE_HIDDEN, file) == NNUE_HIDDEN &&
-              fread(net.out_weights, sizeof(int16_t), 2 * NNUE_HIDDEN, file) == 2 * NNUE_HIDDEN &&
-              fread(&net.out_bias, sizeof(int32_t), 1, file) == 1 &&
-              fgetc(file) == EOF; /* Nothing after the network. */
-    fclose(file);
+              take(data, size, &at, net.ft_weights, NNUE_FT_COUNT * sizeof(int16_t)) &&
+              take(data, size, &at, net.ft_bias, sizeof(net.ft_bias)) &&
+              take(data, size, &at, net.out_weights, sizeof(net.out_weights)) &&
+              take(data, size, &at, &net.out_bias, sizeof(net.out_bias)) &&
+              at == size; /* Nothing after the network. */
 
     if (!ok) {
         free(net.ft_weights);
@@ -114,9 +124,23 @@ bool nnue_load(const char* path) {
     }
     nnue_free();
     nnue_net = net;
-    snprintf(loaded_path, sizeof(loaded_path), "%s", path);
+    snprintf(loaded_path, sizeof(loaded_path), "%s", name);
     next_generation();
     return true;
+}
+
+bool nnue_load(const char* path) {
+    FILE* file = fopen(path, "rb");
+    if (file == NULL) return false;
+
+    /* One byte more than a network, so a longer file is rejected too. */
+    uint8_t* data = malloc(NNUE_FILE_SIZE + 1);
+    const size_t size = data != NULL ? fread(data, 1, NNUE_FILE_SIZE + 1, file) : 0;
+    fclose(file);
+
+    const bool ok = size == NNUE_FILE_SIZE && nnue_load_memory(data, size, path);
+    free(data);
+    return ok;
 }
 
 bool nnue_save(const char* path) {

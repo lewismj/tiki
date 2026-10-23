@@ -26,6 +26,7 @@ set (SOURCES
         src/tools.c
         src/limits.c
         src/nnue/nnue.c
+        src/nnue/nnue_embedded.c
 )
 
 add_library(${PROJECT_NAME} ${SOURCES})
@@ -43,6 +44,14 @@ if(TIKI_USE_AVX2)
 endif()
 
 tiki_target_warnings(${PROJECT_NAME})
+
+# The network the assembler includes (.incbin) in nnue_embedded.c, rebuilt when the file changes.
+if (TIKI_EMBED_NETWORK)
+    get_filename_component(network_name "${TIKI_EMBEDDED_NETWORK}" NAME)
+    set_source_files_properties(src/nnue/nnue_embedded.c PROPERTIES
+            COMPILE_DEFINITIONS "TIKI_EMBEDDED_NETWORK=\"${TIKI_EMBEDDED_NETWORK}\";TIKI_EMBEDDED_NETWORK_NAME=\"${network_name}\""
+            OBJECT_DEPENDS "${TIKI_EMBEDDED_NETWORK}")
+endif()
 
 find_package(Threads REQUIRED)
 if (WIN32)
