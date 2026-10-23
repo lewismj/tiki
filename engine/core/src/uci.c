@@ -22,6 +22,9 @@
 /* 'Threads' option, used by each 'go'. */
 static int search_threads = 1;
 
+/* 'Move Overhead' option (ms), used by each 'go' with a clock. */
+static int move_overhead = MOVE_OVERHEAD_DEFAULT;
+
 
 /* Will be invoked on atexit, no need to invoke directly. */
 void on_shutdown() {
@@ -36,6 +39,7 @@ void on_startup() {
     init_lmr_table();
     init_transposition_table(TT_DEFAULT_MB);
     search_threads = 1;
+    move_overhead = MOVE_OVERHEAD_DEFAULT;
     atexit(on_shutdown);
 }
 
@@ -264,6 +268,7 @@ void parse_go_limits(const char* command, const board_t* board, limits_t* limits
 
     if ((arg = strstr(command, "movestogo")))
         limits->moves_to_go = atoi(arg+10);
+    if (limits->moves_to_go < 1) limits->moves_to_go = 1;
 
     limits->depth = MAX_SEARCH_DEPTH;
     if ((arg = strstr(command, "depth"))) {
@@ -287,14 +292,25 @@ void parse_go_limits(const char* command, const board_t* board, limits_t* limits
     limits->start_time = clock_time_ms();
     if (limits->time != -1) {
         limits->time_set= true;
-        limits->time /= limits->moves_to_go;
-        limits->time -= 55;
-        if (limits->time <0) {
-            limits->time =0;
-            limits->increment -= 55;
-            if (limits->increment < 0) limits->increment = 55;
+
+        /* The clock less the overhead, which every move loses on top of its search. */
+        int available = limits->time - move_overhead;
+        if (available < 0) available = 0;
+
+        int budget;
+        if (limits->move_time != -1) {
+            budget = available;
+        } else {
+            /* Never more than half of what's left, however large the increment, so a low clock can't
+             * run out. All of it for the last move before the time control ('movestogo 1'). */
+            budget = available / limits->moves_to_go + limits->increment;
+            const int cap = limits->moves_to_go == 1 ? available : available / 2;
+            if (budget > cap) budget = cap;
         }
-        limits->stop_time = limits->start_time + limits->time + limits->increment;
+        /* With nothing left, a moment: the search returns its depth 1 move, or the first legal one. */
+        if (budget < 1) budget = 1;
+        limits->time = budget;
+        limits->stop_time = limits->start_time + (uint64_t) budget;
 
         /* Don't start a new depth after half the allocation, 'movetime' can use all of it. */
         limits->soft_stop_time = limits->move_time != -1 ?
@@ -356,6 +372,11 @@ void parse_setoption(const char* command) {
         if (threads < 1) threads = 1;
         if (threads > MAX_SEARCH_THREADS) threads = MAX_SEARCH_THREADS;
         search_threads = threads;
+    } else if (is_option(name, length, "Move Overhead") && value) {
+        int overhead = atoi(value);
+        if (overhead < 0) overhead = 0;
+        if (overhead > MOVE_OVERHEAD_MAX) overhead = MOVE_OVERHEAD_MAX;
+        move_overhead = overhead;
     } else if (is_option(name, length, "EvalFile")) {
         /* The path runs to the end of the line (it may contain spaces). */
         size_t path_length = value ? strlen(value) : 0;
@@ -384,6 +405,8 @@ bool handle_uci_command(const char* command, board_t* board, search_state_t* sea
             printf("id author %s\n", ENGINE_AUTHOR);
             printf("option name Hash type spin default %d min 1 max %d\n", TT_DEFAULT_MB, TT_MAX_MB);
             printf("option name Threads type spin default 1 min 1 max %d\n", MAX_SEARCH_THREADS);
+            printf("option name Move Overhead type spin default %d min 0 max %d\n", MOVE_OVERHEAD_DEFAULT,
+                   MOVE_OVERHEAD_MAX);
             printf("option name EvalFile type string default %s\n",
                    *nnue_loaded_path() ? nnue_loaded_path() : "<empty>");
             printf("uciok\n");

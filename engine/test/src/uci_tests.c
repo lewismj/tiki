@@ -1,3 +1,5 @@
+#include <stdio.h>
+
 #include "unity.h"
 #include "uci_tests.h"
 
@@ -89,7 +91,51 @@ void test_go_clock_limits() {
     parse_go_limits("go wtime 60000 btime 60000 movestogo 10", &board, &limits);
     TEST_ASSERT_FALSE(limits.infinite);
     TEST_ASSERT_TRUE(limits.time_set);
-    TEST_ASSERT_EQUAL_UINT64(limits.start_time + 60000 / 10 - 55, limits.stop_time);
+    TEST_ASSERT_EQUAL_UINT64(limits.start_time + (60000 - MOVE_OVERHEAD_DEFAULT) / 10, limits.stop_time);
+}
+
+/* The time a 'go' command allows the side to move (white, from the start position). */
+static uint64_t move_budget(const char* command) {
+    board_t board;
+    limits_t limits;
+    parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
+    parse_go_limits(command, &board, &limits);
+    TEST_ASSERT_TRUE(limits.time_set);
+    return limits.stop_time - limits.start_time;
+}
+
+void test_go_low_clock_limits() {
+    const uint64_t overhead = MOVE_OVERHEAD_DEFAULT;
+
+    /* Bullet: a share of the clock less the overhead, plus the increment. */
+    TEST_ASSERT_EQUAL_UINT64((1000 - overhead) / 30 + 10, move_budget("go wtime 1000 btime 1000 winc 10 binc 10"));
+
+    /* A low clock: never more than half of what's left, whatever the increment. It used to get 55 ms
+     * here with a 10 ms increment, and lost on time. */
+    TEST_ASSERT_EQUAL_UINT64((40 - overhead) / 2, move_budget("go wtime 40 btime 40 winc 10 binc 10"));
+    TEST_ASSERT_EQUAL_UINT64((1000 - overhead) / 2, move_budget("go wtime 1000 btime 1000 winc 5000 binc 5000"));
+
+    /* Less than the overhead left: a moment, the search still returns a move. */
+    TEST_ASSERT_EQUAL_UINT64(1, move_budget("go wtime 10 btime 10 winc 10 binc 10"));
+
+    /* The last move before the time control can use all of it, 'movestogo 0' is taken as 1. */
+    TEST_ASSERT_EQUAL_UINT64(1000 - overhead, move_budget("go wtime 1000 btime 1000 movestogo 1"));
+    TEST_ASSERT_EQUAL_UINT64(1000 - overhead, move_budget("go wtime 1000 btime 1000 movestogo 0"));
+
+    /* 'movetime' uses all of it. */
+    TEST_ASSERT_EQUAL_UINT64(1000 - overhead, move_budget("go movetime 1000"));
+}
+
+void test_move_overhead_option() {
+    parse_setoption("setoption name Move Overhead value 100");
+    TEST_ASSERT_EQUAL_UINT64(1000 - 100, move_budget("go movetime 1000"));
+    parse_setoption("setoption name Move Overhead value 999999");
+    TEST_ASSERT_EQUAL_UINT64(1, move_budget("go movetime 1000"));     /* Capped at MOVE_OVERHEAD_MAX. */
+
+    char command[64];
+    snprintf(command, sizeof(command), "setoption name Move Overhead value %d", MOVE_OVERHEAD_DEFAULT);
+    parse_setoption(command);
+    TEST_ASSERT_EQUAL_UINT64(1000 - MOVE_OVERHEAD_DEFAULT, move_budget("go movetime 1000"));
 }
 
 void test_search_input_stop() {
@@ -145,7 +191,7 @@ void test_setoption_threads() {
 
     /* Unknown options and a missing value are ignored. */
     parse_setoption("setoption name Threads");
-    parse_setoption("setoption name Move Overhead value 10");
+    parse_setoption("setoption name No Such Option value 10");
     TEST_ASSERT_EQUAL_INT(MAX_SEARCH_THREADS, get_search_threads());
 
     parse_setoption("setoption name Threads value 1");

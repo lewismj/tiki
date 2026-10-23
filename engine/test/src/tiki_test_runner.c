@@ -123,6 +123,8 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_uci_newgame_resets_position);
     RUN_TEST(test_go_infinite_limits);
     RUN_TEST(test_go_clock_limits);
+    RUN_TEST(test_go_low_clock_limits);
+    RUN_TEST(test_move_overhead_option);
     RUN_TEST(test_search_input_stop);
     RUN_TEST(test_search_input_quit);
     RUN_TEST(test_search_input_isready);
