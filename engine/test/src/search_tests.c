@@ -9,6 +9,7 @@
 #include "../../core/src/transposition.h"
 #include "../../core/src/uci.h"
 #include "../../core/src/bench.h"
+#include "../../core/src/see.h"
 
 
 static void setup_position(const char* fen, board_t* board, search_state_t* search_state, limits_t* limits, int depth) {
@@ -97,7 +98,7 @@ void test_time_checked_once_per_2048_nodes() {
     limits_t limits;
 
     setup_position("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
-                   &board, &search_state, &limits, 8);
+                   &board, &search_state, &limits, 10);
     find_best_move(&board, &search_state, &limits);
 
     /* Used to also check before counting, several times on the same count. */
@@ -382,6 +383,54 @@ void test_late_move_pruning_guards() {
     TEST_ASSERT_FALSE(can_late_move_prune(2, 50, -MATE_VALUE + 10, false, false));
     /* Never before the first move: base + depth^2 >= 1. */
     TEST_ASSERT_FALSE(can_late_move_prune(0, 0, 0, false, false));
+}
+
+void test_see_pruning_guards() {
+    TEST_ASSERT_TRUE(can_see_prune(SEE_PRUNE_MAX_DEPTH, 1, 0, false, false));
+    /* Too deep, in check, PV node, mate bound, before the first move. */
+    TEST_ASSERT_FALSE(can_see_prune(SEE_PRUNE_MAX_DEPTH + 1, 1, 0, false, false));
+    TEST_ASSERT_FALSE(can_see_prune(2, 1, 0, true, false));
+    TEST_ASSERT_FALSE(can_see_prune(2, 1, 0, false, true));
+    TEST_ASSERT_FALSE(can_see_prune(2, 1, -MATE_VALUE + 10, false, false));
+    TEST_ASSERT_FALSE(can_see_prune(2, 0, 0, false, false));
+
+    TEST_ASSERT_EQUAL_INT(-3 * SEE_QUIET_MARGIN, see_prune_threshold(3, true));
+    TEST_ASSERT_EQUAL_INT(-9 * SEE_CAPTURE_MARGIN, see_prune_threshold(3, false));
+}
+
+void test_see_pruning_thresholds() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* 1.e4 d5: Qg4 hangs the queen to ...Bxg4, Nf3 is safe. */
+    setup_position("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2", &board, &search_state, &limits, 1);
+    TEST_ASSERT_TRUE(see(&board, parse_move("d1g4", &board)) < see_prune_threshold(SEE_PRUNE_MAX_DEPTH, true));
+    TEST_ASSERT_FALSE(see(&board, parse_move("g1f3", &board)) < see_prune_threshold(1, true));
+
+    /* 1.e4 e5 2.Qh5 Nc6: Qxf7+ Kxf7 loses 800, pruned at depth 2 but not at depth 7, where the
+     * threshold (-980) allows for a sacrifice. */
+    setup_position("r1bqkbnr/pppp1ppp/2n5/4p2Q/4P3/8/PPPP1PPP/RNB1KBNR w KQkq - 2 3", &board, &search_state, &limits, 1);
+    const int qxf7 = see(&board, parse_move("h5f7", &board));
+    TEST_ASSERT_EQUAL_INT(-800, qxf7);
+    TEST_ASSERT_TRUE(qxf7 < see_prune_threshold(2, false));
+    TEST_ASSERT_FALSE(qxf7 < see_prune_threshold(7, false));
+}
+
+void test_quiescence_searches_promotion_with_negative_history() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* As test_quiescence_sees_quiet_queen_promotion, but the malus has made a8=Q's history
+     * negative, which must not end the qsearch as if it were a losing capture. */
+    setup_position("8/P7/8/8/8/8/k7/7K w - - 0 1", &board, &search_state, &limits, 1);
+    const move_t promotion = parse_move("a7a8q", &board);
+    for (int i = 0; i < 100; i++) penalise_history(&search_state, promotion, 20);
+    TEST_ASSERT_TRUE(score_move(promotion, 0, &board, &search_state) < 0);
+
+    const int stand_pat = evaluation(&board, &search_state.nnue);
+    TEST_ASSERT_TRUE(quiescence(-INF, INF, &board, &search_state, &limits) > stand_pat + 500);
 }
 
 void test_lmr_reduction() {

@@ -62,6 +62,8 @@ bool can_null_move(const board_t* board, const search_state_t* search_state, int
 bool can_reverse_futility_prune(int depth, int static_eval, int beta, bool in_check, bool is_pv_node, int ply);
 bool is_futile(int depth, int static_eval, int alpha, bool in_check, bool is_pv_node);
 bool can_late_move_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node);
+bool can_see_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node);
+int see_prune_threshold(int depth, bool is_quiet);
 int lmr_reduction(int depth, int moves_searched, bool is_pv_node);
 int iir_reduction(int depth, move_t tt_move);
 

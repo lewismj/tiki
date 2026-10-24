@@ -60,4 +60,7 @@ void init_lmr_table();
 #define FUTILITY_MARGIN 150      /* ...when static eval + margin * depth <= alpha.                           */
 #define LMP_MAX_DEPTH 6          /* Late move pruning of quiet moves up to this depth...                     */
 #define LMP_BASE 3               /* ...after base + depth^2 moves have been searched at the node.            */
+#define SEE_PRUNE_MAX_DEPTH 8    /* SEE pruning in the main search up to this depth, skipping...             */
+#define SEE_QUIET_MARGIN 60      /* ...quiet moves with SEE < -margin * depth...                             */
+#define SEE_CAPTURE_MARGIN 20    /* ...and captures with SEE < -margin * depth^2.                            */
 #endif

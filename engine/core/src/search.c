@@ -211,6 +211,21 @@ bool can_late_move_prune(int depth, int moves_searched, int alpha, bool in_check
 }
 
 /**
+ * SEE pruning: at low depth, a move that loses this much material on its target square (static
+ * exchange evaluation) is very unlikely to raise alpha, so it's skipped. Quiet moves lose
+ * -SEE_QUIET_MARGIN * depth, captures -SEE_CAPTURE_MARGIN * depth^2 (a capture's threat often
+ * pays for some material). Never the first move, so the node always has a score.
+ */
+bool can_see_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node) {
+    return !in_check && !is_pv_node && depth <= SEE_PRUNE_MAX_DEPTH && !is_mate_score(alpha) &&
+           moves_searched > 0;
+}
+
+int see_prune_threshold(int depth, bool is_quiet) {
+    return is_quiet ? -SEE_QUIET_MARGIN * depth : -SEE_CAPTURE_MARGIN * depth * depth;
+}
+
+/**
  * Late move reduction for a quiet move, from the log table, one ply less in PV nodes. Clamped so
  * the reduced search still has at least one ply (depth - 1 - r >= 1).
  */
@@ -274,8 +289,10 @@ int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state
     for (int i=0; i< buffer.index; i++) {
         move_t mv = pick_next_move(&buffer, scores, i);
 
-        /* Sorted best first, so from here on every capture loses material (SEE < 0). */
-        if (scores[i] < 0) break;
+        /* Sorted best first, so from here on every capture loses material (SEE < 0). Not a quiet
+         * promotion: it's scored by history, which the malus can make negative, and the losing
+         * captures (BAD_CAPTURE_SCORE) still sort after it. */
+        if (scores[i] < 0 && get_capture_flag(mv)) break;
 
         /* Delta pruning, even winning the piece can't bring the score up to alpha. */
         if (!get_promoted_piece(mv) && eval + captured_value(board, mv) + DELTA_MARGIN <= alpha) continue;
@@ -387,6 +404,10 @@ int negamax(int alpha,
         /* Late move pruning, before making the move: a legal move has been searched already, so
          * whether this one is legal doesn't matter. */
         if (is_quiet && can_late_move_prune(depth, num_moves_searched, alpha, in_check, is_pv_node)) continue;
+
+        /* SEE pruning, also before making the move. Promotions are always searched. */
+        if (!get_promoted_piece(mv) && can_see_prune(depth, num_moves_searched, alpha, in_check, is_pv_node) &&
+            see(board, mv) < see_prune_threshold(depth, is_quiet)) continue;
 
         if (!search_make_move(board, search_state, mv)) {
             search_pop_move(board, search_state);

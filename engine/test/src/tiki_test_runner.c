@@ -111,6 +111,9 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_late_move_pruning_guards);
     RUN_TEST(test_history_malus_and_bound);
     RUN_TEST(test_penalised_quiet_stays_above_losing_captures);
+    RUN_TEST(test_see_pruning_guards);
+    RUN_TEST(test_see_pruning_thresholds);
+    RUN_TEST(test_quiescence_searches_promotion_with_negative_history);
     RUN_TEST(test_lmr_reduction);
     RUN_TEST(test_iir_reduction);
     RUN_TEST(test_aspiration_search);
