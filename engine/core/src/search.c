@@ -72,6 +72,20 @@ void update_history(search_state_t* search_state, move_t mv, int depth) {
     if (*h > HISTORY_MAX) *h = HISTORY_MAX;
 }
 
+/**
+ * History malus: a quiet move searched before the quiet move that caused a cutoff didn't cut, so
+ * its history is lowered by depth^2, with the same gravity towards -HISTORY_MAX. Without it history
+ * only rises, and a move that's often tried but rarely good keeps a high score.
+ * h -= bonus + h * bonus / HISTORY_MAX.
+ */
+void penalise_history(search_state_t* search_state, move_t mv, int depth) {
+    int32_t* h = &search_state->history_moves[get_piece_moved(mv)][get_target_square(mv)];
+    int bonus = depth * depth;
+    if (bonus > HISTORY_MAX) bonus = HISTORY_MAX;
+    *h -= bonus + *h * bonus / HISTORY_MAX;
+    if (*h < -HISTORY_MAX) *h = -HISTORY_MAX;
+}
+
 static inline_always void score_moves(const move_buffer_t* buffer, int* scores, move_t tt_move, board_t* board, search_state_t* search_state) {
     for (int i = 0; i < buffer->index; i++) {
         scores[i] = score_move(buffer->moves[i], tt_move, board, search_state);
@@ -184,6 +198,16 @@ bool can_reverse_futility_prune(int depth, int static_eval, int beta, bool in_ch
 bool is_futile(int depth, int static_eval, int alpha, bool in_check, bool is_pv_node) {
     return !in_check && !is_pv_node && depth <= FUTILITY_MAX_DEPTH && !is_mate_score(alpha) &&
            static_eval + FUTILITY_MARGIN * depth <= alpha;
+}
+
+/**
+ * Late move pruning: at low depth, once base + depth^2 moves have been searched, the remaining
+ * quiet moves (sorted last, after the killers and the best history) are very unlikely to raise
+ * alpha, so they're skipped. Captures and promotions are still searched.
+ */
+bool can_late_move_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node) {
+    return !in_check && !is_pv_node && depth <= LMP_MAX_DEPTH && !is_mate_score(alpha) &&
+           moves_searched >= LMP_BASE + depth * depth;
 }
 
 /**
@@ -352,16 +376,24 @@ int negamax(int alpha,
     int num_moves_searched = 0;
     int score;
     move_t best_move = 0;
+    /* Quiet moves searched without a cutoff, for the history malus when a later quiet move cuts. */
+    move_t quiets_searched[MAX_QUIETS_PENALISED];
+    int num_quiets_searched = 0;
     for (int i=0; i < buffer.index; i++) {
         move_t mv = pick_next_move(&buffer, scores, i);
         bool is_capture = get_capture_flag(mv);
+        const bool is_quiet = !is_capture && !get_promoted_piece(mv);
+
+        /* Late move pruning, before making the move: a legal move has been searched already, so
+         * whether this one is legal doesn't matter. */
+        if (is_quiet && can_late_move_prune(depth, num_moves_searched, alpha, in_check, is_pv_node)) continue;
+
         if (!search_make_move(board, search_state, mv)) {
             search_pop_move(board, search_state);
             continue;
         }
         has_legal_moves = true;
 
-        const bool is_quiet = !is_capture && !get_promoted_piece(mv);
         /* Only needed when futility or LMR might apply, it costs an attack test. */
         const bool may_prune = is_quiet && num_moves_searched > 0 &&
                                (futile || (num_moves_searched >= LMR_MIN_MOVES && depth >= LMR_MIN_DEPTH && !in_check));
@@ -426,9 +458,14 @@ int negamax(int alpha,
                     search_state->killer_moves[1][search_state->ply] = search_state->killer_moves[0][search_state->ply];
                     search_state->killer_moves[0][search_state->ply] = mv;
                 }
+                if (is_quiet) {
+                    for (int j = 0; j < num_quiets_searched; j++) penalise_history(search_state, quiets_searched[j], depth);
+                }
                 return beta;
             }
         }
+
+        if (is_quiet && num_quiets_searched < MAX_QUIETS_PENALISED) quiets_searched[num_quiets_searched++] = mv;
     }
 
     if (!has_legal_moves) return in_check ? -MATE_VALUE + search_state->ply : 0;

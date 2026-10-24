@@ -108,6 +108,9 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_losing_capture_ordered_after_quiet_moves);
     RUN_TEST(test_reverse_futility_guards);
     RUN_TEST(test_futility_guards);
+    RUN_TEST(test_late_move_pruning_guards);
+    RUN_TEST(test_history_malus_and_bound);
+    RUN_TEST(test_penalised_quiet_stays_above_losing_captures);
     RUN_TEST(test_lmr_reduction);
     RUN_TEST(test_iir_reduction);
     RUN_TEST(test_aspiration_search);

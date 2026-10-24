@@ -78,6 +78,14 @@ class Lc0Test(unittest.TestCase):
         self.assertEqual(["a7a8"] * 3 + ["a7b8"] * 3, names[1792:1798])
         self.assertEqual(1858, len(names))
 
+    def test_scores_are_on_the_trainers_scale(self):
+        from tiki_nnue.model import SCALE
+        self.assertEqual(SCALE, lc0.SCALE)
+        # The trainer's sigmoid(score / SCALE) gives back lc0's expected result, (1 + q) / 2.
+        for q in (-0.9, -0.5, -0.1, 0.0, 0.2, 0.6, 0.95):
+            self.assertAlmostEqual((1 + q) / 2, 1 / (1 + np.exp(-lc0.q_to_centipawns(q) / SCALE)), places=9)
+        self.assertGreater(lc0.q_to_centipawns(0.999), 3000)   # Clipped, then dropped by --max-score.
+
     def test_decodes_positions_for_either_side_to_move(self):
         boards = [chess.Board(fen) for fen, _ in QUIET]
         data = game(*(v6_record(board, chess.Move.from_uci(move), best_q=0.2, result_q=-1.0)
@@ -110,7 +118,7 @@ class Lc0Test(unittest.TestCase):
         move = chess.Move.from_uci(QUIET[0][1])
         plies = game(*(v6_record(board, move) for _ in range(10)))
         self.assertEqual(4, self.decode(plies, skip_plies=6)[1][1])
-        self.assertEqual(0, self.decode(game(v6_record(board, move, best_q=0.99)), max_score=3000)[1][1])
+        self.assertEqual(0, self.decode(game(v6_record(board, move, best_q=0.9995)), max_score=3000)[1][1])
         self.assertEqual(0, self.decode(game(v6_record(board, move, version=5)))[1][1])
         self.assertEqual(0, self.decode(game(v6_record(board, move, invariance=lc0.DELETED)))[1][1])
         root = self.decode(game(v6_record(board, move, best_q=0.2)), q_field="root_q")[0]
@@ -225,6 +233,12 @@ class DownloadTest(unittest.TestCase):
         self.server.ignore_range = True
         lc0.download(self.server.url, self.path, "test")
         self.assertEqual(self.content, self.downloaded())
+
+    def test_downloaded_leaves_out_missing_and_partial_tars(self):
+        for name in ("a.tar", "b.tar.part"):
+            open(os.path.join(self.directory.name, name), "wb").close()
+        tars = [("a.tar", "20260101", "0017"), ("b.tar", "20260101", "1217"), ("c.tar", "20260102", "0017")]
+        self.assertEqual(tars[:1], lc0.downloaded(tars, self.directory.name))
 
     def test_a_complete_partial_download(self):
         self.partial(len(self.content))

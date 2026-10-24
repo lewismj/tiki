@@ -50,11 +50,14 @@ void init_lmr_table();
 #define ASPIRATION_WINDOW 25     /* Initial half-width of the root window around the previous score...       */
 #define ASPIRATION_MAX_DELTA 1000 /* ...doubled on each fail, full window once it's wider than this.         */
 #define ASPIRATION_MIN_DEPTH 4   /* Shallower depths use the full window, their scores are less stable.      */
-#define HISTORY_MAX 7000         /* History scores stay at or below this, under the killers (8000, 9000).    */
+#define HISTORY_MAX 7000         /* History scores stay within +-this, under the killers (8000, 9000).       */
+#define MAX_QUIETS_PENALISED 64  /* Quiet moves remembered per node for the history malus.                   */
 #define BAD_CAPTURE_SCORE (-20000) /* Ordering offset for losing captures (SEE < 0), below every quiet move.  */
 #define DELTA_MARGIN 200         /* Qsearch delta pruning, skip a capture if eval + victim + margin <= alpha. */
 #define RFP_MAX_DEPTH 6          /* Reverse futility pruning up to this depth...                             */
 #define RFP_MARGIN 100           /* ...when static eval - margin * depth >= beta.                            */
 #define FUTILITY_MAX_DEPTH 3     /* Futility pruning of quiet moves up to this depth...                      */
 #define FUTILITY_MARGIN 150      /* ...when static eval + margin * depth <= alpha.                           */
+#define LMP_MAX_DEPTH 6          /* Late move pruning of quiet moves up to this depth...                     */
+#define LMP_BASE 3               /* ...after base + depth^2 moves have been searched at the node.            */
 #endif

@@ -13,8 +13,8 @@ Positions are lc0 training records (V6, one .gz file of them per game), from the
 point of view: that side's pieces are written as White's, with White to move, which is the same
 position for tiki's colour-symmetric network. As in datagen and lichess.py only quiet positions are
 kept (not in check, lc0's best move not a capture or promotion). The score is lc0's search value of
-its best move (best_q, or --q root / played), converted from Q to centipawns as lc0 does, and the
-result is the game's.
+its best move (best_q, or --q root / played), converted from Q to centipawns on the trainer's scale
+(q_to_centipawns), and the result is the game's.
 """
 
 import argparse
@@ -85,9 +85,17 @@ MOVES = policy_moves()
 assert len(MOVES) == 1858
 
 
+SCALE = 400     # tiki_nnue/model.py's SCALE (not imported, it would load torch in every worker).
+
+
 def q_to_centipawns(q):
-    """lc0's conversion of a Q value (-1..1, the expected score for the side to move) to centipawns."""
-    return 111.714640912 * np.tan(1.5620688421 * np.clip(q, -0.999, 0.999))
+    """A Q value (-1..1, wins - losses for the side to move) as centipawns on the trainer's scale:
+    the score whose sigmoid(score / SCALE) is the expected result (1 + q) / 2, so the trainer reads
+    it back as the win probability lc0's search gave. lc0's own display conversion
+    (111.7 * tan(1.562 * q)) gives about a third of that, which trained nets towards evals far too
+    small for what the positions are worth (see score_scale.py)."""
+    q = np.clip(q, -0.999, 0.999)
+    return SCALE * np.log((1 + q) / (1 - q))
 
 
 def squares(mask):
@@ -282,6 +290,12 @@ def open_tar(run, name, download_dir, label):
     return open(path, "rb"), os.path.getsize(path)
 
 
+def downloaded(tars, download_dir):
+    """The tars (as from choose()) already downloaded in full to 'download_dir' (a .part file, a
+    download still to finish, doesn't count)."""
+    return [tar for tar in tars if os.path.isfile(os.path.join(download_dir, tar[0]))]
+
+
 def convert(fileobj, size, out_path, converter, workers, label):
     """Converts one tar to a binary data file (via a .part file). Returns (games, records, kept, rejected)."""
     partial = out_path + ".part"
@@ -316,6 +330,8 @@ def main():
     parser.add_argument("--dates", required=True, nargs="+", help="YYYY-MM-DD, or ranges YYYY-MM-DD:YYYY-MM-DD")
     parser.add_argument("--per-day", type=int, default=2, help="tars per day, spread over it (0: all, about 24)")
     parser.add_argument("--download-dir", help="keep the tars here (1-2 GB each) rather than only streaming them")
+    parser.add_argument("--skip-missing", action="store_true",
+                        help="only convert tars already in --download-dir, download nothing")
     parser.add_argument("--skip-plies", type=int, default=16, help="opening plies to skip (temperature moves)")
     parser.add_argument("--sample", type=float, default=0.25, help="fraction of positions to keep")
     parser.add_argument("--max-score", type=int, default=3000, help="skip positions scored above this (centipawns)")
@@ -328,6 +344,8 @@ def main():
         parser.error("--skip-plies, --max-score and --per-day must be >= 0, --workers >= 1")
     if not 0.0 < args.sample <= 1.0:
         parser.error("--sample must be in (0, 1]")
+    if args.skip_missing and not args.download_dir:
+        parser.error("--skip-missing needs --download-dir")
     try:
         wanted = set().union(*(days(spec) for spec in args.dates))
     except ValueError as error:
@@ -340,6 +358,11 @@ def main():
     tars = choose(list_tars(args.run), wanted, args.per_day)
     console.print(f"Run {args.run}: {len(tars)} tar(s) on {len(wanted)} day(s), sampling {args.sample:.0%}, "
                   f"score from {args.q}_q, {args.workers} workers")
+    if args.skip_missing:
+        local = downloaded(tars, args.download_dir)
+        console.print(f"{len(local)} of them downloaded to {args.download_dir}, "
+                      f"skipping the other {len(tars) - len(local)}")
+        tars = local
     if not tars:
         console.print("[yellow]No tars on those dates.[/yellow]")
         return 1

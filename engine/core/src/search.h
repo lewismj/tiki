@@ -48,6 +48,7 @@ move_t pick_next_move(move_buffer_t* buffer, int* scores, int i);
 
 /* Quiet move raised alpha, depth^2 bonus with gravity, bounded by HISTORY_MAX. */
 void update_history(search_state_t* search_state, move_t mv, int depth);
+void penalise_history(search_state_t* search_state, move_t mv, int depth);
 
 /* Fifty-move rule, insufficient material or repetition. */
 bool is_draw(const board_t* board, search_state_t* search_state);
@@ -60,6 +61,7 @@ bool can_null_move(const board_t* board, const search_state_t* search_state, int
                    bool in_check, bool is_pv_node);
 bool can_reverse_futility_prune(int depth, int static_eval, int beta, bool in_check, bool is_pv_node, int ply);
 bool is_futile(int depth, int static_eval, int alpha, bool in_check, bool is_pv_node);
+bool can_late_move_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node);
 int lmr_reduction(int depth, int moves_searched, bool is_pv_node);
 int iir_reduction(int depth, move_t tt_move);
 

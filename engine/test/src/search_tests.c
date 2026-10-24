@@ -97,7 +97,7 @@ void test_time_checked_once_per_2048_nodes() {
     limits_t limits;
 
     setup_position("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
-                   &board, &search_state, &limits, 7);
+                   &board, &search_state, &limits, 8);
     find_best_move(&board, &search_state, &limits);
 
     /* Used to also check before counting, several times on the same count. */
@@ -243,6 +243,45 @@ void test_history_bonus_and_bound() {
     TEST_ASSERT_EQUAL_INT(HISTORY_MAX / 2 + 100 - (HISTORY_MAX / 2) * 100 / HISTORY_MAX, *h);
 }
 
+void test_history_malus_and_bound() {
+    search_state_t search_state;
+    init_search_state(&search_state);
+    const move_t mv = encode_move(g1, f3, N, 0, 0, 0, 0, 0, 0);
+    const int32_t* h = &search_state.history_moves[N][f3];
+
+    /* From zero the malus is depth^2, and a bonus of the same depth from there doesn't overshoot. */
+    penalise_history(&search_state, mv, 3);
+    TEST_ASSERT_EQUAL_INT(-9, *h);
+    update_history(&search_state, mv, 3);
+    TEST_ASSERT_TRUE(*h <= 0 && *h > -9);
+
+    /* Saturates at -HISTORY_MAX. */
+    for (int i = 0; i < 100000; i++) penalise_history(&search_state, mv, 40);
+    TEST_ASSERT_TRUE(*h >= -HISTORY_MAX);
+    TEST_ASSERT_TRUE(*h < -HISTORY_MAX * 9 / 10);
+
+    /* Near the bound the same malus takes off less than it did from zero. */
+    search_state.history_moves[N][f3] = -HISTORY_MAX / 2;
+    penalise_history(&search_state, mv, 10);
+    TEST_ASSERT_EQUAL_INT(-HISTORY_MAX / 2 - 100 + (HISTORY_MAX / 2) * 100 / HISTORY_MAX, *h);
+}
+
+void test_penalised_quiet_stays_above_losing_captures() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* 1.e4 e5 2.Qh5 Nc6: Qxf7+ loses the queen to ...Kxf7 (SEE < 0). */
+    setup_position("r1bqkbnr/pppp1ppp/2n5/4p2Q/4P3/8/PPPP1PPP/RNB1KBNR w KQkq - 2 3", &board, &search_state, &limits, 1);
+    const move_t quiet = parse_move("g1f3", &board);
+    const move_t losing_capture = parse_move("h5f7", &board);
+
+    for (int i = 0; i < 100000; i++) penalise_history(&search_state, quiet, 40);
+    TEST_ASSERT_TRUE(score_move(losing_capture, 0, &board, &search_state) < 0);
+    TEST_ASSERT_TRUE(score_move(quiet, 0, &board, &search_state) >
+                     score_move(losing_capture, 0, &board, &search_state));
+}
+
 void test_history_stays_below_killers_and_captures() {
     board_t board;
     search_state_t search_state;
@@ -329,6 +368,20 @@ void test_futility_guards() {
     TEST_ASSERT_FALSE(is_futile(2, -400, 0, true, false));
     TEST_ASSERT_FALSE(is_futile(2, -400, 0, false, true));
     TEST_ASSERT_FALSE(is_futile(2, -MATE_VALUE, -MATE_VALUE + 10, false, false));
+}
+
+void test_late_move_pruning_guards() {
+    /* Depth 2: pruned from the 3 + 4 = 7th move searched. */
+    TEST_ASSERT_FALSE(can_late_move_prune(2, LMP_BASE + 3, 0, false, false));
+    TEST_ASSERT_TRUE(can_late_move_prune(2, LMP_BASE + 4, 0, false, false));
+    TEST_ASSERT_TRUE(can_late_move_prune(1, LMP_BASE + 1, 0, false, false));
+    /* Too deep, in check, PV node, mate bound. */
+    TEST_ASSERT_FALSE(can_late_move_prune(LMP_MAX_DEPTH + 1, 200, 0, false, false));
+    TEST_ASSERT_FALSE(can_late_move_prune(2, 50, 0, true, false));
+    TEST_ASSERT_FALSE(can_late_move_prune(2, 50, 0, false, true));
+    TEST_ASSERT_FALSE(can_late_move_prune(2, 50, -MATE_VALUE + 10, false, false));
+    /* Never before the first move: base + depth^2 >= 1. */
+    TEST_ASSERT_FALSE(can_late_move_prune(0, 0, 0, false, false));
 }
 
 void test_lmr_reduction() {

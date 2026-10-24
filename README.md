@@ -187,9 +187,14 @@ The trainer's tests check its features and integer evaluation against the engine
 
 ### Next steps
 
-- **A built-in network:** embed the `.nnue` file in the binary at build time, loaded by `load_startup_network`
-  (`tiki.h`), so `TIKI_EVALFILE` becomes optional.
-- **Strength testing:** a match setup (SPRT) to check search changes and tune their margins, and to measure the
-  Lazy SMP gain at different thread counts. The current margins are common starting values, not tuned.
+- **Search:** each one checked with an SPRT (`scripts/match.bat` / `match.sh`):
+  - late move pruning (skip late quiet moves at low depth);
+  - a transposition table of four-entry buckets (one cache line) with depth and age replacement, and
+    prefetching the child's entry after each move;
+  - continuation history (a quiet move's history given the previous move);
+  - singular extensions, then ProbCut.
+- **Tuning:** the search margins are common starting values, not tuned. SPRT their changes, and measure the
+  Lazy SMP gain at different thread counts.
 - **Parallel search:** Lazy SMP is in. Next would be letting helpers vote on the best move (or take it from the
   deepest completed thread), and more structured parallelism after that.
+- **Network:** training on lc0's data, output buckets and a wider first layer (see the training README).
