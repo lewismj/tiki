@@ -146,5 +146,91 @@ class Lc0Test(unittest.TestCase):
         self.assertEqual([], lc0.choose(tars, {"20240402"}, 2))
 
 
+class _Server:
+    """A local HTTP server for 'content', honouring Range requests unless 'ignore_range'."""
+
+    def __init__(self, content):
+        import http.server
+        import threading
+        server = self
+        self.content, self.ignore_range, self.ranges = content, False, []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                start = 0
+                header = self.headers.get("Range")
+                server.ranges.append(header)
+                if header and not server.ignore_range:
+                    start = int(header.split("=")[1].rstrip("-"))
+                    if start >= len(server.content):
+                        self.send_error(416)
+                        return
+                    self.send_response(206)
+                    self.send_header("Content-Range", f"bytes {start}-{len(server.content) - 1}/{len(server.content)}")
+                else:
+                    self.send_response(200)
+                self.send_header("Content-Length", str(len(server.content) - start))
+                self.end_headers()
+                self.wfile.write(server.content[start:])
+
+            def log_message(self, *_):
+                pass
+
+        self.httpd = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.httpd.server_address[1]}/game.tar"
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+
+@unittest.skipIf(chess is None, "needs python-chess")
+class DownloadTest(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.content = bytes(range(256)) * 4000
+        self.server = _Server(self.content)
+        self.directory = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.directory.name, "game.tar")
+        self.quiet, lc0.console.quiet = lc0.console.quiet, True     # No warnings in the test output.
+
+    def tearDown(self):
+        lc0.console.quiet = self.quiet
+        self.server.close()
+        self.directory.cleanup()
+
+    def downloaded(self):
+        self.assertFalse(os.path.exists(self.path + ".part"))
+        with open(self.path, "rb") as file:
+            return file.read()
+
+    def partial(self, size):
+        with open(self.path + ".part", "wb") as file:
+            file.write(self.content[:size])
+
+    def test_downloads(self):
+        lc0.download(self.server.url, self.path, "test")
+        self.assertEqual(self.content, self.downloaded())
+        self.assertEqual([None], self.server.ranges)
+
+    def test_resumes(self):
+        self.partial(100_000)
+        lc0.download(self.server.url, self.path, "test")
+        self.assertEqual(self.content, self.downloaded())
+        self.assertEqual(["bytes=100000-"], self.server.ranges)
+
+    def test_starts_again_if_the_server_ignores_the_range(self):
+        self.partial(100_000)
+        self.server.ignore_range = True
+        lc0.download(self.server.url, self.path, "test")
+        self.assertEqual(self.content, self.downloaded())
+
+    def test_a_complete_partial_download(self):
+        self.partial(len(self.content))
+        lc0.download(self.server.url, self.path, "test")
+        self.assertEqual(self.content, self.downloaded())
+
+
 if __name__ == "__main__":
     unittest.main()

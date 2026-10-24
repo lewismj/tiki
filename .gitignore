@@ -78,3 +78,5 @@ dist/
 /tools/
 /matches/
 
+# Candidate models for testing
+nnue_candidates/

@@ -26,13 +26,15 @@ import re
 import sys
 import tarfile
 import time
+import urllib.error
 import urllib.request
 from datetime import date, timedelta
 
 import chess
 import numpy as np
 from rich.console import Console
-from rich.progress import BarColumn, DownloadColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn, TransferSpeedColumn
+from rich.progress import (BarColumn, DownloadColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn,
+                           TimeRemainingColumn, TransferSpeedColumn)
 from rich.table import Table
 
 from tiki_nnue import binary
@@ -40,6 +42,7 @@ from tiki_nnue import binary
 BASE_URL = "https://storage.lczero.org/files/training_data"
 # The server (behind Cloudflare) refuses Python's default User-Agent.
 USER_AGENT = "tiki-training/1.0 (+https://github.com/lewismj/tiki)"
+CONTENT_RANGE_RE = re.compile(r"bytes (\d+)-(\d+)/(\d+|\*)")
 TAR_RE = re.compile(r'href="(training-run\d+-([\w.-]+?)-(\d{8})-(\d{4})\.tar)"')
 
 # lc0's V6TrainingData (src/trainingdata/trainingdata_v6.h), packed, little-endian.
@@ -226,7 +229,47 @@ def choose(tars, wanted_days, per_day):
     return chosen
 
 
-def open_tar(run, name, download_dir):
+def download(url, path, label):
+    """Downloads 'url' to 'path' via a .part file, resuming a partial download, with a progress bar
+    (removed when it's done, the conversion's stays)."""
+    partial = path + ".part"
+    done = os.path.getsize(partial) if os.path.exists(partial) else 0
+    try:
+        response = fetch(url, {"Range": f"bytes={done}-"} if done else {})
+    except urllib.error.HTTPError as error:
+        # Nothing left to download: the .part file is the whole tar.
+        if error.code == 416 and done:
+            os.replace(partial, path)
+            return
+        raise
+
+    with response:
+        content_range = CONTENT_RANGE_RE.fullmatch(response.headers.get("Content-Range", ""))
+        # Resume only if the server honoured the range request, otherwise start again.
+        if done:
+            if response.status != 206:
+                console.print(f"[yellow]The server didn't resume {label}, downloading it again.[/yellow]")
+                done = 0
+            elif not content_range or int(content_range.group(1)) != done:
+                raise RuntimeError(f"Invalid Content-Range resuming {label}: {response.headers.get('Content-Range')!r}")
+
+        if content_range and content_range.group(3) != "*":
+            total = int(content_range.group(3))
+        else:
+            length = response.headers.get("Content-Length")
+            total = done + int(length) if length is not None else None
+
+        with open(partial, "ab" if done else "wb") as file, Progress(
+                TextColumn("{task.description}", markup=False), BarColumn(), DownloadColumn(),
+                TransferSpeedColumn(), TimeRemainingColumn(), console=console, transient=True) as progress:
+            task = progress.add_task(f"Downloading {label}", total=total, completed=done)
+            while chunk := response.read(1 << 20):
+                file.write(chunk)
+                progress.update(task, advance=len(chunk))
+    os.replace(partial, path)
+
+
+def open_tar(run, name, download_dir, label):
     """A stream of the tar: from --download-dir if it's there (downloading it first, resuming a
     partial download), otherwise straight from the server. Returns (file, size)."""
     url = f"{BASE_URL}/{run}/{name}"
@@ -235,15 +278,7 @@ def open_tar(run, name, download_dir):
         return response, int(response.headers.get("Content-Length") or 0)
     path = os.path.join(download_dir, name)
     if not os.path.exists(path):
-        partial = path + ".part"
-        done = os.path.getsize(partial) if os.path.exists(partial) else 0
-        with fetch(url, {"Range": f"bytes={done}-"} if done else {}) as response:
-            if done and response.status != 206:
-                done = 0
-            with open(partial, "ab" if done else "wb") as file:
-                while chunk := response.read(1 << 20):
-                    file.write(chunk)
-        os.replace(partial, path)
+        download(url, path, label)
     return open(path, "rb"), os.path.getsize(path)
 
 
@@ -321,7 +356,7 @@ def main():
             continue
         try:
             start = time.time()
-            fileobj, size = open_tar(args.run, name, args.download_dir)
+            fileobj, size = open_tar(args.run, name, args.download_dir, f"{day}-{hour}")
             with fileobj:
                 game_count, records, kept, rejected = convert(fileobj, size, out_path, converter, args.workers,
                                                               f"{day}-{hour}")
