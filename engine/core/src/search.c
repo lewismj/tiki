@@ -54,7 +54,7 @@ int score_move(move_t move, move_t tt_move, board_t* board, search_state_t* sear
     } else {
         if (search_state->killer_moves[0][search_state->ply] == move) return KILLER_1_SCORE;
         else if (search_state->killer_moves[1][search_state->ply] == move) return KILLER_2_SCORE;
-        return quiet_history(search_state, move);
+        return search_state->history_moves[get_piece_moved(move)][get_target_square(move)];
     }
 }
 
@@ -69,27 +69,10 @@ static inline_always int history_gravity(int h, int bonus) {
     return h > HISTORY_MAX ? HISTORY_MAX : (h < -HISTORY_MAX ? -HISTORY_MAX : h);
 }
 
-/**
- * The continuation history entry for a quiet move following the move 'plies_back' plies before
- * it (1: the opponent's last move, 2: our own), NULL where there's no such move (the start of
- * the search path, or a null move).
- */
-static inline_always int16_t* continuation_entry(search_state_t* search_state, move_t mv, int plies_back) {
-    if (search_state->ply < plies_back) return NULL;
-    const move_t previous = search_state->move_stack[search_state->ply - plies_back];
-    if (!previous) return NULL;
-    return &search_state->continuation_history[get_piece_moved(previous)][get_target_square(previous)]
-                                              [get_piece_moved(mv)][get_target_square(mv)];
-}
-
-/* Adds a signed bonus to the move's history and to its continuation histories, 1 and 2 plies back. */
-static void add_history_bonus(search_state_t* search_state, move_t mv, int bonus) {
+/* Adds a signed bonus to the move's history. */
+static inline_always void add_history_bonus(search_state_t* search_state, move_t mv, int bonus) {
     int32_t* h = &search_state->history_moves[get_piece_moved(mv)][get_target_square(mv)];
     *h = history_gravity(*h, bonus);
-    for (int plies_back = 1; plies_back <= 2; plies_back++) {
-        int16_t* c = continuation_entry(search_state, mv, plies_back);
-        if (c) *c = (int16_t) history_gravity(*c, bonus);
-    }
 }
 
 static inline_always int history_bonus(int depth) {
@@ -108,20 +91,6 @@ void update_history(search_state_t* search_state, move_t mv, int depth) {
  */
 void penalise_history(search_state_t* search_state, move_t mv, int depth) {
     add_history_bonus(search_state, mv, -history_bonus(depth));
-}
-
-/**
- * Ordering score of a quiet move: the average of its history and its two continuation histories
- * (0 where there's no previous move), so within +-HISTORY_MAX, under the killers and above the
- * losing captures. The same divisor at every node, so only the ranking within a node matters.
- */
-int quiet_history(search_state_t* search_state, move_t mv) {
-    int score = search_state->history_moves[get_piece_moved(mv)][get_target_square(mv)];
-    for (int plies_back = 1; plies_back <= 2; plies_back++) {
-        const int16_t* c = continuation_entry(search_state, mv, plies_back);
-        if (c) score += *c;
-    }
-    return score / 3;
 }
 
 /**
@@ -341,7 +310,6 @@ int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state
         /* Delta pruning, even winning the piece can't bring the score up to alpha. */
         if (!get_promoted_piece(mv) && eval + captured_value(board, mv) + DELTA_MARGIN <= alpha) continue;
 
-        search_state->move_stack[search_state->ply] = mv;
         ++search_state->ply;
         if (search_make_move(board, search_state, mv)) {
             int score = -quiescence(-beta, -alpha, board, search_state, limits);
@@ -412,7 +380,6 @@ int negamax(int alpha,
         /* Repetitions can't span the null move, it isn't a real move. */
         const uint16_t null_move_index = search_state->null_move_index;
         search_state->null_move_index = search_state->repetition_index;
-        search_state->move_stack[search_state->ply] = 0; /* No move for the continuation history. */
         ++search_state->ply;
         int score = -negamax(-beta, -beta + 1, depth - 3, board, search_state, limits);
         --search_state->ply;
@@ -481,7 +448,6 @@ int negamax(int alpha,
             reduction = lmr_reduction(depth, num_moves_searched, is_pv_node);
         }
 
-        search_state->move_stack[search_state->ply] = mv;
         ++search_state->ply;
         search_state->repetition_check[++search_state->repetition_index] = board->hash;
 
@@ -614,28 +580,19 @@ typedef struct {
 } search_helper_t;
 
 /**
- * The helpers, kept between searches so each helper's history and continuation history carry
- * over from move to move as the main thread's do. Grown when 'Threads' needs more (new helpers
- * start empty), emptied by clear_helpers ('ucinewgame'). Only one search runs at a time.
+ * The helpers, allocated once and reused by later searches rather than allocated each time.
+ * Grown when 'Threads' needs more. Only one search runs at a time.
  */
 static search_helper_t* helpers_kept = NULL;
 static int helpers_allocated = 0;
-
-void clear_helpers(void) {
-    for (int i = 0; i < helpers_allocated; i++) init_search_state(&helpers_kept[i].search_state);
-}
-
-const search_state_t* helper_search_state(int index) {
-    return index >= 0 && index < helpers_allocated ? &helpers_kept[index].search_state : NULL;
-}
 
 static void* helper_search(void* arg) {
     search_helper_t* helper = arg;
     limits_t* limits = helper->limits;
 
     /* The rest of clear_pv_table (see start_helpers), on this thread so the helpers set up in
-     * parallel. History is kept. */
-    clear_search_path(&helper->search_state);
+     * parallel. */
+    clear_search_tables(&helper->search_state);
     nnue_reset(&helper->search_state.nnue);
 
     const int extra = helper->search_state.thread_id & 1;
@@ -679,9 +636,8 @@ static void print_info(int score, int depth, uint64_t nodes, const search_state_
 
 /**
  * Starts limits->threads - 1 helpers on copies of the root position, returns the number started
- * (fewer if memory or thread creation fails). Each helper keeps its own search state (its history
- * from earlier moves), only the game history for repetitions (up to the root) and the scalars are
- * copied from the main thread's.
+ * (fewer if memory or thread creation fails). Each helper sets up its own search state, only the
+ * game history for repetitions (up to the root) and the scalars are copied from the main thread's.
  */
 static int start_helpers(board_t* board, search_state_t* search_state, limits_t* limits, search_helper_t** helpers) {
     int count = limits->threads - 1;

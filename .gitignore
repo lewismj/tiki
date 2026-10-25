@@ -62,6 +62,7 @@ training/nets/
 
 # builds
 build
+/build-*
 /build-release/
 /build-win*/
 /build-linux/

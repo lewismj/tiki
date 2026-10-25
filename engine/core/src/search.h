@@ -23,13 +23,6 @@
  */
 move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* limits);
 
-/* The helpers' search states are kept between searches (their history carries over), this
- * empties them ('ucinewgame'). */
-void clear_helpers(void);
-
-/* Helper 'index's search state, NULL if no such helper has been started yet (tests). */
-const search_state_t* helper_search_state(int index);
-
 /* Prints 'bestmove', 'bestmove 0000' for no move. */
 void print_bestmove(move_t mv);
 
@@ -58,8 +51,6 @@ move_t pick_next_move(move_buffer_t* buffer, int* scores, int i);
 /* Quiet move raised alpha, depth^2 bonus with gravity, bounded by HISTORY_MAX. */
 void update_history(search_state_t* search_state, move_t mv, int depth);
 void penalise_history(search_state_t* search_state, move_t mv, int depth);
-/* Ordering score of a quiet move, from its history and continuation histories. */
-int quiet_history(search_state_t* search_state, move_t mv);
 
 /* Fifty-move rule, insufficient material or repetition. */
 bool is_draw(const board_t* board, search_state_t* search_state);

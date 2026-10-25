@@ -66,7 +66,7 @@ uint64_t bench(int depth) {
 
     uint64_t nodes = 0;
     uint64_t cutoffs = 0, first_move_cutoffs = 0, quiet_cutoffs = 0, quiets_before_cutoff = 0;
-    history_summary_t main_history = {0}, continuation = {0};
+    history_summary_t history = {0};
     const uint64_t start = clock_time_ms();
 
     for (int i = 0; i < bench_position_count; i++) {
@@ -88,13 +88,9 @@ uint64_t bench(int depth) {
         quiet_cutoffs += search_state.quiet_cutoffs;
         quiets_before_cutoff += search_state.quiets_before_cutoff;
 
-        /* The history tables as this search left them. */
+        /* The history table as this search left it. */
         for (int pc = 0; pc < 12; pc++) {
-            for (int sq = 0; sq < 64; sq++) {
-                summarise(&main_history, search_state.history_moves[pc][sq]);
-                const int16_t* following = &search_state.continuation_history[pc][sq][0][0];
-                for (int j = 0; j < 12 * 64; j++) summarise(&continuation, following[j]);
-            }
+            for (int sq = 0; sq < 64; sq++) summarise(&history, search_state.history_moves[pc][sq]);
         }
     }
 
@@ -108,8 +104,7 @@ uint64_t bench(int depth) {
            cutoffs ? 100.0 * (double) first_move_cutoffs / (double) cutoffs : 0.0);
     printf("Quiet cutoffs   : %" PRIu64 ", %.2f quiets tried before each\n", quiet_cutoffs,
            quiet_cutoffs ? (double) quiets_before_cutoff / (double) quiet_cutoffs : 0.0);
-    print_summary("History         ", &main_history);
-    print_summary("Continuation    ", &continuation);
+    print_summary("History         ", &history);
 
     init_transposition_table(previous_mb ? previous_mb : BENCH_HASH_MB);
     return nodes;

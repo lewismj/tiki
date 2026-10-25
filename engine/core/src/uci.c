@@ -338,8 +338,7 @@ void parse_go(const char* command, board_t* board, search_state_t* search_state,
 
 void new_game(board_t* board, search_state_t* search_state) {
     tt_clear();
-    init_search_state(search_state); /* Also history, which is kept from move to move. */
-    clear_helpers();
+    init_search_state(search_state);
     parse_position("position startpos", board, search_state);
 }
 

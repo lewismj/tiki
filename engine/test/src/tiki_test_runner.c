@@ -114,15 +114,10 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_see_pruning_guards);
     RUN_TEST(test_see_pruning_thresholds);
     RUN_TEST(test_quiescence_searches_promotion_with_negative_history);
-    RUN_TEST(test_continuation_history_updates);
-    RUN_TEST(test_continuation_history_indexing_in_search);
-    RUN_TEST(test_continuation_history_orders_quiet_moves);
-    RUN_TEST(test_quiet_history_bounds);
     RUN_TEST(test_search_with_helpers);
     RUN_TEST(test_mvv_lva_range_matches_constants);
     RUN_TEST(test_pv_flag_applies_to_one_node);
-    RUN_TEST(test_history_kept_between_searches);
-    RUN_TEST(test_helpers_keep_history_between_searches);
+    RUN_TEST(test_search_tables_cleared_between_searches);
     RUN_TEST(test_lmr_reduction);
     RUN_TEST(test_iir_reduction);
     RUN_TEST(test_aspiration_search);

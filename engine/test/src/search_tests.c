@@ -1,5 +1,3 @@
-#include <stdlib.h>
-
 #include "unity.h"
 #include "search_tests.h"
 
@@ -112,61 +110,18 @@ void test_pv_flag_applies_to_one_node() {
     TEST_ASSERT_FALSE(search_state.score_pv);
 }
 
-void test_history_kept_between_searches() {
-    board_t board;
+void test_search_tables_cleared_between_searches() {
     search_state_t search_state;
     init_search_state(&search_state);
     search_state.history_moves[N][f3] = 123;
-    search_state.continuation_history[p][e5][N][f3] = 45;
     search_state.killer_moves[0][3] = 77;
-    search_state.move_stack[3] = 88;
+    search_state.pv_table[0][0] = 88;
 
-    /* Before each 'go': the path's tables are emptied, history and continuation history kept. */
+    /* Before each 'go': nothing learnt by the previous search is kept. */
     clear_pv_table(&search_state);
-    TEST_ASSERT_EQUAL_INT(123, search_state.history_moves[N][f3]);
-    TEST_ASSERT_EQUAL_INT(45, search_state.continuation_history[p][e5][N][f3]);
-    TEST_ASSERT_EQUAL_UINT32(0, search_state.killer_moves[0][3]);
-    TEST_ASSERT_EQUAL_UINT32(0, search_state.move_stack[3]);
-
-    /* 'ucinewgame' empties them. */
-    new_game(&board, &search_state);
     TEST_ASSERT_EQUAL_INT(0, search_state.history_moves[N][f3]);
-    TEST_ASSERT_EQUAL_INT(0, search_state.continuation_history[p][e5][N][f3]);
-}
-
-/* Sum of |history| over a search state's history table, 0 if it's empty. */
-static long history_total(const search_state_t* search_state) {
-    long total = 0;
-    for (int pc = 0; pc < 12; pc++) {
-        for (int sq = 0; sq < 64; sq++) total += labs(search_state->history_moves[pc][sq]);
-    }
-    return total;
-}
-
-void test_helpers_keep_history_between_searches() {
-    board_t board;
-    search_state_t search_state;
-    limits_t limits;
-
-    setup_position("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3", &board, &search_state, &limits, 7);
-    limits.threads = 3;
-    clear_helpers();
-    find_best_move(&board, &search_state, &limits);
-    const search_state_t* helper = helper_search_state(0);
-    TEST_ASSERT_NOT_NULL(helper);
-    const long learnt = history_total(helper);
-    TEST_ASSERT_TRUE(learnt > 0);
-
-    /* The next search starts the helpers again (no iterations at depth 0), their history is kept. */
-    reset_time_control(&limits);
-    limits.depth = 0;
-    limits.threads = 3;
-    find_best_move(&board, &search_state, &limits);
-    TEST_ASSERT_EQUAL_INT64(learnt, history_total(helper_search_state(0)));
-
-    /* 'ucinewgame' empties it. */
-    clear_helpers();
-    TEST_ASSERT_EQUAL_INT64(0, history_total(helper_search_state(0)));
+    TEST_ASSERT_EQUAL_UINT32(0, search_state.killer_moves[0][3]);
+    TEST_ASSERT_EQUAL_UINT32(0, search_state.pv_table[0][0]);
 }
 
 void test_search_stalemate_root() {
@@ -515,137 +470,6 @@ void test_late_move_pruning_guards() {
     TEST_ASSERT_FALSE(can_late_move_prune(2, 50, -MATE_VALUE + 10, false, false));
     /* Never before the first move: base + depth^2 >= 1. */
     TEST_ASSERT_FALSE(can_late_move_prune(0, 0, 0, false, false));
-}
-
-/* 1.e4 e5 on the search path, Nf3 next: our e4 is 2 plies back, the opponent's e5 1 ply back. */
-static void continuation_setup(search_state_t* search_state) {
-    init_search_state(search_state);
-    search_state->move_stack[0] = encode_move(e2, e4, P, 0, 0, 1, 0, 0, 0);
-    search_state->move_stack[1] = encode_move(e7, e5, p, 0, 0, 1, 0, 0, 0);
-    search_state->ply = 2;
-}
-
-void test_continuation_history_updates() {
-    search_state_t search_state;
-    continuation_setup(&search_state);
-    const move_t nf3 = encode_move(g1, f3, N, 0, 0, 0, 0, 0, 0);
-    const int16_t* after_e5 = &search_state.continuation_history[p][e5][N][f3];
-    const int16_t* after_e4 = &search_state.continuation_history[P][e4][N][f3];
-
-    /* The bonus and the malus go to the history and to both continuation entries. */
-    update_history(&search_state, nf3, 4);
-    TEST_ASSERT_EQUAL_INT(16, search_state.history_moves[N][f3]);
-    TEST_ASSERT_EQUAL_INT(16, *after_e5);
-    TEST_ASSERT_EQUAL_INT(16, *after_e4);
-    penalise_history(&search_state, nf3, 2);
-    TEST_ASSERT_EQUAL_INT(12, *after_e5);
-    TEST_ASSERT_EQUAL_INT(12, *after_e4);
-
-    /* After a null move there's no entry 1 ply back, only the one 2 plies back changes. */
-    search_state.move_stack[1] = 0;
-    update_history(&search_state, nf3, 3);
-    TEST_ASSERT_EQUAL_INT(12, *after_e5);
-    TEST_ASSERT_EQUAL_INT(21, *after_e4);
-
-    /* At the root there are no previous moves, only the history changes. */
-    search_state.ply = 0;
-    update_history(&search_state, nf3, 3);
-    TEST_ASSERT_EQUAL_INT(21, *after_e4);
-    TEST_ASSERT_EQUAL_INT(12 + 9 + 9, search_state.history_moves[N][f3]);
-}
-
-/* Whether (pc, to) is the piece and target of one of the legal moves on the board. */
-static bool is_legal_piece_target(board_t* board, int pc, int to) {
-    move_buffer_t buffer;
-    generate_moves(board, &buffer);
-    for (int i = 0; i < buffer.index; i++) {
-        const move_t mv = buffer.moves[i];
-        if ((int) get_piece_moved(mv) != pc || (int) get_target_square(mv) != to) continue;
-        const bool legal = make_move(board, mv);
-        pop_move(board);
-        if (legal) return true;
-    }
-    return false;
-}
-
-/**
- * Indexing in a real search, rather than a hand-made move stack. From the start position at depth
- * 2 there are no checks, null moves or reductions, so the only updates with a previous move are
- * at ply 1: White's first move (1 back) paired with a Black move. At depth 3 ply 2 adds Black's
- * reply (1 back) paired with a White move, and White's first move (2 back) paired with a White
- * move. A check by White's second move (1.e4 f6 2.Qh5+) extends to ply 3, which adds White's
- * second move paired with a Black move and Black's reply paired with a Black move, so only the
- * White-White pairs are checked exactly there.
- */
-void test_continuation_history_indexing_in_search() {
-    board_t board;
-    search_state_t search_state;
-    limits_t limits;
-
-    for (int depth = 2; depth <= 3; depth++) {
-        setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, depth);
-        limits.quiet = true;
-        find_best_move(&board, &search_state, &limits);
-
-        int white_black = 0, black_white = 0, white_white = 0, black_black = 0;
-        for (int pp = 0; pp < 12; pp++) for (int pt = 0; pt < 64; pt++)
-        for (int pc = 0; pc < 12; pc++) for (int to = 0; to < 64; to++) {
-            if (search_state.continuation_history[pp][pt][pc][to] == 0) continue;
-            const bool white_before = pp < p, white_after = pc < p;
-            if (white_before && !white_after) {
-                white_black++;
-                if (depth == 2) TEST_ASSERT_TRUE_MESSAGE(is_legal_piece_target(&board, pp, pt), "1 back isn't a legal first move");
-            } else if (white_before && white_after) {
-                white_white++;
-                TEST_ASSERT_TRUE_MESSAGE(is_legal_piece_target(&board, pp, pt), "2 back isn't a legal first move");
-            } else if (!white_before && white_after) {
-                black_white++;
-            } else {
-                black_black++;
-            }
-        }
-        TEST_ASSERT_TRUE(white_black > 0);
-        if (depth == 2) {
-            TEST_ASSERT_EQUAL_INT(0, black_white);
-            TEST_ASSERT_EQUAL_INT(0, white_white);
-            TEST_ASSERT_EQUAL_INT(0, black_black);
-        } else {
-            TEST_ASSERT_TRUE(black_white > 0);
-            TEST_ASSERT_TRUE(white_white > 0);
-        }
-    }
-}
-
-void test_continuation_history_orders_quiet_moves() {
-    search_state_t search_state;
-    continuation_setup(&search_state);
-    const move_t nf3 = encode_move(g1, f3, N, 0, 0, 0, 0, 0, 0);
-    const move_t nc3 = encode_move(b1, c3, N, 0, 0, 0, 0, 0, 0);
-
-    /* Nf3 has done well after 1.e4 e5. With the same history, it's ordered first after e5... */
-    for (int i = 0; i < 20; i++) update_history(&search_state, nf3, 8);
-    search_state.history_moves[N][c3] = search_state.history_moves[N][f3];
-    TEST_ASSERT_TRUE(quiet_history(&search_state, nf3) > quiet_history(&search_state, nc3));
-
-    /* ...but not after a different reply, where neither has a continuation score. */
-    search_state.move_stack[0] = encode_move(d2, d4, P, 0, 0, 1, 0, 0, 0);
-    search_state.move_stack[1] = encode_move(d7, d5, p, 0, 0, 1, 0, 0, 0);
-    TEST_ASSERT_EQUAL_INT(quiet_history(&search_state, nc3), quiet_history(&search_state, nf3));
-}
-
-void test_quiet_history_bounds() {
-    search_state_t search_state;
-    continuation_setup(&search_state);
-    const move_t nf3 = encode_move(g1, f3, N, 0, 0, 0, 0, 0, 0);
-
-    /* The three scores together stay within +-HISTORY_MAX: under the killers (8000) and above
-     * the losing captures (BAD_CAPTURE_SCORE). */
-    for (int i = 0; i < 100000; i++) update_history(&search_state, nf3, 40);
-    TEST_ASSERT_TRUE(quiet_history(&search_state, nf3) <= HISTORY_MAX);
-    TEST_ASSERT_TRUE(quiet_history(&search_state, nf3) > HISTORY_MAX * 9 / 10);
-    for (int i = 0; i < 100000; i++) penalise_history(&search_state, nf3, 40);
-    TEST_ASSERT_TRUE(quiet_history(&search_state, nf3) >= -HISTORY_MAX);
-    TEST_ASSERT_TRUE(quiet_history(&search_state, nf3) < -HISTORY_MAX * 9 / 10);
 }
 
 void test_see_pruning_guards() {
