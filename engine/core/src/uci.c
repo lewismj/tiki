@@ -69,8 +69,9 @@ void parse_fen(const char* fen, board_t* board) {
         } else if (*ptr == '/') {
             rank++;
             file=0;
-        } else if (file <8) {
-            int piece = char_to_piece[*ptr];
+        } else if (file < 8 && strchr("PNBRQKpnbrqk", *ptr)) {
+            /* Piece letters only: char_to_piece ends at 'r' and maps any other letter to 0 (P). */
+            int piece = char_to_piece[(unsigned char) *ptr];
             set_bit(&board->pieces[piece], rank * 8 + file);
             board->occupancy[piece < p ? white : black] |= board->pieces[piece];
             file++;
@@ -337,7 +338,8 @@ void parse_go(const char* command, board_t* board, search_state_t* search_state,
 
 void new_game(board_t* board, search_state_t* search_state) {
     tt_clear();
-    init_search_state(search_state);
+    init_search_state(search_state); /* Also history, which is kept from move to move. */
+    clear_helpers();
     parse_position("position startpos", board, search_state);
 }
 

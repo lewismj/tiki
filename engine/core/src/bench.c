@@ -32,6 +32,27 @@ const char* const bench_positions[] = {
 const int bench_position_count = (int) (sizeof(bench_positions) / sizeof(bench_positions[0]));
 
 
+/* Entries used (non-zero), the sum of their |values| and how many are near +-HISTORY_MAX. */
+typedef struct {
+    uint64_t entries, used, total, near_bound;
+} history_summary_t;
+
+static void summarise(history_summary_t* summary, int value) {
+    summary->entries++;
+    if (value == 0) return;
+    const int magnitude = value < 0 ? -value : value;
+    summary->used++;
+    summary->total += (uint64_t) magnitude;
+    if (magnitude >= HISTORY_MAX * 9 / 10) summary->near_bound++;
+}
+
+static void print_summary(const char* name, const history_summary_t* summary) {
+    const double used = (double) (summary->used ? summary->used : 1);
+    printf("%s: %.2f%% of entries used, mean |value| %.0f, %.1f%% of those near the bound\n", name,
+           100.0 * (double) summary->used / (double) (summary->entries ? summary->entries : 1),
+           (double) summary->total / used, 100.0 * (double) summary->near_bound / used);
+}
+
 uint64_t bench(int depth) {
     if (depth <= 0) depth = BENCH_DEFAULT_DEPTH;
     static board_t board;
@@ -44,6 +65,8 @@ uint64_t bench(int depth) {
     init_transposition_table(BENCH_HASH_MB);
 
     uint64_t nodes = 0;
+    uint64_t cutoffs = 0, first_move_cutoffs = 0, quiet_cutoffs = 0, quiets_before_cutoff = 0;
+    history_summary_t main_history = {0}, continuation = {0};
     const uint64_t start = clock_time_ms();
 
     for (int i = 0; i < bench_position_count; i++) {
@@ -60,6 +83,19 @@ uint64_t bench(int depth) {
         tt_new_search();
         print_bestmove(find_best_move(&board, &search_state, &limits));
         nodes += search_state.nodes;
+        cutoffs += search_state.cutoffs;
+        first_move_cutoffs += search_state.first_move_cutoffs;
+        quiet_cutoffs += search_state.quiet_cutoffs;
+        quiets_before_cutoff += search_state.quiets_before_cutoff;
+
+        /* The history tables as this search left them. */
+        for (int pc = 0; pc < 12; pc++) {
+            for (int sq = 0; sq < 64; sq++) {
+                summarise(&main_history, search_state.history_moves[pc][sq]);
+                const int16_t* following = &search_state.continuation_history[pc][sq][0][0];
+                for (int j = 0; j < 12 * 64; j++) summarise(&continuation, following[j]);
+            }
+        }
     }
 
     const uint64_t elapsed = clock_time_ms() - start;
@@ -67,6 +103,13 @@ uint64_t bench(int depth) {
     printf("Total time (ms) : %" PRIu64 "\n", elapsed);
     printf("Nodes searched  : %" PRIu64 "\n", nodes);
     printf("Nodes/second    : %" PRIu64 "\n", elapsed ? nodes * 1000 / elapsed : nodes);
+    /* Move ordering: the higher the first move share and the fewer quiets tried, the better. */
+    printf("Cutoffs         : %" PRIu64 ", %.1f%% on the first move\n", cutoffs,
+           cutoffs ? 100.0 * (double) first_move_cutoffs / (double) cutoffs : 0.0);
+    printf("Quiet cutoffs   : %" PRIu64 ", %.2f quiets tried before each\n", quiet_cutoffs,
+           quiet_cutoffs ? (double) quiets_before_cutoff / (double) quiet_cutoffs : 0.0);
+    print_summary("History         ", &main_history);
+    print_summary("Continuation    ", &continuation);
 
     init_transposition_table(previous_mb ? previous_mb : BENCH_HASH_MB);
     return nodes;

@@ -3,19 +3,6 @@
 #include "board.h"
 
 
-static char *piece_to_unicode[12] = {"♙",
-                                     "♘",
-                                     "♗",
-                                     "♖",
-                                     "♕",
-                                     "♔",
-                                     "♟",
-                                     "♞",
-                                     "♝",
-                                     "♜",
-                                     "♛",
-                                     "♚"};
-
 static char *piece_to_ascii[12] = {"P",
                                      "N",
                                      "B",

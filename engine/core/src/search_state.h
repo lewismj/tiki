@@ -19,9 +19,19 @@ typedef struct align {
     uint64_t repetition_check[MAX_MOVES];
     uint32_t pv_table[MAX_PLY][MAX_PLY];
     int32_t history_moves[12][64];
+    /* Continuation history, [previous piece][previous target][piece][target]: how good a quiet
+     * move has been straight after the move 1 or 2 plies back (one table for both). */
+    int16_t continuation_history[12][64][12][64];
+    uint32_t move_stack[MAX_PLY];  /* The move made at each ply of the search path, 0 for a null move. */
     uint32_t killer_moves[2][MAX_PLY];
     uint8_t pv_length[MAX_PLY];
     uint64_t nodes;
+    /* Move ordering statistics (bench): beta cutoffs in negamax, how many on the first move
+     * searched, how many by a quiet move and the quiet moves tried before each of those. */
+    uint64_t cutoffs;
+    uint64_t first_move_cutoffs;
+    uint64_t quiet_cutoffs;
+    uint64_t quiets_before_cutoff;
     uint8_t ply;
     uint16_t repetition_index;
     uint16_t null_move_index;  /* repetition_check index of the position after the last null move (0 if none). */
@@ -34,8 +44,24 @@ typedef struct align {
 } search_state_t;
 
 
+/* The tables tied to one search's path from the root (PV, move stack, killers), emptied. */
+static inline_always void clear_search_path(search_state_t* search_state) {
+    memset(search_state->pv_table, 0ULL, sizeof(search_state->pv_table));
+    memset(search_state->pv_length, 0ULL, sizeof(search_state->pv_length));
+    memset(search_state->move_stack, 0, sizeof (search_state->move_stack));
+    memset(search_state->killer_moves, 0, sizeof (search_state->killer_moves));
+}
+
+/* History and continuation history, emptied. They're kept from move to move during a game. */
+static inline_always void clear_history(search_state_t* search_state) {
+    memset(search_state->history_moves, 0, sizeof (search_state->history_moves));
+    memset(search_state->continuation_history, 0, sizeof (search_state->continuation_history));
+}
+
 static inline_always void init_search_state(search_state_t* search_state) {
     search_state->nodes = 0;
+    search_state->cutoffs = search_state->first_move_cutoffs = 0;
+    search_state->quiet_cutoffs = search_state->quiets_before_cutoff = 0;
     search_state->thread_id = 0;
     atomic_init(&search_state->shared_nodes, 0);
     search_state->ply = 0;
@@ -44,17 +70,16 @@ static inline_always void init_search_state(search_state_t* search_state) {
     search_state->score = 0;
     search_state->score_pv = false;
     search_state->follow_pv = true;
-    memset(search_state->pv_table, 0ULL, sizeof(search_state->pv_table));
-    memset(search_state->pv_length, 0ULL, sizeof(search_state->pv_length));
-    memset(search_state->history_moves, 0, sizeof (search_state->history_moves));
-    memset(search_state->killer_moves, 0, sizeof (search_state->killer_moves));
+    clear_search_path(search_state);
+    clear_history(search_state);
     memset(search_state->repetition_check, 0ULL, sizeof(search_state->repetition_check));
     nnue_stack_init(&search_state->nnue);
 }
 
 /**
- * Used by UCI loop, where we parse a fen_position each ply, so the repetition state needs to be
- * preserved.
+ * Before each search ('go'). The game history from 'position' is kept for the repetition checks,
+ * and history and continuation history are kept so what was learnt on earlier moves carries
+ * over. Both are cleared by init_search_state ('ucinewgame').
  */
 static inline_always void clear_pv_table(search_state_t* search_state) {
     search_state->nodes = 0;
@@ -64,10 +89,7 @@ static inline_always void clear_pv_table(search_state_t* search_state) {
     search_state->score = 0;
     search_state->score_pv = false;
     search_state->follow_pv = true;
-    memset(search_state->pv_table, 0ULL, sizeof(search_state->pv_table));
-    memset(search_state->pv_length, 0ULL, sizeof(search_state->pv_length));
-    memset(search_state->history_moves, 0, sizeof (search_state->history_moves));
-    memset(search_state->killer_moves, 0, sizeof (search_state->killer_moves));
+    clear_search_path(search_state);
     nnue_reset(&search_state->nnue);
 }
 

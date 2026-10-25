@@ -3,21 +3,6 @@
 
 #include "types.h"
 
-/**
- * TODO - these values need to be scaled with average evaluation scores.
- *
- * Most valuable victim, least valuable attacker.
- * Heuristic used to sort captures.
- *     [Victims]    Pawn Knight Bishop   Rook  Queen   King
- *     [Attackers]
- *           Pawn   105    205    305    405    505    605
- *         Knight   104    204    304    404    504    604
- *         Bishop   103    203    303    403    503    603
- *           Rook   102    202    302    402    502    602
- *          Queen   101    201    301    401    501    601
- *           King   100    200    300    400    500    600
- */
-
 typedef struct align {
     int mvv_lva[12][12];
 } search_const_t ;
@@ -63,4 +48,19 @@ void init_lmr_table();
 #define SEE_PRUNE_MAX_DEPTH 8    /* SEE pruning in the main search up to this depth, skipping...             */
 #define SEE_QUIET_MARGIN 60      /* ...quiet moves with SEE < -margin * depth...                             */
 #define SEE_CAPTURE_MARGIN 20    /* ...and captures with SEE < -margin * depth^2.                            */
+
+/* Move ordering (score_move), highest first. Each category is an offset, the bands mustn't overlap. */
+#define TT_MOVE_SCORE 30000      /* The TT move...                                                           */
+#define PV_MOVE_SCORE 20000      /* ...the PV move while following the PV...                                 */
+#define CAPTURE_SCORE 10000      /* ...winning or equal captures, plus mvv_lva...                            */
+#define KILLER_1_SCORE 9000      /* ...the killers...                                                        */
+#define KILLER_2_SCORE 8000
+                                 /* ...quiet moves by history, within +-HISTORY_MAX, then losing captures.   */
+#define MVV_LVA_MIN 100          /* The range of search_const.mvv_lva (search_constants.c).                  */
+#define MVV_LVA_MAX 605
+
+static_assert(CAPTURE_SCORE + MVV_LVA_MAX < PV_MOVE_SCORE && PV_MOVE_SCORE < TT_MOVE_SCORE, "captures under the PV move");
+static_assert(KILLER_1_SCORE < CAPTURE_SCORE + MVV_LVA_MIN && KILLER_2_SCORE < KILLER_1_SCORE, "killers under captures");
+static_assert(HISTORY_MAX < KILLER_2_SCORE, "quiet moves under the killers");
+static_assert(BAD_CAPTURE_SCORE + MVV_LVA_MAX < -HISTORY_MAX, "losing captures under every quiet move");
 #endif

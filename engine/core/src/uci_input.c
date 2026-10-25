@@ -46,6 +46,7 @@ static bool go_queued() {
 }
 
 static void* input_thread(void* arg) {
+    (void) arg;
     static char line[INPUT_LINE_SIZE];
 
     while (fgets(line, sizeof(line), input)) {

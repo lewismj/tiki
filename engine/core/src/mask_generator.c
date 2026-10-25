@@ -150,7 +150,7 @@ bitboard create_pawn_attack_mask(square s, colour c) {
 bitboard set_occupancy_variation(unsigned int index, unsigned int num_relevant_bits, bitboard attack_mask) {
     bitboard variation = 0ULL;
 
-    for (int i=0; i < num_relevant_bits; i++) {
+    for (unsigned int i=0; i < num_relevant_bits; i++) {
         square sq = get_lsb_and_pop_bit(&attack_mask);
         if (index & bitboard_const.square_mask[i]) variation |= bitboard_const.square_mask[sq];
     }

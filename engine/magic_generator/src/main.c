@@ -5,7 +5,7 @@
 #include "square_masks.h"
 
 
-int main(int argc, char* argv[]) {
+int main(void) {
     setbuf(stdout, 0); // Jetbrains debug need zero buffer.
     printf("tiki\n");
 
