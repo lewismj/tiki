@@ -7,6 +7,7 @@ void test_uci_stop_does_not_quit();
 void test_uci_quit_exits();
 void test_uci_newgame_resets_position();
 void test_go_infinite_limits();
+void test_go_nodes_limits();
 void test_go_clock_limits();
 void test_go_low_clock_limits();
 void test_move_overhead_option();

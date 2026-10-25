@@ -110,6 +110,24 @@ void test_pv_flag_applies_to_one_node() {
     TEST_ASSERT_FALSE(search_state.score_pv);
 }
 
+void test_search_at_max_ply() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* A search reaching MAX_PLY (check extensions keep the depth up) returns the static eval
+     * there, within the tables: the PV lengths stay inside the path. */
+    setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, 3);
+    nnue_reset(&search_state.nnue);
+    search_state.ply = MAX_PLY - 2;
+    const uint64_t nodes = search_state.nodes;
+    const int score = negamax(-INF, INF, 3, &board, &search_state, &limits);
+    TEST_ASSERT_TRUE(score > -MATE_SCORE && score < MATE_SCORE);
+    TEST_ASSERT_EQUAL_INT(MAX_PLY - 2, search_state.ply);
+    TEST_ASSERT_TRUE(search_state.nodes > nodes && search_state.nodes < nodes + 10000);
+    TEST_ASSERT_TRUE(search_state.pv_length[MAX_PLY - 2] <= MAX_PLY);
+}
+
 void test_search_tables_cleared_between_searches() {
     search_state_t search_state;
     init_search_state(&search_state);
@@ -639,5 +657,222 @@ void test_smp_time_limit_stops_helpers() {
     move_t mv = find_best_move(&board, &search_state, &limits);
     TEST_ASSERT_TRUE(limits.stop_search_flag);
     TEST_ASSERT_EQUAL_UINT64(1, limits.time_checks); /* Only the main thread checks the clock. */
+    TEST_ASSERT_TRUE(make_move(&board, mv));
+}
+
+void test_pv_followed_only_on_pv_path() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* The previous iteration's PV is 1.e4 Nf6. Nf6 is also legal after White's other first moves,
+     * but only the node after 1.e4 is on the PV: the root and that node order a PV move first.
+     * The search after Nf6 is at depth 0 (qsearch), which used to leave the flag set for every
+     * later sibling. */
+    setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, 2);
+    search_state.pv_table[0][0] = parse_move("e2e4", &board);
+    TEST_ASSERT_TRUE(make_move(&board, search_state.pv_table[0][0]));
+    search_state.pv_table[0][1] = parse_move("g8f6", &board);
+    pop_move(&board);
+    search_state.follow_pv = true;
+    negamax(-INF, INF, 2, &board, &search_state, &limits);
+    TEST_ASSERT_EQUAL_UINT64(2, search_state.pv_nodes);
+
+    /* Not following the PV, no node is on it. */
+    setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, 2);
+    search_state.pv_table[0][0] = parse_move("e2e4", &board);
+    search_state.follow_pv = false;
+    negamax(-INF, INF, 2, &board, &search_state, &limits);
+    TEST_ASSERT_EQUAL_UINT64(0, search_state.pv_nodes);
+}
+
+void test_store_killer() {
+    search_state_t search_state;
+    init_search_state(&search_state);
+    search_state.ply = 3;
+    const move_t first = encode_move(g1, f3, N, 0, 0, 0, 0, 0, 0);
+    const move_t second = encode_move(b1, c3, N, 0, 0, 0, 0, 0, 0);
+
+    /* The newest killer first, the previous one second... */
+    store_killer(&search_state, first);
+    store_killer(&search_state, second);
+    TEST_ASSERT_EQUAL_UINT32(second, search_state.killer_moves[0][3]);
+    TEST_ASSERT_EQUAL_UINT32(first, search_state.killer_moves[1][3]);
+
+    /* ...and other plies are untouched. */
+    TEST_ASSERT_EQUAL_UINT32(0, search_state.killer_moves[0][2]);
+}
+
+void test_killers_are_not_captures() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* A tactical middlegame: captures are ordered by MVV-LVA, never as killers. */
+    setup_position("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+                   &board, &search_state, &limits, 6);
+    limits.quiet = true;
+    find_best_move(&board, &search_state, &limits);
+    for (int slot = 0; slot < 2; slot++) {
+        for (int ply = 0; ply < MAX_PLY; ply++) {
+            const move_t killer = search_state.killer_moves[slot][ply];
+            if (killer) TEST_ASSERT_FALSE(get_capture_flag(killer));
+        }
+    }
+}
+
+void test_can_reduce() {
+    /* A late quiet move at depth is reduced. */
+    TEST_ASSERT_TRUE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, false, false));
+    /* Too early in the list, too shallow, not quiet, a check, in check, a killer: not reduced. */
+    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES - 1, true, false, false, false));
+    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH - 1, LMR_MIN_MOVES, true, false, false, false));
+    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, false, false, false));
+    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, true, false, false));
+    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, true, false));
+    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, false, true));
+}
+
+void test_pv_is_legal() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* The PV of every bench position is a line of legal moves from the root. */
+    for (int i = 0; i < bench_position_count; i++) {
+        setup_position(bench_positions[i], &board, &search_state, &limits, 6);
+        limits.quiet = true;
+        find_best_move(&board, &search_state, &limits);
+        TEST_ASSERT_TRUE_MESSAGE(search_state.pv_length[0] > 0, bench_positions[i]);
+        for (int ply = 0; ply < search_state.pv_length[0]; ply++) {
+            move_buffer_t buffer;
+            generate_moves(&board, &buffer);
+            bool generated = false;
+            for (int j = 0; j < buffer.index; j++) {
+                if (buffer.moves[j] == search_state.pv_table[0][ply]) generated = true;
+            }
+            TEST_ASSERT_TRUE_MESSAGE(generated, bench_positions[i]);
+            TEST_ASSERT_TRUE_MESSAGE(make_move(&board, search_state.pv_table[0][ply]), bench_positions[i]);
+        }
+    }
+}
+
+void test_mate_distance_scores() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* Mate in 2 (1.Nf6+ gxf6 2.Bxf7#), 3 plies from the root. */
+    const char* fen = "r2qkb1r/pp2nppp/3p4/2pNN1B1/2BnP3/3P4/PPP2PPP/R2bK2R w KQkq - 1 1";
+    setup_position(fen, &board, &search_state, &limits, 5);
+    limits.quiet = true;
+    find_best_move(&board, &search_state, &limits);
+    TEST_ASSERT_EQUAL_INT(MATE_VALUE - 3, search_state.score);
+
+    /* After 1.Nf6+ Black is mated in 2 plies, whatever it plays. */
+    tt_clear();
+    init_search_state(&search_state);
+    char command[256];
+    snprintf(command, sizeof(command), "position fen %s moves d5f6", fen);
+    parse_position(command, &board, &search_state);
+    reset_time_control(&limits);
+    limits.depth = 5;
+    limits.quiet = true;
+    find_best_move(&board, &search_state, &limits);
+    TEST_ASSERT_EQUAL_INT(-MATE_VALUE + 2, search_state.score);
+}
+
+void test_quiescence_stand_pat() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* No captures, the static eval: beta when it's at or above beta, otherwise the eval itself. */
+    setup_position("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1", &board, &search_state, &limits, 1);
+    const int eval = evaluation(&board, &search_state.nnue);
+    TEST_ASSERT_EQUAL_INT(eval - 10, quiescence(eval - 11, eval - 10, &board, &search_state, &limits));
+    TEST_ASSERT_EQUAL_INT(eval, quiescence(-INF, INF, &board, &search_state, &limits));
+}
+
+void test_quiescence_delta_pruning() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* exd5 wins a pawn. With alpha just out of reach of eval + pawn + margin it isn't searched
+     * (only the qsearch node is counted), a point lower and it is. */
+    setup_position("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1", &board, &search_state, &limits, 1);
+    const int eval = evaluation(&board, &search_state.nnue);
+    const int reach = eval + see_values[P] + DELTA_MARGIN;
+    search_state.nodes = 0;
+    quiescence(reach, reach + 1, &board, &search_state, &limits);
+    TEST_ASSERT_EQUAL_UINT64(1, search_state.nodes);
+    search_state.nodes = 0;
+    quiescence(reach - 1, reach, &board, &search_state, &limits);
+    TEST_ASSERT_TRUE(search_state.nodes > 1);
+}
+
+void test_quiescence_in_check() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* Mated, the qsearch used to stand pat. */
+    setup_position("R5k1/5ppp/8/8/8/8/5PPP/6K1 b - - 0 1", &board, &search_state, &limits, 1);
+    TEST_ASSERT_EQUAL_INT(-MATE_VALUE, quiescence(-INF, INF, &board, &search_state, &limits));
+
+    /* In check with a way out, ...Kf7: the quiet evasion is searched (the qsearch otherwise only
+     * searches captures), so it isn't scored as mate. */
+    setup_position("R5k1/6pp/8/8/8/8/5PPP/6K1 b - - 0 1", &board, &search_state, &limits, 1);
+    const int score = quiescence(-INF, INF, &board, &search_state, &limits);
+    TEST_ASSERT_TRUE(score > -MATE_SCORE && score < MATE_SCORE);
+}
+
+void test_fifty_move_rule_and_mate() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* The 100th half-move mates: a loss, not a draw. */
+    setup_position("R5k1/5ppp/8/8/8/8/5PPP/6K1 b - - 100 80", &board, &search_state, &limits, 1);
+    TEST_ASSERT_FALSE(is_draw(&board, &search_state));
+
+    /* In check but not mated, or not in check: a draw. */
+    setup_position("R5k1/6pp/8/8/8/8/5PPP/6K1 b - - 100 80", &board, &search_state, &limits, 1);
+    TEST_ASSERT_TRUE(is_draw(&board, &search_state));
+    setup_position("6k1/5ppp/8/8/8/8/5PPP/R5K1 b - - 100 80", &board, &search_state, &limits, 1);
+    TEST_ASSERT_TRUE(is_draw(&board, &search_state));
+}
+
+void test_smp_helpers_grow_and_shrink() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* More helpers than before (a new, larger allocation), then fewer (reused). */
+    const int threads[] = {2, 6, 3};
+    for (int i = 0; i < 3; i++) {
+        setup_position("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+                       &board, &search_state, &limits, 6);
+        limits.threads = threads[i];
+        limits.quiet = true;
+        const move_t mv = find_best_move(&board, &search_state, &limits);
+        TEST_ASSERT_TRUE(make_move(&board, mv));
+    }
+}
+
+void test_node_limit_stops_search() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* 'go nodes 5000': stopped at the first check past the limit (every 2048 nodes). */
+    setup_position("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+                   &board, &search_state, &limits, MAX_SEARCH_DEPTH);
+    limits.nodes = 5000;
+    limits.quiet = true;
+    const move_t mv = find_best_move(&board, &search_state, &limits);
+    TEST_ASSERT_TRUE(limits.stop_search_flag);
+    TEST_ASSERT_TRUE(search_state.nodes >= 5000 && search_state.nodes < 5000 + 2048 + MAX_PLY);
     TEST_ASSERT_TRUE(make_move(&board, mv));
 }

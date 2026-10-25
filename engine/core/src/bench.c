@@ -65,7 +65,9 @@ uint64_t bench(int depth) {
     init_transposition_table(BENCH_HASH_MB);
 
     uint64_t nodes = 0;
-    uint64_t cutoffs = 0, first_move_cutoffs = 0, quiet_cutoffs = 0, quiets_before_cutoff = 0;
+#ifdef TIKI_SEARCH_STATS
+    search_stats_t stats = {0};
+#endif
     history_summary_t history = {0};
     const uint64_t start = clock_time_ms();
 
@@ -83,10 +85,12 @@ uint64_t bench(int depth) {
         tt_new_search();
         print_bestmove(find_best_move(&board, &search_state, &limits));
         nodes += search_state.nodes;
-        cutoffs += search_state.cutoffs;
-        first_move_cutoffs += search_state.first_move_cutoffs;
-        quiet_cutoffs += search_state.quiet_cutoffs;
-        quiets_before_cutoff += search_state.quiets_before_cutoff;
+#ifdef TIKI_SEARCH_STATS
+        stats.cutoffs += search_state.stats.cutoffs;
+        stats.first_move_cutoffs += search_state.stats.first_move_cutoffs;
+        stats.quiet_cutoffs += search_state.stats.quiet_cutoffs;
+        stats.quiets_before_cutoff += search_state.stats.quiets_before_cutoff;
+#endif
 
         /* The history table as this search left it. */
         for (int pc = 0; pc < 12; pc++) {
@@ -99,11 +103,13 @@ uint64_t bench(int depth) {
     printf("Total time (ms) : %" PRIu64 "\n", elapsed);
     printf("Nodes searched  : %" PRIu64 "\n", nodes);
     printf("Nodes/second    : %" PRIu64 "\n", elapsed ? nodes * 1000 / elapsed : nodes);
+#ifdef TIKI_SEARCH_STATS
     /* Move ordering: the higher the first move share and the fewer quiets tried, the better. */
-    printf("Cutoffs         : %" PRIu64 ", %.1f%% on the first move\n", cutoffs,
-           cutoffs ? 100.0 * (double) first_move_cutoffs / (double) cutoffs : 0.0);
-    printf("Quiet cutoffs   : %" PRIu64 ", %.2f quiets tried before each\n", quiet_cutoffs,
-           quiet_cutoffs ? (double) quiets_before_cutoff / (double) quiet_cutoffs : 0.0);
+    printf("Cutoffs         : %" PRIu64 ", %.1f%% on the first move\n", stats.cutoffs,
+           stats.cutoffs ? 100.0 * (double) stats.first_move_cutoffs / (double) stats.cutoffs : 0.0);
+    printf("Quiet cutoffs   : %" PRIu64 ", %.2f quiets tried before each\n", stats.quiet_cutoffs,
+           stats.quiet_cutoffs ? (double) stats.quiets_before_cutoff / (double) stats.quiet_cutoffs : 0.0);
+#endif
     print_summary("History         ", &history);
 
     init_transposition_table(previous_mb ? previous_mb : BENCH_HASH_MB);

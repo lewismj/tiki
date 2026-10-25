@@ -9,6 +9,17 @@
 
 static_assert(NNUE_STACK_SIZE > MAX_PLY + 1, "the NNUE stack must hold the deepest search path");
 
+#ifdef TIKI_SEARCH_STATS
+/* Move ordering statistics, printed by bench: beta cutoffs in negamax, how many on the first move
+ * searched, how many by a quiet move and the quiet moves tried before each of those. */
+typedef struct {
+    uint64_t cutoffs;
+    uint64_t first_move_cutoffs;
+    uint64_t quiet_cutoffs;
+    uint64_t quiets_before_cutoff;
+} search_stats_t;
+#endif
+
 
 typedef struct align {
     /*
@@ -22,12 +33,10 @@ typedef struct align {
     uint32_t killer_moves[2][MAX_PLY];
     uint8_t pv_length[MAX_PLY];
     uint64_t nodes;
-    /* Move ordering statistics (bench): beta cutoffs in negamax, how many on the first move
-     * searched, how many by a quiet move and the quiet moves tried before each of those. */
-    uint64_t cutoffs;
-    uint64_t first_move_cutoffs;
-    uint64_t quiet_cutoffs;
-    uint64_t quiets_before_cutoff;
+    uint64_t pv_nodes;         /* Nodes that ordered the previous iteration's PV move first (tests). */
+#ifdef TIKI_SEARCH_STATS
+    search_stats_t stats;
+#endif
     uint8_t ply;
     uint16_t repetition_index;
     uint16_t null_move_index;  /* repetition_check index of the position after the last null move (0 if none). */
@@ -53,8 +62,10 @@ static inline_always void clear_search_tables(search_state_t* search_state) {
 
 static inline_always void init_search_state(search_state_t* search_state) {
     search_state->nodes = 0;
-    search_state->cutoffs = search_state->first_move_cutoffs = 0;
-    search_state->quiet_cutoffs = search_state->quiets_before_cutoff = 0;
+    search_state->pv_nodes = 0;
+#ifdef TIKI_SEARCH_STATS
+    memset(&search_state->stats, 0, sizeof(search_state->stats));
+#endif
     search_state->thread_id = 0;
     atomic_init(&search_state->shared_nodes, 0);
     search_state->ply = 0;
@@ -71,6 +82,7 @@ static inline_always void init_search_state(search_state_t* search_state) {
 /* Before each search ('go'). The game history from 'position' is kept for the repetition checks. */
 static inline_always void clear_pv_table(search_state_t* search_state) {
     search_state->nodes = 0;
+    search_state->pv_nodes = 0;
     atomic_init(&search_state->shared_nodes, 0);
     search_state->ply = 0;
     search_state->null_move_index = 0;

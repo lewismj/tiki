@@ -74,6 +74,14 @@ if (TIKI_SANITIZE)
     add_link_options(-fsanitize=${TIKI_SANITIZE})
 endif()
 
+# Move ordering statistics (beta cutoffs, first move and quiet cutoffs), counted in the search and
+# printed by bench. Off normally, so the search doesn't count them.
+option(TIKI_SEARCH_STATS "Count move ordering statistics in the search, printed by bench" OFF)
+if (TIKI_SEARCH_STATS)
+    message(STATUS "TIKI_SEARCH_STATS: ON")
+    add_compile_definitions(TIKI_SEARCH_STATS)
+endif()
+
 # A fully static tiki_app, so a release binary runs on any x86-64 Linux whatever its glibc version.
 option(TIKI_STATIC "Link tiki_app statically" OFF)
 

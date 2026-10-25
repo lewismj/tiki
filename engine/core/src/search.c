@@ -8,23 +8,13 @@
 #include "transposition.h"
 #include "see.h"
 
+/**
+ * Move ordering score, highest first. Each category has its own band (search_constants.h): the TT
+ * move, the PV move (while following the previous iteration's PV), winning and equal captures by
+ * MVV-LVA, the two killers, quiet moves (and promotions that don't capture) by history, then losing
+ * captures.
+ */
 int score_move(move_t move, move_t tt_move, board_t* board, search_state_t* search_state) {
-
-    /*
-     * We require, in order of move type,
-     *      0. TT best move, then PV
-     *      1. captures,
-     *      2. killer moves,
-     *      3. history heuristic moves.
-     *
-     * Since these scores are passed into a sort method, we just apply a constant
-     * offset to ensure the ordering of the three categories.
-     *
-     * However, if we are using principal variation search and following principal variation line,
-     * the mark that move as the most important (i.e. give it some integer so its before the 3
-     * categories above).
-     *
-     */
     if (tt_move && move == tt_move) return TT_MOVE_SCORE;
 
     if (search_state->score_pv && search_state->pv_table[0][search_state->ply] == move) {
@@ -93,8 +83,15 @@ void penalise_history(search_state_t* search_state, move_t mv, int depth) {
     add_history_bonus(search_state, mv, -history_bonus(depth));
 }
 
+/* A non-capture caused a cutoff: it becomes the first killer at this ply, the first moves down to
+ * second. */
+void store_killer(search_state_t* search_state, move_t mv) {
+    search_state->killer_moves[1][search_state->ply] = search_state->killer_moves[0][search_state->ply];
+    search_state->killer_moves[0][search_state->ply] = mv;
+}
+
 /**
- * Scores every move at the node. The PV flag (set by set_follow_pv_flags for this node) is cleared
+ * Scores every move at the node. The PV flag (set by negamax for this node) is cleared
  * afterwards: when the PV move is also the TT move it's never scored as the PV move, and the flag
  * mustn't carry over to whichever later node has a move matching the PV at its ply.
  */
@@ -126,32 +123,50 @@ move_t pick_next_move(move_buffer_t* buffer, int* scores, int i) {
 }
 
 
-static inline_always void set_follow_pv_flags(move_buffer_t* buffer, search_state_t* search_state) {
-    search_state->follow_pv = false;
-    for (int i=0; i< buffer->index; i++) {
-        if (search_state->pv_table[0][search_state->ply] == buffer->moves[i]) {
-            search_state->score_pv = true;
-            search_state->follow_pv = true;
-            break;
-        }
+/* A beta cutoff, for the move ordering statistics. Nothing unless built with TIKI_SEARCH_STATS. */
+static inline_always void count_cutoff(search_state_t* search_state, int moves_searched, bool is_quiet,
+                                       int quiets_searched) {
+#ifdef TIKI_SEARCH_STATS
+    search_stats_t* stats = &search_state->stats;
+    stats->cutoffs++;
+    if (moves_searched == 1) stats->first_move_cutoffs++;
+    if (is_quiet) {
+        stats->quiet_cutoffs++;
+        stats->quiets_before_cutoff += (uint64_t) quiets_searched;
     }
+#else
+    (void) search_state; (void) moves_searched; (void) is_quiet; (void) quiets_searched;
+#endif
 }
 
-static inline_always void check_time(limits_t* limits) {
-    /* Set flag if out of time. 'stop' and 'quit' set the flag from the input thread. */
+/* The previous iteration's PV move at this ply if it's one of the node's moves, otherwise 0. */
+static inline_always move_t find_pv_move(const move_buffer_t* buffer, const search_state_t* search_state) {
+    const move_t pv_move = search_state->pv_table[0][search_state->ply];
+    for (int i = 0; i < buffer->index; i++) {
+        if (buffer->moves[i] == pv_move) return pv_move;
+    }
+    return 0;
+}
+
+/* Stops the search when out of time, or past the node limit ('go nodes', so up to 2047 over).
+ * 'stop' and 'quit' set the flag from the input thread. */
+static inline_always void check_limits(const search_state_t* search_state, limits_t* limits) {
     ++limits->time_checks;
     if (limits->time_set && clock_time_ms() > limits->stop_time) {
+        limits->stop_search_flag = true;
+    }
+    if (limits->nodes && search_state->nodes >= limits->nodes) {
         limits->stop_search_flag = true;
     }
 }
 
 /**
- * Every 2048 nodes. The main thread checks the clock (its stop flag stops the helpers too), the
+ * Every 2048 nodes. The main thread checks the limits (its stop flag stops the helpers too), the
  * helpers publish their node count for the main thread's 'info' output.
  */
 static inline_always void node_batch(search_state_t* search_state, limits_t* limits) {
     if (search_state->thread_id == 0) {
-        check_time(limits);
+        check_limits(search_state, limits);
     } else {
         atomic_store_explicit(&search_state->shared_nodes, search_state->nodes, memory_order_relaxed);
     }
@@ -239,6 +254,15 @@ int see_prune_threshold(int depth, bool is_quiet) {
 }
 
 /**
+ * Whether a move is reduced: quiet moves late in the list at enough depth. Checks, moves made in
+ * check and the killers are searched at full depth.
+ */
+bool can_reduce(int depth, int moves_searched, bool is_quiet, bool gives_check, bool in_check, bool is_killer) {
+    return moves_searched >= LMR_MIN_MOVES && depth >= LMR_MIN_DEPTH && is_quiet && !gives_check && !in_check &&
+           !is_killer;
+}
+
+/**
  * Late move reduction for a quiet move, from the log table, one ply less in PV nodes. Clamped so
  * the reduced search still has at least one ply (depth - 1 - r >= 1).
  */
@@ -265,17 +289,27 @@ static inline_always bool side_in_check(board_t* board) {
            is_square_attacked_by_white(board, trailing_zero_count(board->pieces[k]));
 }
 
-bool is_draw(const board_t* board, search_state_t* search_state) {
-    return board->fifty_move >= 100 ||
+/* Fifty moves without a capture or pawn move, unless that last move was checkmate. */
+static bool is_fifty_move_draw(board_t* board) {
+    if (board->fifty_move < 100) return false;
+    return !side_in_check(board) || first_legal_move(board) != 0;
+}
+
+bool is_draw(board_t* board, search_state_t* search_state) {
+    return is_fifty_move_draw(board) ||
            is_insufficient_material(board) ||
            contains_repetition(search_state, board->hash, board->fifty_move);
 }
 
-/* make_move / pop_move for the search, keeping the network's accumulators in step. */
+/**
+ * make_move / pop_move for the search, keeping the network's accumulators in step. An illegal move
+ * is made without updating the accumulators (most moves are illegal in check), so it's undone with
+ * pop_move alone.
+ */
 static inline_always bool search_make_move(board_t* board, search_state_t* search_state, move_t mv) {
-    bool legal = make_move(board, mv);
+    if (!make_move(board, mv)) return false;
     nnue_push(&search_state->nnue, board, mv);
-    return legal;
+    return true;
 }
 
 static inline_always void search_pop_move(board_t* board, search_state_t* search_state) {
@@ -283,35 +317,41 @@ static inline_always void search_pop_move(board_t* board, search_state_t* search
     nnue_pop(&search_state->nnue);
 }
 
-int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state, limits_t* limits) {
-    if ((++search_state->nodes & 2047) == 0) node_batch(search_state, limits);
-
+/* The qsearch node itself, already counted: by quiescence, or by negamax at depth 0. */
+static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* search_state, limits_t* limits) {
     if (search_state->ply == 0) nnue_reset(&search_state->nnue);
     if (search_state->ply > MAX_PLY-1) return evaluation(board, &search_state->nnue);
 
-    int eval = evaluation(board, &search_state->nnue);
+    /* In check there's no standing pat (the position may be lost), every evasion is searched. */
+    const bool in_check = side_in_check(board);
+    const int eval = in_check ? -INF : evaluation(board, &search_state->nnue);
     if (eval >= beta) return beta;
     if (eval > alpha) alpha = eval;
 
     move_buffer_t buffer;
     int scores[MOVE_BUFFER_SIZE];
-    generate_captures(board, &buffer);
+    if (in_check) generate_moves(board, &buffer);
+    else generate_captures(board, &buffer);
     score_moves(&buffer, scores, 0, board, search_state);
 
-    /* Captures and queen promotions only. */
+    /* Out of check, captures and queen promotions only. */
+    bool has_legal_moves = false;
     for (int i=0; i< buffer.index; i++) {
         move_t mv = pick_next_move(&buffer, scores, i);
 
-        /* Sorted best first, so from here on every capture loses material (SEE < 0). Not a quiet
-         * promotion: it's scored by history, which the malus can make negative, and the losing
-         * captures (BAD_CAPTURE_SCORE) still sort after it. */
-        if (scores[i] < 0 && get_capture_flag(mv)) break;
+        if (!in_check) {
+            /* Sorted best first, so from here on every capture loses material (SEE < 0). Not a quiet
+             * promotion: it's scored by history, which the malus can make negative, and the losing
+             * captures (BAD_CAPTURE_SCORE) still sort after it. */
+            if (scores[i] < 0 && get_capture_flag(mv)) break;
 
-        /* Delta pruning, even winning the piece can't bring the score up to alpha. */
-        if (!get_promoted_piece(mv) && eval + captured_value(board, mv) + DELTA_MARGIN <= alpha) continue;
+            /* Delta pruning, even winning the piece can't bring the score up to alpha. */
+            if (!get_promoted_piece(mv) && eval + captured_value(board, mv) + DELTA_MARGIN <= alpha) continue;
+        }
 
         ++search_state->ply;
         if (search_make_move(board, search_state, mv)) {
+            has_legal_moves = true;
             int score = -quiescence(-beta, -alpha, board, search_state, limits);
             --search_state->ply;
             search_pop_move(board, search_state);
@@ -324,10 +364,16 @@ int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state
             }
         } else {
             --search_state->ply;
-            search_pop_move(board, search_state);
+            pop_move(board);
         }
     }
+    if (in_check && !has_legal_moves) return -MATE_VALUE + search_state->ply;
     return alpha;
+}
+
+int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state, limits_t* limits) {
+    if ((++search_state->nodes & 2047) == 0) node_batch(search_state, limits);
+    return quiescence_node(alpha, beta, board, search_state, limits);
 }
 
 
@@ -338,16 +384,25 @@ int negamax(int alpha,
             search_state_t* search_state,
             limits_t* limits) {
 
+    /* Every node, including those that return early (TT, draw, pruning). Checked straight after
+     * counting, so the check runs once per 2048 counted nodes. */
+    if ((++search_state->nodes & 2047) == 0) node_batch(search_state, limits);
+
     search_state->pv_length[search_state->ply] = search_state->ply;
 
     /* The root, the accumulators start again from this position. */
     if (search_state->ply == 0) nnue_reset(&search_state->nnue);
 
+    /* Whether this node is on the previous iteration's PV, set by the parent for this node only. */
+    const bool follow_pv = search_state->follow_pv;
+
     /* Not at the root, so a move is always returned. */
     if (search_state->ply > 0 && is_draw(board, search_state))
         return 0;
 
-    if (search_state->ply>MAX_PLY-1) return evaluation(board, &search_state->nnue);
+    /* The deepest ply the tables hold. No moves are made from here, so no node is ever at MAX_PLY
+     * (pv_length and pv_table are read at ply + 1). */
+    if (search_state->ply >= MAX_PLY - 1) return evaluation(board, &search_state->nnue);
 
     /* Extend checks before the depth 0 test, so a check at the horizon is searched rather than
      * standing pat in qsearch (which would miss mates). */
@@ -363,7 +418,7 @@ int negamax(int alpha,
     if (search_state->ply && !is_pv_node && cached_eval != TT_NOT_FOUND) return cached_eval;
 
     if (depth == 0) {
-        return quiescence(alpha, beta, board, search_state, limits);
+        return quiescence_node(alpha, beta, board, search_state, limits);
     }
 
     depth -= iir_reduction(depth, tt_move);
@@ -380,6 +435,7 @@ int negamax(int alpha,
         /* Repetitions can't span the null move, it isn't a real move. */
         const uint16_t null_move_index = search_state->null_move_index;
         search_state->null_move_index = search_state->repetition_index;
+        search_state->follow_pv = false;
         ++search_state->ply;
         int score = -negamax(-beta, -beta + 1, depth - 3, board, search_state, limits);
         --search_state->ply;
@@ -391,13 +447,16 @@ int negamax(int alpha,
         if (score >= beta) return beta;
     }
 
-    /* Check straight after counting, so the check runs once per 2048 counted nodes. */
-    if ((++search_state->nodes & 2047) == 0) node_batch(search_state, limits);
-
     move_buffer_t buffer;
     int scores[MOVE_BUFFER_SIZE];
     generate_moves(board, &buffer);
-    if (search_state->follow_pv) set_follow_pv_flags(&buffer, search_state);
+    /* On the PV, its move is ordered first (after the TT move) and its child is on the PV too. */
+    move_t pv_move = 0;
+    if (follow_pv) {
+        pv_move = find_pv_move(&buffer, search_state);
+        if (pv_move) search_state->pv_nodes++;
+    }
+    search_state->score_pv = pv_move != 0;
     score_moves(&buffer, scores, tt_move, board, search_state);
 
     const bool futile = is_futile(depth, static_eval, alpha, in_check, is_pv_node);
@@ -423,7 +482,7 @@ int negamax(int alpha,
             see(board, mv) < see_prune_threshold(depth, is_quiet)) continue;
 
         if (!search_make_move(board, search_state, mv)) {
-            search_pop_move(board, search_state);
+            pop_move(board);
             continue;
         }
         has_legal_moves = true;
@@ -439,18 +498,18 @@ int negamax(int alpha,
             continue;
         }
 
-        /* Late move reduction, quiet moves late in the list. Killers, checks and moves made in
-         * check are searched at full depth. Killers are for this ply, checked before ++ply. */
-        int reduction = 0;
-        if (num_moves_searched >= LMR_MIN_MOVES && depth >= LMR_MIN_DEPTH && is_quiet && !gives_check && !in_check &&
-            mv != search_state->killer_moves[0][search_state->ply] &&
-            mv != search_state->killer_moves[1][search_state->ply]) {
-            reduction = lmr_reduction(depth, num_moves_searched, is_pv_node);
-        }
+        /* Late move reduction. Killers are for this ply, checked before ++ply. */
+        const bool is_killer = mv == search_state->killer_moves[0][search_state->ply] ||
+                               mv == search_state->killer_moves[1][search_state->ply];
+        const int reduction = can_reduce(depth, num_moves_searched, is_quiet, gives_check, in_check, is_killer) ?
+                              lmr_reduction(depth, num_moves_searched, is_pv_node) : 0;
 
+        /* Set before every search of the child, each one changes it further down the tree. */
+        const bool child_on_pv = pv_move != 0 && mv == pv_move;
         ++search_state->ply;
         search_state->repetition_check[++search_state->repetition_index] = board->hash;
 
+        search_state->follow_pv = child_on_pv;
         if (num_moves_searched == 0 ) {
             score = -negamax(-beta, -alpha, depth-1, board, search_state, limits);
         } else {
@@ -459,9 +518,11 @@ int negamax(int alpha,
              * window if it's still inside it. */
             score = -negamax(-alpha - 1, -alpha, depth - 1 - reduction, board, search_state, limits);
             if (score > alpha && reduction > 0) {
+                search_state->follow_pv = child_on_pv;
                 score = -negamax(-alpha - 1, -alpha, depth - 1, board, search_state, limits);
             }
             if (score > alpha && score < beta) {
+                search_state->follow_pv = child_on_pv;
                 score = -negamax(-beta, -alpha, depth - 1, board, search_state, limits);
             }
         }
@@ -487,17 +548,9 @@ int negamax(int alpha,
             alpha = score;
 
             if (score >= beta) {
-                search_state->cutoffs++;
-                if (num_moves_searched == 1) search_state->first_move_cutoffs++;
-                if (is_quiet) {
-                    search_state->quiet_cutoffs++;
-                    search_state->quiets_before_cutoff += (uint64_t) num_quiets_searched;
-                }
+                count_cutoff(search_state, num_moves_searched, is_quiet, num_quiets_searched);
                 tt_save(board->hash, tt_beta, depth, search_state->ply, score, mv);
-                if (!is_capture) {
-                    search_state->killer_moves[1][search_state->ply] = search_state->killer_moves[0][search_state->ply];
-                    search_state->killer_moves[0][search_state->ply] = mv;
-                }
+                if (!is_capture) store_killer(search_state, mv);
                 if (is_quiet) {
                     for (int j = 0; j < num_quiets_searched; j++) penalise_history(search_state, quiets_searched[j], depth);
                 }
@@ -586,6 +639,24 @@ typedef struct {
 static search_helper_t* helpers_kept = NULL;
 static int helpers_allocated = 0;
 
+/* The search state is 64 byte aligned (align), which malloc and realloc don't guarantee. */
+static search_helper_t* allocate_helpers(int count) {
+    const size_t size = (size_t) count * sizeof(search_helper_t);
+#if defined(_WIN32)
+    return _aligned_malloc(size, 64);
+#else
+    return aligned_alloc(64, size);
+#endif
+}
+
+static void free_helpers(search_helper_t* helpers) {
+#if defined(_WIN32)
+    _aligned_free(helpers);
+#else
+    free(helpers);
+#endif
+}
+
 static void* helper_search(void* arg) {
     search_helper_t* helper = arg;
     limits_t* limits = helper->limits;
@@ -644,14 +715,14 @@ static int start_helpers(board_t* board, search_state_t* search_state, limits_t*
     *helpers = helpers_kept;
     if (count <= 0) return 0;
 
+    /* Nothing in a helper carries over between searches, so a larger set starts afresh. */
     if (count > helpers_allocated) {
-        search_helper_t* grown = realloc(helpers_kept, (size_t) count * sizeof(search_helper_t));
+        search_helper_t* grown = allocate_helpers(count);
         if (grown == NULL) {
             count = helpers_allocated;
         } else {
-            for (int i = helpers_allocated; i < count; i++) {
-                init_search_state(&grown[i].search_state);
-            }
+            for (int i = 0; i < count; i++) init_search_state(&grown[i].search_state);
+            free_helpers(helpers_kept);
             helpers_kept = grown;
             helpers_allocated = count;
         }
@@ -668,6 +739,7 @@ static int start_helpers(board_t* board, search_state_t* search_state, limits_t*
         state->repetition_index = search_state->repetition_index;
         state->null_move_index = search_state->null_move_index;
         state->nodes = 0;
+        state->pv_nodes = 0;
         state->ply = 0;
         state->score = 0;
         state->score_pv = false;
@@ -703,7 +775,7 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
 
         /* The search may have been stopped, the PV table is then partly overwritten so keep
          * the move from the last completed depth. */
-        if (limits->stop_search_flag || score == STOPPED_SEARCH) break;
+        if (limits->stop_search_flag) break;
 
         move = search_state->pv_table[0][0];
         search_state->score = score;

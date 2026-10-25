@@ -271,6 +271,9 @@ void parse_go_limits(const char* command, const board_t* board, limits_t* limits
         limits->moves_to_go = atoi(arg+10);
     if (limits->moves_to_go < 1) limits->moves_to_go = 1;
 
+    if ((arg = strstr(command, "nodes")))
+        limits->nodes = strtoull(arg + 6, NULL, 10);
+
     limits->depth = MAX_SEARCH_DEPTH;
     if ((arg = strstr(command, "depth"))) {
         limits->time_set = false;

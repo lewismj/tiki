@@ -61,6 +61,8 @@ test runs `tiki_app`, so it's skipped unless `TIKI_EVALFILE` is set or a network
 - `-DTIKI_USE_AVX2=OFF` uses plain C for the network instead of AVX2 (on by default when the build machine has
   AVX2). Only `nnue.c` is built with `-mavx2`, and both versions give exactly the same evaluations.
 - `-DTIKI_SANITIZE=address,undefined` (or `thread`) builds everything with sanitizers.
+- `-DTIKI_SEARCH_STATS=ON` counts move ordering statistics in the search (beta cutoffs, first move and quiet
+  cutoffs), printed by `bench`. Off by default, so a normal build doesn't count them.
 - `-DTIKI_BUILD_BENCHMARKS=OFF` skips fetching and building Google Benchmark.
 - `-DTIKI_EMBED_NETWORK=ON` builds a network into `tiki_app`, so it runs with no `.nnue` file, `TIKI_EVALFILE` or
   run script (for tournaments, or a GUI that only accepts an executable). It's the newest network in `models/` by

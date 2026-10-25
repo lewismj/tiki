@@ -51,9 +51,11 @@ move_t pick_next_move(move_buffer_t* buffer, int* scores, int i);
 /* Quiet move raised alpha, depth^2 bonus with gravity, bounded by HISTORY_MAX. */
 void update_history(search_state_t* search_state, move_t mv, int depth);
 void penalise_history(search_state_t* search_state, move_t mv, int depth);
+/* Non-capture caused a cutoff, the first killer at this ply (the old first becomes the second). */
+void store_killer(search_state_t* search_state, move_t mv);
 
-/* Fifty-move rule, insufficient material or repetition. */
-bool is_draw(const board_t* board, search_state_t* search_state);
+/* Fifty-move rule (unless the last move mated), insufficient material or repetition. */
+bool is_draw(board_t* board, search_state_t* search_state);
 
 /* KvK, KNvK and KBvK (either side). */
 bool is_insufficient_material(const board_t* board);
@@ -66,6 +68,7 @@ bool is_futile(int depth, int static_eval, int alpha, bool in_check, bool is_pv_
 bool can_late_move_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node);
 bool can_see_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node);
 int see_prune_threshold(int depth, bool is_quiet);
+bool can_reduce(int depth, int moves_searched, bool is_quiet, bool gives_check, bool in_check, bool is_killer);
 int lmr_reduction(int depth, int moves_searched, bool is_pv_node);
 int iir_reduction(int depth, move_t tt_move);
 

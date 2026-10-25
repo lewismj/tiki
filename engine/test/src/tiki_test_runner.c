@@ -117,7 +117,20 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_search_with_helpers);
     RUN_TEST(test_mvv_lva_range_matches_constants);
     RUN_TEST(test_pv_flag_applies_to_one_node);
+    RUN_TEST(test_search_at_max_ply);
     RUN_TEST(test_search_tables_cleared_between_searches);
+    RUN_TEST(test_pv_followed_only_on_pv_path);
+    RUN_TEST(test_store_killer);
+    RUN_TEST(test_killers_are_not_captures);
+    RUN_TEST(test_can_reduce);
+    RUN_TEST(test_pv_is_legal);
+    RUN_TEST(test_mate_distance_scores);
+    RUN_TEST(test_quiescence_stand_pat);
+    RUN_TEST(test_quiescence_delta_pruning);
+    RUN_TEST(test_quiescence_in_check);
+    RUN_TEST(test_fifty_move_rule_and_mate);
+    RUN_TEST(test_smp_helpers_grow_and_shrink);
+    RUN_TEST(test_node_limit_stops_search);
     RUN_TEST(test_lmr_reduction);
     RUN_TEST(test_iir_reduction);
     RUN_TEST(test_aspiration_search);
@@ -132,6 +145,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_setoption_threads);
     RUN_TEST(test_uci_newgame_resets_position);
     RUN_TEST(test_go_infinite_limits);
+    RUN_TEST(test_go_nodes_limits);
     RUN_TEST(test_go_clock_limits);
     RUN_TEST(test_go_low_clock_limits);
     RUN_TEST(test_move_overhead_option);

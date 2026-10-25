@@ -83,6 +83,22 @@ void test_go_infinite_limits() {
     TEST_ASSERT_FALSE(limits.stop_engine_flag);
 }
 
+void test_go_nodes_limits() {
+    board_t board;
+    limits_t limits;
+    parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
+
+    /* A node limit with no depth or clock: searched to the depth limit until the nodes run out. */
+    parse_go_limits("go nodes 5000", &board, &limits);
+    TEST_ASSERT_EQUAL_UINT64(5000, limits.nodes);
+    TEST_ASSERT_EQUAL_INT(MAX_SEARCH_DEPTH, limits.depth);
+    TEST_ASSERT_FALSE(limits.time_set);
+
+    /* No limit unless given. */
+    parse_go_limits("go depth 5", &board, &limits);
+    TEST_ASSERT_EQUAL_UINT64(0, limits.nodes);
+}
+
 void test_go_clock_limits() {
     board_t board;
     limits_t limits;
