@@ -334,9 +334,17 @@ void test_history_bonus_and_bound() {
     const move_t mv = encode_move(g1, f3, N, 0, 0, 0, 0, 0, 0);
     const int32_t* h = &search_state.history_moves[N][f3];
 
-    /* From zero the bonus is depth^2. */
+    /* From zero the bonus is 16 * depth^2... */
     update_history(&search_state, mv, 3);
-    TEST_ASSERT_EQUAL_INT(9, *h);
+    TEST_ASSERT_EQUAL_INT(144, *h);
+
+    /* ...capped at 1600 from depth 10. */
+    search_state.history_moves[N][f3] = 0;
+    update_history(&search_state, mv, 10);
+    TEST_ASSERT_EQUAL_INT(1600, *h);
+    search_state.history_moves[N][f3] = 0;
+    update_history(&search_state, mv, 40);
+    TEST_ASSERT_EQUAL_INT(1600, *h);
 
     /* Deep, long searches saturate at HISTORY_MAX instead of growing without bound. */
     for (int i = 0; i < 100000; i++) update_history(&search_state, mv, 40);
@@ -346,7 +354,7 @@ void test_history_bonus_and_bound() {
     /* Near the bound the same bonus adds less than it did from zero. */
     search_state.history_moves[N][f3] = HISTORY_MAX / 2;
     update_history(&search_state, mv, 10);
-    TEST_ASSERT_EQUAL_INT(HISTORY_MAX / 2 + 100 - (HISTORY_MAX / 2) * 100 / HISTORY_MAX, *h);
+    TEST_ASSERT_EQUAL_INT(HISTORY_MAX / 2 + 1600 - (HISTORY_MAX / 2) * 1600 / HISTORY_MAX, *h);
 }
 
 void test_history_malus_and_bound() {
@@ -355,11 +363,12 @@ void test_history_malus_and_bound() {
     const move_t mv = encode_move(g1, f3, N, 0, 0, 0, 0, 0, 0);
     const int32_t* h = &search_state.history_moves[N][f3];
 
-    /* From zero the malus is depth^2, and a bonus of the same depth from there doesn't overshoot. */
+    /* From zero the malus is 16 * depth^2, and a bonus of the same depth from there lands back
+     * near zero (gravity adds 144 * 144 / HISTORY_MAX = 2 as it pulls toward the opposite sign). */
     penalise_history(&search_state, mv, 3);
-    TEST_ASSERT_EQUAL_INT(-9, *h);
+    TEST_ASSERT_EQUAL_INT(-144, *h);
     update_history(&search_state, mv, 3);
-    TEST_ASSERT_TRUE(*h <= 0 && *h > -9);
+    TEST_ASSERT_EQUAL_INT(144 * 144 / HISTORY_MAX, *h);
 
     /* Saturates at -HISTORY_MAX. */
     for (int i = 0; i < 100000; i++) penalise_history(&search_state, mv, 40);
@@ -369,7 +378,7 @@ void test_history_malus_and_bound() {
     /* Near the bound the same malus takes off less than it did from zero. */
     search_state.history_moves[N][f3] = -HISTORY_MAX / 2;
     penalise_history(&search_state, mv, 10);
-    TEST_ASSERT_EQUAL_INT(-HISTORY_MAX / 2 - 100 + (HISTORY_MAX / 2) * 100 / HISTORY_MAX, *h);
+    TEST_ASSERT_EQUAL_INT(-HISTORY_MAX / 2 - 1600 + (HISTORY_MAX / 2) * 1600 / HISTORY_MAX, *h);
 }
 
 void test_penalised_quiet_stays_above_losing_captures() {

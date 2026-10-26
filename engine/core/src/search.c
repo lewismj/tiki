@@ -66,17 +66,17 @@ static inline_always void add_history_bonus(search_state_t* search_state, move_t
 }
 
 static inline_always int history_bonus(int depth) {
-    return depth * depth < HISTORY_MAX ? depth * depth : HISTORY_MAX;
+    return depth < 10 ? 16 * depth * depth : 1600;
 }
 
-/* Quiet move raised alpha, bonus depth^2. */
+/* Quiet move raised alpha, bonus min(16 * depth^2, 1600). */
 void update_history(search_state_t* search_state, move_t mv, int depth) {
     add_history_bonus(search_state, mv, history_bonus(depth));
 }
 
 /**
  * History malus: a quiet move searched before the quiet move that caused a cutoff didn't cut, so
- * its history is lowered by depth^2. Without it history only rises, and a move that's often tried
+ * its history is lowered by min(16 * depth^2, 1600). Without it history only rises, and a move that's often tried
  * but rarely good keeps a high score.
  */
 void penalise_history(search_state_t* search_state, move_t mv, int depth) {
