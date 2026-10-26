@@ -885,3 +885,96 @@ void test_node_limit_stops_search() {
     TEST_ASSERT_TRUE(search_state.nodes >= 5000 && search_state.nodes < 5000 + 2048 + MAX_PLY);
     TEST_ASSERT_TRUE(make_move(&board, mv));
 }
+
+void test_tt_lookup() {
+    tt_clear();
+    const uint64_t hash = 0x0123456789abcdefULL;
+    const move_t stored = encode_move(g1, f3, N, 0, 0, 0, 0, 0, 0);
+    move_t mv;
+    int score, depth;
+    tt_entry_type type;
+    TEST_ASSERT_FALSE(tt_lookup(hash, 0, &mv, &score, &depth, &type));
+
+    /* A shallow upper bound gives no cutoff at depth 8, but the lookup still returns it. */
+    tt_save(hash, tt_alpha, 3, 0, -42, stored);
+    move_t probe_move;
+    TEST_ASSERT_EQUAL_INT(TT_NOT_FOUND, tt_probe(hash, 8, 0, -100, 100, &probe_move));
+    TEST_ASSERT_TRUE(tt_lookup(hash, 0, &mv, &score, &depth, &type));
+    TEST_ASSERT_EQUAL_UINT32(stored, mv);
+    TEST_ASSERT_EQUAL_INT(-42, score);
+    TEST_ASSERT_EQUAL_INT(3, depth);
+    TEST_ASSERT_EQUAL_INT(tt_alpha, type);
+
+    /* Mate scores come back relative to the root: mate 5 plies from the root found at ply 2 is
+     * mate 3 plies from that node, so 7 plies from a root 4 plies above it. */
+    tt_save(hash, tt_exact, 6, 2, MATE_VALUE - 5, stored);
+    TEST_ASSERT_TRUE(tt_lookup(hash, 4, &mv, &score, &depth, &type));
+    TEST_ASSERT_EQUAL_INT(MATE_VALUE - 7, score);
+    TEST_ASSERT_EQUAL_INT(tt_exact, type);
+}
+
+void test_singular_extension_conditions() {
+    const move_t mv = encode_move(g1, f3, N, 0, 0, 0, 0, 0, 0);
+    TEST_ASSERT_TRUE(can_singular_extend(8, 3, 10, mv, 6, tt_beta, 50));
+    TEST_ASSERT_TRUE(can_singular_extend(8, 3, 10, mv, 8 - SE_TT_DEPTH_MARGIN, tt_exact, 50));
+
+    TEST_ASSERT_FALSE(can_singular_extend(8, 0, 10, mv, 6, tt_beta, 50));       /* the root */
+    TEST_ASSERT_FALSE(can_singular_extend(8, 20, 10, mv, 6, tt_beta, 50));      /* ply >= 2 * root depth */
+    TEST_ASSERT_FALSE(can_singular_extend(SE_MIN_DEPTH - 1, 3, 10, mv, 6, tt_beta, 50));
+    TEST_ASSERT_FALSE(can_singular_extend(8, 3, 10, 0, 6, tt_beta, 50));        /* no TT move */
+    TEST_ASSERT_FALSE(can_singular_extend(8, 3, 10, mv, 4, tt_beta, 50));       /* entry too shallow */
+    TEST_ASSERT_FALSE(can_singular_extend(8, 3, 10, mv, 6, tt_alpha, 50));      /* only an upper bound */
+    TEST_ASSERT_FALSE(can_singular_extend(8, 3, 10, mv, 6, tt_beta, MATE_VALUE - 10));
+
+    TEST_ASSERT_EQUAL_INT(50 - SE_MARGIN * 8, singular_beta(50, 8));
+}
+
+void test_singular_result() {
+    /* TT score 100 at depth 8, so s_beta = 84. */
+    const int s_beta = singular_beta(100, 8);
+
+    /* Every other move below s_beta: singular, at PV and non-PV nodes alike. */
+    TEST_ASSERT_EQUAL_INT(singular_extend, singular_result(s_beta - 1, s_beta, 100, 50, false));
+    TEST_ASSERT_EQUAL_INT(singular_extend, singular_result(s_beta - 1, s_beta, 100, 50, true));
+
+    /* Another move reached s_beta: never anything at a PV node. */
+    TEST_ASSERT_EQUAL_INT(singular_none, singular_result(s_beta, s_beta, 100, 50, true));
+    TEST_ASSERT_EQUAL_INT(singular_none, singular_result(s_beta, s_beta, 100, 90, true));
+
+    /* Outside the PV: s_beta >= beta, another move beats beta, multi-cut. */
+    TEST_ASSERT_EQUAL_INT(singular_multi_cut, singular_result(s_beta, s_beta, 100, 84, false));
+    /* s_beta < beta but the TT move's stored score is at or above beta: the TT move a ply shallower. */
+    TEST_ASSERT_EQUAL_INT(singular_reduce, singular_result(s_beta, s_beta, 100, 90, false));
+    TEST_ASSERT_EQUAL_INT(singular_reduce, singular_result(s_beta, s_beta, 100, 100, false));
+    /* ...and below beta: nothing, the TT move isn't reduced on a score that doesn't beat beta. */
+    TEST_ASSERT_EQUAL_INT(singular_none, singular_result(s_beta, s_beta, 100, 101, false));
+}
+
+void test_excluded_move_search() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+    move_t mv;
+    int score, depth;
+    tt_entry_type type;
+
+    /* Rd8# is the only mate in one. Without it the node fails low against a mate in one window,
+     * with it it fails high. */
+    setup_position("6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1", &board, &search_state, &limits, 3);
+    const move_t rd8 = parse_move("d1d8", &board);
+    search_state.excluded_moves[0] = rd8;
+    TEST_ASSERT_EQUAL_INT(MATE_VALUE - 2, negamax(MATE_VALUE - 2, MATE_VALUE - 1, 3, &board, &search_state, &limits));
+    /* A search without a move isn't the node's result, so it leaves nothing in the TT. */
+    TEST_ASSERT_FALSE(tt_lookup(board.hash, 0, &mv, &score, &depth, &type));
+    search_state.excluded_moves[0] = 0;
+    TEST_ASSERT_EQUAL_INT(MATE_VALUE - 1, negamax(MATE_VALUE - 2, MATE_VALUE - 1, 3, &board, &search_state, &limits));
+
+    /* Kxg2 is white's only legal move. Without it there's nothing left to play, which is not mate
+     * or stalemate: the node fails low. */
+    setup_position("7k/8/8/8/8/8/6q1/7K w - - 0 1", &board, &search_state, &limits, 4);
+    search_state.excluded_moves[0] = parse_move("h1g2", &board);
+    TEST_ASSERT_EQUAL_INT(-50, negamax(-50, -49, 4, &board, &search_state, &limits));
+    TEST_ASSERT_FALSE(tt_lookup(board.hash, 0, &mv, &score, &depth, &type));
+    search_state.excluded_moves[0] = 0;
+    TEST_ASSERT_EQUAL_INT(-49, negamax(-50, -49, 4, &board, &search_state, &limits));
+}

@@ -48,6 +48,9 @@ void init_lmr_table();
 #define SEE_PRUNE_MAX_DEPTH 8    /* SEE pruning in the main search up to this depth, skipping...             */
 #define SEE_QUIET_MARGIN 60      /* ...quiet moves with SEE < -margin * depth...                             */
 #define SEE_CAPTURE_MARGIN 20    /* ...and captures with SEE < -margin * depth^2.                            */
+#define SE_MIN_DEPTH 6           /* Singular extensions from this depth, with a TT entry at least...         */
+#define SE_TT_DEPTH_MARGIN 3     /* ...this much shallower than the node, if every other move scores below...*/
+#define SE_MARGIN 2              /* ...the TT score - margin * depth (cp) in a search of half the depth.      */
 
 /* Move ordering (score_move), highest first. Each category is an offset, the bands mustn't overlap. */
 #define TT_MOVE_SCORE 30000      /* The TT move...                                                           */

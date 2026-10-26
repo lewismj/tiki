@@ -282,6 +282,52 @@ int iir_reduction(int depth, move_t tt_move) {
     return (depth >= IIR_MIN_DEPTH && tt_move == 0) ? 1 : 0;
 }
 
+/**
+ * Singular extensions: whether the TT move is worth testing for being much better than every
+ * other move. The entry must be deep enough and a lower bound or exact (an upper bound says
+ * nothing about how good the move is), not a mate score, and not at the root. Below ply 2 *
+ * root depth only, so a line of singular moves can't extend the search without end.
+ */
+bool can_singular_extend(int depth, int ply, int root_depth, move_t tt_move, int tt_depth, tt_entry_type tt_type,
+                         int tt_score) {
+    return ply > 0 && ply < 2 * root_depth && depth >= SE_MIN_DEPTH && tt_move != 0 &&
+           tt_depth >= depth - SE_TT_DEPTH_MARGIN && tt_type != tt_alpha && !is_mate_score(tt_score);
+}
+
+/* The other moves must all score below this for the TT move to be singular. */
+int singular_beta(int tt_score, int depth) {
+    return tt_score - SE_MARGIN * depth;
+}
+
+/**
+ * What the search without the TT move ('score', against s_beta) says about the TT move:
+ * - every other move fell below s_beta: the TT move is singular, extended;
+ * - another move reached s_beta, so the TT move isn't singular. At a PV node nothing changes.
+ *   Outside the PV, if s_beta >= beta another move already beats beta and the node fails high
+ *   (multi-cut); otherwise, if the TT move's own stored score is at or above beta, it's searched a
+ *   ply shallower, since it isn't the node's only good move.
+ */
+singular_result_t singular_result(int score, int s_beta, int tt_score, int beta, bool is_pv_node) {
+    if (score < s_beta) return singular_extend;
+    if (is_pv_node) return singular_none;
+    if (s_beta >= beta) return singular_multi_cut;
+    if (tt_score >= beta) return singular_reduce;
+    return singular_none;
+}
+
+/* What came of a singular search, for the statistics. Nothing unless built with TIKI_SEARCH_STATS. */
+static inline_always void count_singular(search_state_t* search_state, uint64_t nodes, singular_result_t result) {
+#ifdef TIKI_SEARCH_STATS
+    search_state->stats.singular_searches++;
+    search_state->stats.singular_nodes += nodes;
+    if (result == singular_extend) search_state->stats.singular_extensions++;
+    if (result == singular_reduce) search_state->stats.singular_reductions++;
+    if (result == singular_multi_cut) search_state->stats.multi_cuts++;
+#else
+    (void) search_state; (void) nodes; (void) result;
+#endif
+}
+
 /* Whether the side to move is in check. */
 static inline_always bool side_in_check(board_t* board) {
     return board->side == white ?
@@ -410,12 +456,16 @@ int negamax(int alpha,
 
     if (in_check) ++depth;
 
+    /* A singular extension search of this node without the TT move (see below). Its result isn't
+     * the node's: it doesn't cut off from the TT, save to it, or prune the whole node. */
+    const move_t excluded_move = search_state->excluded_moves[search_state->ply];
+
     /* Probed with the extended depth, the same depth the node is saved with. */
     bool is_pv_node = beta - alpha > 1;
     const int alpha_orig = alpha;
     move_t tt_move;
     int cached_eval = tt_probe(board->hash, depth, search_state->ply, alpha, beta, &tt_move);
-    if (search_state->ply && !is_pv_node && cached_eval != TT_NOT_FOUND) return cached_eval;
+    if (search_state->ply && !is_pv_node && !excluded_move && cached_eval != TT_NOT_FOUND) return cached_eval;
 
     if (depth == 0) {
         return quiescence_node(alpha, beta, board, search_state, limits);
@@ -426,10 +476,11 @@ int negamax(int alpha,
     /* Not meaningful in check, every move is searched there anyway. */
     const int static_eval = in_check ? -INF : evaluation(board, &search_state->nnue);
 
-    if (can_reverse_futility_prune(depth, static_eval, beta, in_check, is_pv_node, search_state->ply)) return beta;
+    if (!excluded_move && can_reverse_futility_prune(depth, static_eval, beta, in_check, is_pv_node, search_state->ply))
+        return beta;
 
     /* Null move pruning. */
-    if (can_null_move(board, search_state, depth, beta, static_eval, in_check, is_pv_node)) {
+    if (!excluded_move && can_null_move(board, search_state, depth, beta, static_eval, in_check, is_pv_node)) {
         make_null_move(board);
         search_state->repetition_check[++search_state->repetition_index] = board->hash;
         /* Repetitions can't span the null move, it isn't a real move. */
@@ -445,6 +496,40 @@ int negamax(int alpha,
         /* A stopped null search returns -STOPPED_SEARCH, which would look like a cutoff. */
         if (limits->stop_search_flag) return STOPPED_SEARCH;
         if (score >= beta) return beta;
+    }
+
+    /**
+     * Singular extensions: search the node without the TT move, at half the depth and with a null
+     * window just under its TT score. If every other move fails low, the TT move is singular, much
+     * better than the rest, and it's searched one ply deeper. Otherwise, outside the PV, the node
+     * may fail high now (multi-cut) or the TT move be searched a ply shallower, see
+     * singular_result. 'extension' only ever applies to the TT move.
+     */
+    int extension = 0;
+    if (!excluded_move && tt_move) {
+        move_t stored_move;
+        int tt_score, tt_depth;
+        tt_entry_type tt_type;
+        if (tt_lookup(board->hash, search_state->ply, &stored_move, &tt_score, &tt_depth, &tt_type) &&
+            stored_move == tt_move &&
+            can_singular_extend(depth, search_state->ply, search_state->root_depth, tt_move, tt_depth, tt_type,
+                                tt_score)) {
+            const int s_beta = singular_beta(tt_score, depth);
+            search_state->excluded_moves[search_state->ply] = tt_move;
+            search_state->follow_pv = false;
+            const uint64_t nodes_before = search_state->nodes;
+            const int score = negamax(s_beta - 1, s_beta, (depth - 1) / 2, board, search_state, limits);
+            search_state->excluded_moves[search_state->ply] = 0;
+            /* The search without the TT move used this ply's PV row, the node starts its own. */
+            search_state->pv_length[search_state->ply] = search_state->ply;
+            if (limits->stop_search_flag) return STOPPED_SEARCH;
+
+            const singular_result_t result = singular_result(score, s_beta, tt_score, beta, is_pv_node);
+            count_singular(search_state, search_state->nodes - nodes_before, result);
+            if (result == singular_multi_cut) return beta;
+            if (result == singular_extend) extension = 1;
+            else if (result == singular_reduce) extension = -1;
+        }
     }
 
     move_buffer_t buffer;
@@ -470,6 +555,7 @@ int negamax(int alpha,
     int num_quiets_searched = 0;
     for (int i=0; i < buffer.index; i++) {
         move_t mv = pick_next_move(&buffer, scores, i);
+        if (mv == excluded_move) continue;
         bool is_capture = get_capture_flag(mv);
         const bool is_quiet = !is_capture && !get_promoted_piece(mv);
 
@@ -503,6 +589,8 @@ int negamax(int alpha,
                                mv == search_state->killer_moves[1][search_state->ply];
         const int reduction = can_reduce(depth, num_moves_searched, is_quiet, gives_check, in_check, is_killer) ?
                               lmr_reduction(depth, num_moves_searched, is_pv_node) : 0;
+        /* The TT move a ply deeper if it's singular, shallower if it isn't but beat beta (see above). */
+        const int new_depth = depth - 1 + (mv == tt_move ? extension : 0);
 
         /* Set before every search of the child, each one changes it further down the tree. */
         const bool child_on_pv = pv_move != 0 && mv == pv_move;
@@ -511,19 +599,19 @@ int negamax(int alpha,
 
         search_state->follow_pv = child_on_pv;
         if (num_moves_searched == 0 ) {
-            score = -negamax(-beta, -alpha, depth-1, board, search_state, limits);
+            score = -negamax(-beta, -alpha, new_depth, board, search_state, limits);
         } else {
             /* Principal variation search, null window (reduced for late moves). A reduced move that
              * beats alpha is searched again at full depth with the null window, then with the full
              * window if it's still inside it. */
-            score = -negamax(-alpha - 1, -alpha, depth - 1 - reduction, board, search_state, limits);
+            score = -negamax(-alpha - 1, -alpha, new_depth - reduction, board, search_state, limits);
             if (score > alpha && reduction > 0) {
                 search_state->follow_pv = child_on_pv;
-                score = -negamax(-alpha - 1, -alpha, depth - 1, board, search_state, limits);
+                score = -negamax(-alpha - 1, -alpha, new_depth, board, search_state, limits);
             }
             if (score > alpha && score < beta) {
                 search_state->follow_pv = child_on_pv;
-                score = -negamax(-beta, -alpha, depth - 1, board, search_state, limits);
+                score = -negamax(-beta, -alpha, new_depth, board, search_state, limits);
             }
         }
 
@@ -549,7 +637,7 @@ int negamax(int alpha,
 
             if (score >= beta) {
                 count_cutoff(search_state, num_moves_searched, is_quiet, num_quiets_searched);
-                tt_save(board->hash, tt_beta, depth, search_state->ply, score, mv);
+                if (!excluded_move) tt_save(board->hash, tt_beta, depth, search_state->ply, score, mv);
                 if (!is_capture) store_killer(search_state, mv);
                 if (is_quiet) {
                     for (int j = 0; j < num_quiets_searched; j++) penalise_history(search_state, quiets_searched[j], depth);
@@ -561,7 +649,12 @@ int negamax(int alpha,
         if (is_quiet && num_quiets_searched < MAX_QUIETS_PENALISED) quiets_searched[num_quiets_searched++] = mv;
     }
 
-    if (!has_legal_moves) return in_check ? -MATE_VALUE + search_state->ply : 0;
+    /* Without the TT move there may be nothing else to play: no other move, so it's singular. */
+    if (!has_legal_moves) {
+        if (excluded_move) return alpha;
+        return in_check ? -MATE_VALUE + search_state->ply : 0;
+    }
+    if (excluded_move) return alpha;
 
     /* Fail-hard, alpha only moves if a move scored inside the window. */
     if (alpha > alpha_orig) {
@@ -600,6 +693,7 @@ int aspiration_search(board_t* board, search_state_t* search_state, limits_t* li
         beta = previous_score + delta;
     }
 
+    search_state->root_depth = (uint8_t) depth;
     while (true) {
         search_state->follow_pv = true;
         int score = negamax(alpha, beta, depth, board, search_state, limits);

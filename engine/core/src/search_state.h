@@ -17,6 +17,11 @@ typedef struct {
     uint64_t first_move_cutoffs;
     uint64_t quiet_cutoffs;
     uint64_t quiets_before_cutoff;
+    uint64_t singular_searches;   /* Searches without the TT move, the nodes they took, and what came of them. */
+    uint64_t singular_nodes;
+    uint64_t singular_extensions;
+    uint64_t singular_reductions;
+    uint64_t multi_cuts;
 } search_stats_t;
 #endif
 
@@ -31,6 +36,7 @@ typedef struct align {
     uint32_t pv_table[MAX_PLY][MAX_PLY];
     int32_t history_moves[12][64];
     uint32_t killer_moves[2][MAX_PLY];
+    uint32_t excluded_moves[MAX_PLY]; /* The TT move a singular extension search leaves out at this ply (0: none). */
     uint8_t pv_length[MAX_PLY];
     uint64_t nodes;
     uint64_t pv_nodes;         /* Nodes that ordered the previous iteration's PV move first (tests). */
@@ -38,6 +44,7 @@ typedef struct align {
     search_stats_t stats;
 #endif
     uint8_t ply;
+    uint8_t root_depth;        /* Depth of the iteration being searched, bounds the singular extensions. */
     uint16_t repetition_index;
     uint16_t null_move_index;  /* repetition_check index of the position after the last null move (0 if none). */
     bool follow_pv;
@@ -58,6 +65,7 @@ static inline_always void clear_search_tables(search_state_t* search_state) {
     memset(search_state->pv_length, 0ULL, sizeof(search_state->pv_length));
     memset(search_state->history_moves, 0, sizeof (search_state->history_moves));
     memset(search_state->killer_moves, 0, sizeof (search_state->killer_moves));
+    memset(search_state->excluded_moves, 0, sizeof (search_state->excluded_moves));
 }
 
 static inline_always void init_search_state(search_state_t* search_state) {

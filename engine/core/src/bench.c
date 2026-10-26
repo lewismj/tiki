@@ -90,6 +90,11 @@ uint64_t bench(int depth) {
         stats.first_move_cutoffs += search_state.stats.first_move_cutoffs;
         stats.quiet_cutoffs += search_state.stats.quiet_cutoffs;
         stats.quiets_before_cutoff += search_state.stats.quiets_before_cutoff;
+        stats.singular_searches += search_state.stats.singular_searches;
+        stats.singular_nodes += search_state.stats.singular_nodes;
+        stats.singular_reductions += search_state.stats.singular_reductions;
+        stats.singular_extensions += search_state.stats.singular_extensions;
+        stats.multi_cuts += search_state.stats.multi_cuts;
 #endif
 
         /* The history table as this search left it. */
@@ -109,6 +114,10 @@ uint64_t bench(int depth) {
            stats.cutoffs ? 100.0 * (double) stats.first_move_cutoffs / (double) stats.cutoffs : 0.0);
     printf("Quiet cutoffs   : %" PRIu64 ", %.2f quiets tried before each\n", stats.quiet_cutoffs,
            stats.quiet_cutoffs ? (double) stats.quiets_before_cutoff / (double) stats.quiet_cutoffs : 0.0);
+    printf("Singular        : %" PRIu64 " searches (%.1f%% of the nodes), %" PRIu64 " extensions, %" PRIu64
+           " reductions, %" PRIu64 " multi-cuts\n", stats.singular_searches,
+           nodes ? 100.0 * (double) stats.singular_nodes / (double) nodes : 0.0,
+           stats.singular_extensions, stats.singular_reductions, stats.multi_cuts);
 #endif
     print_summary("History         ", &history);
 

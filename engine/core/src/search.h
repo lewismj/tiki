@@ -6,6 +6,7 @@
 #include "move_generator.h"
 #include "search_constants.h"
 #include "search_state.h"
+#include "transposition.h"
 #include "limits.h"
 
 
@@ -71,5 +72,10 @@ int see_prune_threshold(int depth, bool is_quiet);
 bool can_reduce(int depth, int moves_searched, bool is_quiet, bool gives_check, bool in_check, bool is_killer);
 int lmr_reduction(int depth, int moves_searched, bool is_pv_node);
 int iir_reduction(int depth, move_t tt_move);
+bool can_singular_extend(int depth, int ply, int root_depth, move_t tt_move, int tt_depth, tt_entry_type tt_type,
+                         int tt_score);
+int singular_beta(int tt_score, int depth);
+typedef enum { singular_none, singular_extend, singular_reduce, singular_multi_cut } singular_result_t;
+singular_result_t singular_result(int score, int s_beta, int tt_score, int beta, bool is_pv_node);
 
 #endif

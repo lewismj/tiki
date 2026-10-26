@@ -151,6 +151,30 @@ static inline_always int tt_probe(const uint64_t position_hash,
 }
 
 
+/**
+ * The stored entry for this position whatever its depth and bound, true if there is one. For
+ * singular extensions, which need the score itself rather than a cutoff for a window. The score
+ * is converted back to distance from the root, as in tt_probe.
+ */
+static inline_always bool tt_lookup(const uint64_t position_hash,
+                                    const int ply,
+                                    move_t* move,
+                                    int* score,
+                                    int* depth,
+                                    tt_entry_type* entry_type) {
+    uint64_t data;
+    if (!tt_load(position_hash, &data)) return false;
+
+    *move = tt_data_move(data);
+    *score = tt_data_score(data);
+    if (*score < -MATE_SCORE) *score += ply;
+    if (*score > MATE_SCORE) *score -= ply;
+    *depth = tt_data_depth(data);
+    *entry_type = tt_data_type(data);
+    return true;
+}
+
+
 static inline_always void tt_save(const uint64_t position_hash,
                                   const tt_entry_type hash_flag,
                                   const int depth,
