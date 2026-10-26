@@ -1,13 +1,15 @@
 ## tiki
 
-A UCI chess engine in C (C23), for Linux and other POSIX systems (on Windows, run it under WSL, see `scripts/`).
+A UCI chess engine in C (C23), for Linux and other POSIX systems and for Windows (built natively with LLVM clang, see
+[Windows](#windows)).
 
 ### Features
 
 - **UCI**: `uci`, `isready`, `ucinewgame`, `position` (startpos / fen, with moves), `go` (`wtime`/`btime`/`winc`/`binc`,
   `movestogo`, `movetime`, `depth`, `infinite`), `stop`, `quit`, `setoption`.
-  - Options: `Hash` (MB, default 256, max 65536; resizing clears the table) and `Threads` (default 1, max 256,
-    used from the next `go`). Option names are case insensitive.
+  - Options: `Hash` (MB, default 256, max 65536; resizing clears the table), `Threads` (default 1, max 256,
+    used from the next `go`), `Move Overhead` (ms kept back from each move for GUI and transport delays, default
+    30, max 5000) and `EvalFile` (the network, see [Running](#running)). Option names are case insensitive.
   - Input is read on its own thread. `stop`, `quit` and `isready` are handled during a search, and other commands
     are queued, so nothing is lost when a GUI sends several at once.
   - Not yet: pondering, MultiPV.
@@ -18,11 +20,13 @@ A UCI chess engine in C (C23), for Linux and other POSIX systems (on Windows, ru
 
 - **Search**: iterative deepening with aspiration windows (±25, widened on a fail), and PVS.
   - **Pruning and reductions**: null move pruning (with zugzwang and PV guards), reverse futility and futility
-    pruning, log-based late move reductions, internal iterative reduction, and a check extension (including at the
-    horizon).
+    pruning, late move pruning, SEE pruning of losing moves at low depth, log-based late move reductions, internal
+    iterative reduction, and a check extension (including at the horizon).
   - **Quiescence**: searches captures and queen promotions, skips captures that lose material (SEE) and uses delta
     pruning.
-  - **Move ordering**: TT move, PV, captures by MVV-LVA (losing captures last), killers, then history with gravity.
+  - **Move ordering**: TT move, PV, captures by MVV-LVA (losing captures last), killers, then history. History
+    rises by min(16 × depth², 1600) when a quiet move raises alpha and falls by the same for the quiet moves tried
+    before a quiet cutoff, with gravity keeping it under the killers. It's cleared before each search.
   - **Transposition table**: lock-less 16-byte entries (Hyatt's XOR scheme, so torn entries read as misses) that
     store the best move, with generation-based replacement. It's kept between moves and cleared on `ucinewgame`.
   - **Lazy SMP**: with `Threads` > 1, helper threads search the same root on their own board and search state,
@@ -94,7 +98,7 @@ runs without the Visual C++ redistributable.
 Every command except `nnue-eval` needs the network, `TIKI_EVALFILE=/mnt/f/tiki/nets/tiki-11.nnue` for example, and
 exits with an error without one. A binary built with `-DTIKI_EMBED_NETWORK=ON` uses its built in network when
 `TIKI_EVALFILE` isn't set. The UCI `EvalFile` option loads another network; its default is the network in use, and
-for a built in one that's its name (`tiki-2026-10-23.nnue`), which selects it again.
+for a built in one that's its name (`tiki-2026-10-26.nnue`), which selects it again.
 
 | Command | |
 |---|---|
@@ -103,8 +107,8 @@ for a built in one that's its name (`tiki-2026-10-23.nnue`), which selects it ag
 | `tiki datagen <file> [games] [depth] [seed]` | Self-play NNUE training data. |
 | `tiki nnue-eval <net> <fen>` | Evaluation of a position by a trained network. |
 
-On Windows, `scripts/run_engine_wsl.bat` starts the engine in WSL for a Windows GUI (Fritz, Cute Chess, ...), see
-`scripts/README.md`.
+On Windows, a GUI (Arena, Fritz, Cute Chess, ...) can run `tiki.exe` directly; one built with the network in needs
+no other files. `scripts/run_engine_wsl.bat` instead starts the Linux build in WSL, see `scripts/README.md`.
 
 ### Releases
 
@@ -131,7 +135,7 @@ to build the network in.
   (default 11), with a 16 MB TT cleared before each one, and prints the total node count and nodes/second.
   - The node count only changes when the search or evaluation does, so it's a signature for refactors that shouldn't
     change behaviour. It depends on the network too, so compare signatures with the same one: with
-    `models/tiki-2026-10-23.nnue` it's **3,652,233** nodes.
+    `models/tiki-2026-10-26.nnue` it's **1,389,650** nodes.
   - Timings vary between runs and sessions, so only compare times from back-to-back runs.
 - `build/engine/benchmark/tiki_benchmark` runs Google Benchmark micro-benchmarks of evaluation, move generation,
   make/undo, perft and a fixed-depth search. Use it to compare an evaluation change on its own.
@@ -166,9 +170,14 @@ training/run_training.sh --data-dir data --data-dir /mnt/f/lichess/data --out tr
 build/engine/app/tiki nnue-eval training/nets/tiki-20.nnue "<fen>"
 ```
 
-There are two data sources. Self-play (`datagen`) labels positions with tiki's own search. Lichess's analysed games
-(`lichess.py`) are labelled with Stockfish evals: a stronger teacher than tiki's own search, but a net trained on
-them learns Stockfish's judgement (see the training README).
+There are three data sources. Self-play (`datagen`) labels positions with tiki's own search. Lichess's analysed
+games (`lichess.py`) are labelled with Stockfish evals: a stronger teacher than tiki's own search, but a net trained
+on them learns Stockfish's judgement (see the training README). Leela Chess Zero's self-play (`lc0.py`) is labelled
+with lc0's own evaluation, under the ODbL.
+
+The current network, `models/tiki-2026-10-26.nnue`, was trained on 650M positions from a year of Lichess games
+between players rated 2000+, with a cosine learning rate schedule. Its recipe, and the SPRT against the network
+before it (+121 Elo), are in the training README under "What worked".
 
 The trainer's tests check its features and integer evaluation against the engine's
 (`TIKI_APP=... python3 -m unittest discover -s tests`).
@@ -190,13 +199,16 @@ The trainer's tests check its features and integer evaluation against the engine
 ### Next steps
 
 - **Search:** each one checked with an SPRT (`scripts/match.bat` / `match.sh`):
-  - late move pruning (skip late quiet moves at low depth);
+  - singular extensions and multi-cut, then ProbCut;
+  - the countermove heuristic (the best reply to the opponent's last move, ordered between the killers and
+    history);
   - a transposition table of four-entry buckets (one cache line) with depth and age replacement, and
-    prefetching the child's entry after each move;
-  - continuation history (a quiet move's history given the previous move);
-  - singular extensions, then ProbCut.
+    prefetching the child's entry after each move.
+  - Continuation history was tried and taken out again (commit `2aaadcb`).
+- **Endgame tablebases:** Syzygy probing (`SyzygyPath`), through Fathom. Rating lists give engines tablebases.
 - **Tuning:** the search margins are common starting values, not tuned. SPRT their changes, and measure the
   Lazy SMP gain at different thread counts.
 - **Parallel search:** Lazy SMP is in. Next would be letting helpers vote on the best move (or take it from the
   deepest completed thread), and more structured parallelism after that.
-- **Network:** training on lc0's data, output buckets and a wider first layer (see the training README).
+- **Network:** output buckets by piece count, then a wider first layer; mixing in lc0's or self-play data (see the
+  training README).
