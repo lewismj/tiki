@@ -23,7 +23,7 @@ cmake --build "$build" -j "$(nproc)"
 
 rm -rf "$stage"
 mkdir -p "$stage/$name/bin" "$stage/$name/models" "$stage/$name/scripts"
-cp "$build/engine/app/tiki_app" "$stage/$name/bin/tiki"
+cp "$build/engine/app/tiki" "$stage/$name/bin/tiki"
 cp "$root"/models/*.nnue "$stage/$name/models/"
 cp "$root/scripts/run.sh" "$stage/$name/scripts/"
 chmod +x "$stage/$name/bin/tiki" "$stage/$name/scripts/run.sh"

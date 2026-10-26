@@ -12,7 +12,7 @@ endif()
 
 # Windows: clang targeting the MSVC ABI (CC=clang CXX=clang++, not cl or clang-cl). The POSIX
 # headers tiki uses come from platform/win32 (added to the core library). The CRT is linked
-# statically, so tiki_app needs no Visual C++ redistributable, and the main thread gets Linux's
+# statically, so tiki needs no Visual C++ redistributable, and the main thread gets Linux's
 # 8MB stack (the Windows default is 1MB, the search recurses deeply).
 if (WIN32)
     if (NOT CMAKE_C_COMPILER_ID STREQUAL "Clang" OR CMAKE_C_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
@@ -82,10 +82,10 @@ if (TIKI_SEARCH_STATS)
     add_compile_definitions(TIKI_SEARCH_STATS)
 endif()
 
-# A fully static tiki_app, so a release binary runs on any x86-64 Linux whatever its glibc version.
-option(TIKI_STATIC "Link tiki_app statically" OFF)
+# A fully static tiki, so a release binary runs on any x86-64 Linux whatever its glibc version.
+option(TIKI_STATIC "Link tiki statically" OFF)
 
-# A network built into the engine, so tiki_app runs without a .nnue file or TIKI_EVALFILE (which
+# A network built into the engine, so tiki runs without a .nnue file or TIKI_EVALFILE (which
 # still overrides it). The newest network in models/ by the date in its name (tiki-2026-10-23.nnue,
 # file times aren't kept by git), or TIKI_EMBED_NETWORK_FILE. CMake reconfigures when a network is
 # added to models/, and the engine is rebuilt when the embedded file changes.

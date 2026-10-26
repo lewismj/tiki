@@ -1,6 +1,6 @@
-"""Checks the trainer's export against the engine: tiki_app must load the exported network and give
+"""Checks the trainer's export against the engine: tiki must load the exported network and give
 exactly the evaluation quantised_eval() computes. Needs the engine binary, set TIKI_APP to its path
-(e.g. TIKI_APP=build/engine/app/tiki_app), otherwise the test is skipped."""
+(e.g. TIKI_APP=build/engine/app/tiki), otherwise the test is skipped."""
 
 import os
 import subprocess
@@ -25,7 +25,7 @@ FENS = [
 ]
 
 
-@unittest.skipUnless(os.environ.get("TIKI_APP"), "set TIKI_APP to the tiki_app binary")
+@unittest.skipUnless(os.environ.get("TIKI_APP"), "set TIKI_APP to the tiki binary")
 class CrossCheckTests(unittest.TestCase):
 
     def test_engine_matches_reference(self):

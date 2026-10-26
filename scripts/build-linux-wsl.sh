@@ -83,7 +83,7 @@ cmake --build "$build" -j "$(nproc)"
 [ $test -eq 1 ] && (cd "$build" && ctest -LE slow --output-on-failure)
 
 echo
-echo "Built $build/engine/app/tiki_app"
+echo "Built $build/engine/app/tiki"
 if [ $embed = ON ]; then
     echo "The network is built in, it runs on its own (TIKI_EVALFILE still overrides it)."
 else

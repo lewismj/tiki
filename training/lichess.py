@@ -3,7 +3,7 @@
 Downloads monthly dumps of rated standard games and converts games analysed by
 Lichess (those with Stockfish '[%eval ...]' annotations) to the trainer's
 binary format (tiki_nnue/binary.py), lichess-YYYY-MM.bin. With --text it
-writes lichess-YYYY-MM.txt instead, in the same format as 'tiki_app datagen':
+writes lichess-YYYY-MM.txt instead, in the same format as 'tiki datagen':
 
     <fen> | <score> | <result>
 

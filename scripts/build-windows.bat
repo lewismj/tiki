@@ -93,7 +93,7 @@ if "%test%"=="1" (
 )
 
 echo.
-echo Built %build%\engine\app\tiki_app.exe
+echo Built %build%\engine\app\tiki.exe
 if "%embed%"=="ON" (
     echo The network is built in, it runs on its own ^(TIKI_EVALFILE still overrides it^).
 ) else (

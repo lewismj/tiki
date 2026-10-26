@@ -3,7 +3,7 @@ rem Plays engine matches with fastchess on Windows (scripts/match.sh is the Linu
 rem
 rem     scripts\match.bat sprt <new engine> <base engine>
 rem         SPRT: plays the new build against the base build until it's clear whether the new one is
-rem         stronger, e.g. a feature branch's tiki_app.exe against main's.
+rem         stronger, e.g. a feature branch's tiki.exe against main's.
 rem     scripts\match.bat gauntlet <tiki> <engine>...
 rem         Plays tiki against each engine for a fixed number of games and reports the Elo difference.
 rem

@@ -4,7 +4,7 @@
     int16 ft_weights[inputs][hidden], int16 ft_bias[hidden], int16 out_weights[2 * hidden], int32 out_bias
 
 all little endian. quantised_eval() is a reference for what the engine computes, integer arithmetic
-included, so the export can be checked against tiki_app (tests/test_cross_check.py).
+included, so the export can be checked against tiki (tests/test_cross_check.py).
 """
 
 import struct

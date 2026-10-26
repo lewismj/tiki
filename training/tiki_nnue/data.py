@@ -1,4 +1,4 @@
-"""Training data written by 'tiki_app datagen' (engine/core/src/datagen.h): one position per line,
+"""Training data written by 'tiki datagen' (engine/core/src/datagen.h): one position per line,
 
     <fen> | <score> | <result>
 

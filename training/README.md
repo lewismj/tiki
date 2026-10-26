@@ -24,10 +24,10 @@ HalfKAv2_hm (22528) -> 256 per side -> SCReLU -> concat (512) -> 1
 
 | Step | Script | Output |
 |---|---|---|
-| 1. [Build the engine](#1-build-the-engine) | see the top-level README | `tiki_app` |
-| 2. [Get training data](#2-get-training-data) | `tiki_app datagen`, `lichess.py`, `lc0.py` | `.txt` / `.bin` data files |
+| 1. [Build the engine](#1-build-the-engine) | see the top-level README | `tiki` |
+| 2. [Get training data](#2-get-training-data) | `tiki datagen`, `lichess.py`, `lc0.py` | `.txt` / `.bin` data files |
 | 3. [Train](#3-train) | `train.py`, `train_streaming.py`, `run_training.sh` | `tiki-<epoch>.nnue` per epoch |
-| 4. [Check a network](#4-check-a-network) | `tiki_app nnue-eval`, `tiki_app bench` | |
+| 4. [Check a network](#4-check-a-network) | `tiki nnue-eval`, `tiki bench` | |
 | 5. [Test it in games](#5-test-it-in-games) | `scripts/match.bat`, `scripts/match.sh` | Elo against the current net |
 | 6. [Promote it](#6-promote-it) | copy into `models/` | the engine's default network |
 
@@ -42,13 +42,13 @@ binary format (68 bytes per position), and the trainer reads either. Only quiet 
 (not in check, best move not a capture or promotion). A first useful net needs millions of
 positions; more data matters more than more epochs.
 
-#### Self-play (`tiki_app datagen`)
+#### Self-play (`tiki datagen`)
 
 The arguments are file, games, depth and seed. Run several processes with different seeds and the
 same or different files:
 
 ```bash
-build/engine/app/tiki_app datagen data/d8-s1.txt 10000 8 1
+build/engine/app/tiki datagen data/d8-s1.txt 10000 8 1
 ```
 
 Each line is `fen | score | result`, with the score in centipawns and the result 1.0 / 0.5 / 0.0,
@@ -193,7 +193,7 @@ training/run_training.sh --data-dir /mnt/f/lichess/data-s015 --out /mnt/f/tiki/n
 | `--skip-tests` | go straight to training |
 | anything else | passed to the trainer |
 
-Set `TIKI_APP` to the `tiki_app` binary to include the engine cross-check in the tests.
+Set `TIKI_APP` to the `tiki` binary to include the engine cross-check in the tests.
 
 | Trainer option | Default | |
 |---|---|---|
@@ -201,7 +201,9 @@ Set `TIKI_APP` to the `tiki_app` binary to include the engine cross-check in the
 | `--out` | `nets` | where the checkpoints, networks and `train.log` go |
 | `--epochs` | 20 | |
 | `--lr` | 1e-3 | learning rate |
-| `--lr-drop` | 10 | multiply the learning rate by 0.1 every N epochs |
+| `--lr-schedule` | `step` | `step`: drop by 10x every `--lr-drop` epochs; `cosine`: fall smoothly from `--lr` to `--lr-min`, reaching it in the last epoch |
+| `--lr-drop` | 10 | `step`: multiply the learning rate by 0.1 every N epochs |
+| `--lr-min` | 1e-5 | `cosine`: the learning rate of the last epoch |
 | `--wdl` | 0.3 | weight of the game result against the search score |
 | `--validation` | 0.02 | fraction held out for the validation loss, as whole games |
 | `--batch-size` | 16384 | |
@@ -256,20 +258,42 @@ It takes the trainer options above, and:
   adding files later doesn't change what the others hold out.
 - Checkpoints are the same as `train.py`'s, so either can `--resume` the other's.
 
+#### What worked: `tiki-2026-10-26.nnue`
+
+12 months of Lichess games between players rated 2000 or more, every position kept (650M for
+training, 13M held out), trained for about 1.85 passes with a cosine learning rate schedule:
+
+```bash
+python3 training/lichess.py --download-dir /mnt/f/lichess2 --out-dir /mnt/f/lichess2/data-2000-s100 \
+                            --months 2025-10:2026-09 --min-elo 2000 --sample 1.0 --workers 14
+./training/run_training.sh --streaming --skip-tests --data-dir /mnt/f/lichess2/data-2000-s100 \
+                           --out /mnt/f/tiki/nets/lichess2-2000-s100-cos --epochs 12 \
+                           --epoch-positions 100000000 --lr-schedule cosine --lr-min 1e-5 --buffer 16000000
+```
+
+- **Training:** about 45 minutes on an RTX 3070 Laptop GPU (400-850k positions a second, slowing as
+  the GPU heated up). Validation loss fell every epoch, to 0.022483 at epoch 12, the net kept.
+- **Cosine against a step drop:** the same data with `--lr-drop 9` (the rate held at 1e-3) stopped
+  improving after about one pass, at 0.023473 (epoch 6), while the training loss kept falling. With
+  cosine, the gap between training and validation loss closed as the rate fell (0.00117 at epoch 7,
+  0.00032 at epoch 11).
+- **In games:** +121.2 ± 22.7 Elo (nElo +173.4) against `tiki-2026-10-24.nnue` with the same
+  binary, an SPRT [0, 5] that passed after 516 games (8+0.08, 8moves_v3).
+
 ### 4. Check a network
 
 ```bash
-build/engine/app/tiki_app nnue-eval nets/tiki-20.nnue "<fen>"
+build/engine/app/tiki nnue-eval nets/tiki-20.nnue "<fen>"
 ```
 
 This prints the evaluation from the side to move's point of view. The engine searches with the
 network named by `TIKI_EVALFILE` (or the `EvalFile` UCI option), or the one built in:
 
 ```bash
-TIKI_EVALFILE=nets/tiki-20.nnue build/engine/app/tiki_app bench
+TIKI_EVALFILE=nets/tiki-20.nnue build/engine/app/tiki bench
 ```
 
-`tiki_app datagen` searches with it too, so self-play data then comes from tiki's own net.
+`tiki datagen` searches with it too, so self-play data then comes from tiki's own net.
 
 ### 5. Test it in games
 
@@ -287,7 +311,7 @@ the new net is at least `ELO1` (default 5) Elo stronger or not stronger at all:
 cd C:\Users\lewis\develop\tiki
 set NEW_EVALFILE=C:\Users\lewis\develop\tiki\nnue_candidate\tiki-5.nnue
 set BASE_EVALFILE=C:\Users\lewis\develop\tiki\models\tiki-2026-10-23.nnue
-scripts\match.bat sprt build-windows\engine\app\tiki_app.exe build-windows\engine\app\tiki_app.exe
+scripts\match.bat sprt build-windows\engine\app\tiki.exe build-windows\engine\app\tiki.exe
 ```
 
 In fastchess's report:
@@ -311,7 +335,7 @@ a known rating:
 ```bat
 set TIKI_EVALFILE=C:\Users\lewis\develop\tiki\nnue_candidate\tiki-5.nnue
 set GAMES=400
-scripts\match.bat gauntlet build-windows\engine\app\tiki_app.exe C:\Users\lewis\Downloads\arena_3.5.1\Engines\AnMon\AnMon_5.75.exe
+scripts\match.bat gauntlet build-windows\engine\app\tiki.exe C:\Users\lewis\Downloads\arena_3.5.1\Engines\AnMon\AnMon_5.75.exe
 ```
 
 - **Pick opponents tiki scores 25-75% against.** Above about 90% the Elo can't be measured: tiki
@@ -358,14 +382,14 @@ the baseline for the next candidate.
 
 ```bash
 cd training
-TIKI_APP=../build/engine/app/tiki_app python3 -m unittest discover -s tests
+TIKI_APP=../build/engine/app/tiki python3 -m unittest discover -s tests
 ```
 
 | Test | Checks |
 |---|---|
 | `test_features.py` | known indices (the same values the C tests use), range, uniqueness, and colour-flip and mirror symmetry |
 | `test_model.py` | colour symmetry of the float model; converting white-relative scores to the side to move; the file round trip; the integer eval matching the float model on the quantised weights; a small training run reducing the loss |
-| `test_cross_check.py` | exports a network and checks that `tiki_app nnue-eval` gives exactly `quantised_eval()`; skipped unless `TIKI_APP` is set |
+| `test_cross_check.py` | exports a network and checks that `tiki nnue-eval` gives exactly `quantised_eval()`; skipped unless `TIKI_APP` is set |
 | `test_data.py` | the batch features computed from binary records match `parse_line` and `collate`, including on positions from random games; converting text to binary (blank lines, CRLF, a missing final newline, any number of workers) and loading the result; rejecting files that aren't binary data or are truncated |
 | `test_lichess.py` | converts a small `.pgn.zst` built in the test: only analysed games are parsed; the quiet-position, mate-score, opening, Elo, score and sample filters; the output reads back in the trainer, and the binary output is the text output encoded. Skipped without `python-chess` or `zstandard` |
 | `test_lichess_download.py` | retrying failed downloads with longer pauses, giving up after the retries, not retrying an unpublished month; counting a partial download towards the space needed |

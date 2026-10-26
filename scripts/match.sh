@@ -3,7 +3,7 @@
 #
 #     scripts/match.sh sprt <new engine> <base engine>
 #         SPRT: plays the new build against the base build until it's clear whether the new one is
-#         stronger, e.g. a feature branch's tiki_app against main's.
+#         stronger, e.g. a feature branch's tiki against main's.
 #     scripts/match.sh gauntlet <tiki> <engine>...
 #         Plays tiki against each engine for a fixed number of games and reports the Elo difference.
 #

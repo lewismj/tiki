@@ -54,7 +54,7 @@ Or `scripts/build-linux-wsl.sh` (Linux or WSL) and `scripts\build-windows.bat` (
 below as flags, e.g. `--embed --test` (see `scripts/README.md`, or `--help`).
 
 The unit tests build a small material-counting network in code, so they don't need a network file. The bench smoke
-test runs `tiki_app`, so it's skipped unless `TIKI_EVALFILE` is set or a network is built in.
+test runs `tiki`, so it's skipped unless `TIKI_EVALFILE` is set or a network is built in.
 
 - `-DTIKI_USE_PEXT=OFF` uses magic bitboards. PEXT is on by default when the build machine has BMI2; turn it off on
   AMD Zen 1/2, where PEXT is slow.
@@ -64,7 +64,7 @@ test runs `tiki_app`, so it's skipped unless `TIKI_EVALFILE` is set or a network
 - `-DTIKI_SEARCH_STATS=ON` counts move ordering statistics in the search (beta cutoffs, first move and quiet
   cutoffs), printed by `bench`. Off by default, so a normal build doesn't count them.
 - `-DTIKI_BUILD_BENCHMARKS=OFF` skips fetching and building Google Benchmark.
-- `-DTIKI_EMBED_NETWORK=ON` builds a network into `tiki_app`, so it runs with no `.nnue` file, `TIKI_EVALFILE` or
+- `-DTIKI_EMBED_NETWORK=ON` builds a network into `tiki`, so it runs with no `.nnue` file, `TIKI_EVALFILE` or
   run script (for tournaments, or a GUI that only accepts an executable). It's the newest network in `models/` by
   the date in its name (`tiki-2026-11-05.nnue` over `tiki-2026-10-23.nnue`; git doesn't keep file times), or
   `-DTIKI_EMBED_NETWORK_FILE=<path>`. CMake picks up a new network in `models/` on the next build. The binary grows by
@@ -86,7 +86,7 @@ cmake --build build-win
 `scripts\build-windows.bat --embed` for an exe that runs on its own.
 
 `engine/platform/win32` provides the POSIX headers tiki uses (`pthread.h`, `unistd.h`, `strings.h`, `sys/time.h`)
-over Win32, and is on the include path only for Windows builds. The CRT is linked statically, so `tiki_app.exe`
+over Win32, and is on the include path only for Windows builds. The CRT is linked statically, so `tiki.exe`
 runs without the Visual C++ redistributable.
 
 ### Running
@@ -98,10 +98,10 @@ for a built in one that's its name (`tiki-2026-10-23.nnue`), which selects it ag
 
 | Command | |
 |---|---|
-| `build/engine/app/tiki_app` | UCI engine on stdin/stdout, for a GUI or `cutechess-cli` / `fastchess`. |
-| `tiki_app bench [depth]` | Fixed benchmark, see below. |
-| `tiki_app datagen <file> [games] [depth] [seed]` | Self-play NNUE training data. |
-| `tiki_app nnue-eval <net> <fen>` | Evaluation of a position by a trained network. |
+| `build/engine/app/tiki` | UCI engine on stdin/stdout, for a GUI or `cutechess-cli` / `fastchess`. |
+| `tiki bench [depth]` | Fixed benchmark, see below. |
+| `tiki datagen <file> [games] [depth] [seed]` | Self-play NNUE training data. |
+| `tiki nnue-eval <net> <fen>` | Evaluation of a position by a trained network. |
 
 On Windows, `scripts/run_engine_wsl.bat` starts the engine in WSL for a Windows GUI (Fritz, Cute Chess, ...), see
 `scripts/README.md`.
@@ -127,7 +127,7 @@ to build the network in.
 
 ### Benchmarking
 
-- `tiki_app bench [depth]` (or `bench [depth]` in the UCI loop) searches 16 fixed positions to a fixed depth
+- `tiki bench [depth]` (or `bench [depth]` in the UCI loop) searches 16 fixed positions to a fixed depth
   (default 11), with a 16 MB TT cleared before each one, and prints the total node count and nodes/second.
   - The node count only changes when the search or evaluation does, so it's a signature for refactors that shouldn't
     change behaviour. It depends on the network too, so compare signatures with the same one: with
@@ -143,8 +143,8 @@ The bench shows whether behaviour changed, not whether tiki got stronger. For th
 [fastchess](https://github.com/Disservin/fastchess) and an opening book into `tools/` the first time:
 
 ```
-scripts/match.sh sprt build/engine/app/tiki_app base/engine/app/tiki_app     # a change vs the build before it
-scripts/match.sh gauntlet build/engine/app/tiki_app /path/to/engine1 /path/to/engine2
+scripts/match.sh sprt build/engine/app/tiki base/engine/app/tiki     # a change vs the build before it
+scripts/match.sh gauntlet build/engine/app/tiki /path/to/engine1 /path/to/engine2
 ```
 
 - `sprt` plays until a sequential probability ratio test decides whether the new build gains (bounds `[0, 5]`
@@ -160,10 +160,10 @@ The network, the training data format and the trainer are described in [`trainin
 In short:
 
 ```
-build/engine/app/tiki_app datagen data/d8-s1.txt 10000 8 1      # self-play: several processes, different seeds
+build/engine/app/tiki datagen data/d8-s1.txt 10000 8 1      # self-play: several processes, different seeds
 python3 training/lichess.py --download-dir /mnt/f/lichess --out-dir /mnt/f/lichess/data --months 2024-01:2024-03
 training/run_training.sh --data-dir data --data-dir /mnt/f/lichess/data --out training/nets   # tests, then train.py
-build/engine/app/tiki_app nnue-eval training/nets/tiki-20.nnue "<fen>"
+build/engine/app/tiki nnue-eval training/nets/tiki-20.nnue "<fen>"
 ```
 
 There are two data sources. Self-play (`datagen`) labels positions with tiki's own search. Lichess's analysed games
@@ -180,7 +180,7 @@ The trainer's tests check its features and integer evaluation against the engine
 | `engine/core/src` | The engine library: board, move generation, search (`search.c`), TT, UCI, time control, bench, datagen. |
 | `engine/core/src/nnue` | Network inference, incremental accumulators and file format (`nnue.h` defines the features and quantisation). |
 | `engine/core/include/core/tiki.h` | Public interface (startup, UCI loop, bench, datagen, nnue-eval). |
-| `engine/app` | The `tiki_app` executable. |
+| `engine/app` | The `tiki` executable. |
 | `engine/test` | Unity tests, run through CTest. |
 | `engine/benchmark` | Google Benchmark micro-benchmarks (C++, through a C shim). |
 | `engine/platform/win32` | POSIX headers over Win32, for Windows builds only. |

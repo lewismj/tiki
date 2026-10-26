@@ -24,7 +24,7 @@ cmake --build "$build"
 
 rm -rf "$stage"
 mkdir -p "$stage/$name/bin" "$stage/$name/models" "$stage/$name/scripts"
-cp "$build/engine/app/tiki_app.exe" "$stage/$name/bin/tiki.exe"
+cp "$build/engine/app/tiki.exe" "$stage/$name/bin/tiki.exe"
 cp "$root"/models/*.nnue "$stage/$name/models/"
 cp "$root/scripts/run.bat" "$stage/$name/scripts/"
 cp "$root/README.md" "$root/LICENSE" "$stage/$name/"

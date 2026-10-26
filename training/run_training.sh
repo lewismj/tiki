@@ -8,7 +8,7 @@
 # --streaming trains with train_streaming.py instead, which reads the data from disk as it goes
 # rather than loading it all (for more data than fits in memory).
 # Progress is logged to <out>/train.log as well ('tail -f' it from another terminal). Set TIKI_APP
-# to the tiki_app binary to include the engine cross-check in the tests, and use --skip-tests to go
+# to the tiki binary to include the engine cross-check in the tests, and use --skip-tests to go
 # straight to training.
 
 set -euo pipefail

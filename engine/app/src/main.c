@@ -11,7 +11,7 @@ int main(int argc, char* argv[]) {
     /* Initialise tables.           */
     on_startup();
 
-    /* 'tiki_app nnue-eval <net> <fen>', the FEN may be given as several arguments. */
+    /* 'tiki nnue-eval <net> <fen>', the FEN may be given as several arguments. */
     if (argc >= 4 && strcmp(argv[1], "nnue-eval") == 0) {
         char fen[128] = "";
         for (int i = 3; i < argc; i++) {
@@ -24,13 +24,13 @@ int main(int argc, char* argv[]) {
     /* Everything else searches, which needs the network. */
     if (!load_startup_network()) return EXIT_FAILURE;
 
-    /* 'tiki_app bench [depth]', run the benchmark and exit (e.g. for OpenBench/regression checks). */
+    /* 'tiki bench [depth]', run the benchmark and exit (e.g. for OpenBench/regression checks). */
     if (argc >= 2 && strcmp(argv[1], "bench") == 0) {
         bench(argc >= 3 ? atoi(argv[2]) : 0);
         return EXIT_SUCCESS;
     }
 
-    /* 'tiki_app datagen <file> [games] [depth] [seed]', NNUE training data (see training/README.md). */
+    /* 'tiki datagen <file> [games] [depth] [seed]', NNUE training data (see training/README.md). */
     if (argc >= 3 && strcmp(argv[1], "datagen") == 0) {
         int games = argc >= 4 ? atoi(argv[3]) : 100;
         int depth = argc >= 5 ? atoi(argv[4]) : 8;

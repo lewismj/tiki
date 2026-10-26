@@ -1,4 +1,4 @@
-"""Trains tiki's network on 'tiki_app datagen' or lichess.py output and exports it for the engine.
+"""Trains tiki's network on 'tiki datagen' or lichess.py output and exports it for the engine.
 
     python3 train.py --data data/*.txt --epochs 20 --out nets/
 
@@ -62,6 +62,32 @@ class Batches:
         order = self.rng.permutation(self.indices) if self.rng is not None else self.indices
         for start in range(0, len(order), self.batch_size):
             yield batch_tensors(self.records[order[start:start + self.batch_size]], self.device)
+
+
+def add_schedule_arguments(parser):
+    """The learning rate options, shared with train_streaming.py."""
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr-schedule", choices=["step", "cosine"], default="step",
+                        help="step: multiply the learning rate by 0.1 every --lr-drop epochs; "
+                             "cosine: lower it smoothly from --lr to --lr-min over the epochs")
+    parser.add_argument("--lr-drop", type=int, default=10, help="multiply the learning rate by 0.1 every N epochs")
+    parser.add_argument("--lr-min", type=float, default=1e-5, help="cosine: the learning rate of the last epoch")
+
+
+def make_scheduler(optimiser, args):
+    """The learning rate schedule, stepped after each epoch. Cosine reaches --lr-min in the last epoch."""
+    if args.lr_schedule == "cosine":
+        return torch.optim.lr_scheduler.CosineAnnealingLR(optimiser, T_max=max(args.epochs - 1, 1),
+                                                          eta_min=args.lr_min)
+    return torch.optim.lr_scheduler.StepLR(optimiser, step_size=args.lr_drop, gamma=0.1)
+
+
+def load_scheduler(scheduler, state, args, parser):
+    """Restores a checkpoint's schedule, which must be the same kind as --lr-schedule. A resumed
+    cosine schedule keeps the checkpoint's length, a resumed step schedule its --lr-drop."""
+    if ("T_max" in state) != (args.lr_schedule == "cosine"):
+        parser.error(f"the checkpoint was trained with the other --lr-schedule, not {args.lr_schedule}")
+    scheduler.load_state_dict(state)
 
 
 def progress_bar(description):
@@ -137,8 +163,7 @@ def main():
     parser.add_argument("--out", default="nets", help="directory for checkpoints and exported networks")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=16384)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--lr-drop", type=int, default=10, help="multiply the learning rate by 0.1 every N epochs")
+    add_schedule_arguments(parser)
     parser.add_argument("--wdl", type=float, default=0.3, help="weight of the game result vs the search score")
     parser.add_argument("--validation", type=float, default=0.02,
                         help="fraction held out for validation, in blocks of consecutive positions (whole games)")
@@ -172,13 +197,13 @@ def main():
 
     model = TikiNNUE().to(args.device)
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimiser, step_size=args.lr_drop, gamma=0.1)
+    scheduler = make_scheduler(optimiser, args)
     first_epoch = 1
     if args.resume:
         checkpoint = torch.load(args.resume, map_location=args.device)
         model.load_state_dict(checkpoint["model"])
         optimiser.load_state_dict(checkpoint["optimiser"])
-        scheduler.load_state_dict(checkpoint["scheduler"])
+        load_scheduler(scheduler, checkpoint["scheduler"], args, parser)
         first_epoch = checkpoint["epoch"] + 1
         console.print(f"Resuming from {args.resume} at epoch {first_epoch}")
         log(f"resumed from {args.resume} at epoch {first_epoch}")

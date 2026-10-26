@@ -11,8 +11,8 @@ and the next, read in the background. See tiki_nnue/stream.py.
 
 An epoch is a pass over all the data, or with --epoch-positions N, every N positions (for data too
 large to pass over often). Each epoch is followed by validation, a checkpoint and an exported net,
-as in train.py, and the learning rate drops every --lr-drop epochs. Checkpoints are the same as
-train.py's, so either can --resume the other's.
+as in train.py, and the learning rate drops every --lr-drop epochs (or with --lr-schedule cosine, falls
+smoothly to --lr-min). Checkpoints are the same as train.py's, so either can --resume the other's.
 """
 
 import argparse
@@ -26,7 +26,7 @@ from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, T
 from tiki_nnue.export import export
 from tiki_nnue.model import TikiNNUE
 from tiki_nnue.stream import Epoch, StreamData, TrainingStream, ValidationBatches, data_files
-from train import Log, binary_files, console, run_epoch
+from train import Log, add_schedule_arguments, binary_files, console, load_scheduler, make_scheduler, run_epoch
 
 
 def main():
@@ -38,8 +38,7 @@ def main():
                         help="positions per epoch (0: a whole pass over the data)")
     parser.add_argument("--batch-size", type=int, default=16384)
     parser.add_argument("--buffer", type=int, default=8_000_000, help="positions shuffled together (memory: ~68 bytes each, x2)")
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--lr-drop", type=int, default=10, help="multiply the learning rate by 0.1 every N epochs")
+    add_schedule_arguments(parser)
     parser.add_argument("--wdl", type=float, default=0.3, help="weight of the game result vs the search score")
     parser.add_argument("--validation", type=float, default=0.02,
                         help="fraction held out for validation, in blocks of consecutive positions (whole games)")
@@ -76,13 +75,13 @@ def main():
 
     model = TikiNNUE().to(args.device)
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.StepLR(optimiser, step_size=args.lr_drop, gamma=0.1)
+    scheduler = make_scheduler(optimiser, args)
     first_epoch = 1
     if args.resume:
         checkpoint = torch.load(args.resume, map_location=args.device)
         model.load_state_dict(checkpoint["model"])
         optimiser.load_state_dict(checkpoint["optimiser"])
-        scheduler.load_state_dict(checkpoint["scheduler"])
+        load_scheduler(scheduler, checkpoint["scheduler"], args, parser)
         first_epoch = checkpoint["epoch"] + 1
         console.print(f"Resuming from {args.resume} at epoch {first_epoch}")
         log(f"resumed from {args.resume} at epoch {first_epoch}")

@@ -7,7 +7,7 @@ rem Windows path (C:\...) or a WSL path (/mnt/c/...).
 rem The repository, the parent of this script's folder.
 for %%d in ("%~dp0..") do set "root=%%~fd"
 
-if "%TIKI_APP%"=="" set "TIKI_APP=%root%\cmake-build-release-wsl-clang\engine\app\tiki_app"
+if "%TIKI_APP%"=="" set "TIKI_APP=%root%\cmake-build-release-wsl-clang\engine\app\tiki"
 if "%TIKI_EVALFILE%"=="" for %%f in ("%root%\models\*.nnue") do set "TIKI_EVALFILE=%%~ff"
 if "%TIKI_EVALFILE%"=="" (
     echo No network in %root%\models, set TIKI_EVALFILE to one. 1>&2
