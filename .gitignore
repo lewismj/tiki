@@ -61,6 +61,7 @@ training/nets/
 !models/*.nnue
 
 # builds
+/tiki
 build
 /build-*
 /build-release/
@@ -81,3 +82,7 @@ dist/
 
 # Candidate models for testing
 nnue_candidates/
+
+
+tiki-dev
+tiki-tune

@@ -82,6 +82,17 @@ if (TIKI_SEARCH_STATS)
     add_compile_definitions(TIKI_SEARCH_STATS)
 endif()
 
+# SPSA tuning build (OpenBench): the parameters in core/src/tune.h become variables with UCI options
+# of their names, and 'tiki tune' prints OpenBench's SPSA input. Off normally, they stay constants.
+option(TIKI_TUNE "Expose the tunable search parameters as UCI options, for SPSA" OFF)
+if (TIKI_TUNE)
+    message(STATUS "TIKI_TUNE: ON")
+    add_compile_definitions(TIKI_TUNE)
+endif()
+
+# The unit tests (Unity, fetched in extern/). OFF builds the engine without fetching anything.
+option(TIKI_BUILD_TESTS "Build the unit tests" ON)
+
 # A fully static tiki, so a release binary runs on any x86-64 Linux whatever its glibc version.
 option(TIKI_STATIC "Link tiki statically" OFF)
 
@@ -120,7 +131,9 @@ add_subdirectory(extern)
 add_subdirectory(core)                  # core engine.
 add_subdirectory(magic_generator)       # magic (minimal perfect hash) generator.
 add_subdirectory(app)                   # main app.
-add_subdirectory(test)                  # core tests.
+if (TIKI_BUILD_TESTS)
+    add_subdirectory(test)              # core tests.
+endif()
 if (TIKI_BUILD_BENCHMARKS)
     add_subdirectory(benchmark)         # Google Benchmark micro-benchmarks.
 endif()

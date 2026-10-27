@@ -10,6 +10,7 @@
 #include "../../core/src/uci.h"
 #include "../../core/src/bench.h"
 #include "../../core/src/see.h"
+#include "../../core/src/tune.h"
 
 
 static void setup_position(const char* fen, board_t* board, search_state_t* search_state, limits_t* limits, int depth) {
@@ -977,4 +978,28 @@ void test_excluded_move_search() {
     TEST_ASSERT_FALSE(tt_lookup(board.hash, 0, &mv, &score, &depth, &type));
     search_state.excluded_moves[0] = 0;
     TEST_ASSERT_EQUAL_INT(-49, negamax(-50, -49, 4, &board, &search_state, &limits));
+}
+
+void test_tunable_parameters() {
+#ifdef TIKI_TUNE
+    /* A tuning build: the parameters are variables, set by name (any case) and kept in range. */
+    TEST_ASSERT_EQUAL_INT(8, tunable_count);
+    const int saved = RFP_MARGIN;
+    TEST_ASSERT_TRUE(set_tunable("rfp_margin", 10, 120));
+    TEST_ASSERT_EQUAL_INT(120, RFP_MARGIN);
+    TEST_ASSERT_TRUE(set_tunable("RFP_MARGIN", 10, 100000));
+    TEST_ASSERT_EQUAL_INT(200, RFP_MARGIN);
+    TEST_ASSERT_TRUE(set_tunable("RFP_MARGIN", 10, saved));
+    TEST_ASSERT_EQUAL_INT(saved, RFP_MARGIN);
+    /* The whole name must match. */
+    TEST_ASSERT_FALSE(set_tunable("RFP_MARGI", 9, 120));
+    /* Each default is inside its range. */
+    for (int i = 0; i < tunable_count; i++) {
+        TEST_ASSERT_TRUE(*tunables[i].value >= tunables[i].min && *tunables[i].value <= tunables[i].max);
+    }
+#else
+    /* A normal build: the parameters are constants, there's nothing to set. */
+    TEST_ASSERT_EQUAL_INT(0, tunable_count);
+    TEST_ASSERT_FALSE(set_tunable("RFP_MARGIN", 10, 120));
+#endif
 }

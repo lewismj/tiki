@@ -21,6 +21,12 @@ int main(int argc, char* argv[]) {
         return nnue_eval_fen(argv[2], fen) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
     }
 
+    /* 'tiki tune', OpenBench's SPSA input for the tunable parameters (a TIKI_TUNE build). */
+    if (argc >= 2 && strcmp(argv[1], "tune") == 0) {
+        print_spsa_input();
+        return EXIT_SUCCESS;
+    }
+
     /* Everything else searches, which needs the network. */
     if (!load_startup_network()) return EXIT_FAILURE;
 
