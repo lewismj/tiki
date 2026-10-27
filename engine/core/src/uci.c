@@ -9,6 +9,7 @@
 #include "zobrist_key.h"
 #include "transposition.h"
 #include "search_state.h"
+#include "tune.h"
 #include "search.h"
 #include "limits.h"
 #include "uci_input.h"
@@ -397,6 +398,8 @@ void parse_setoption(const char* command) {
             printf("info string Could not load network '%s', still using %s\n", path,
                    *nnue_loaded_path() ? nnue_loaded_path() : "the current network");
         }
+    } else if (value && set_tunable(name, length, atoi(value))) {
+        /* A tunable search parameter (TIKI_TUNE build). */
     } else {
         printf("info string Unknown option: %.*s\n", (int) length, name);
     }
@@ -413,6 +416,7 @@ bool handle_uci_command(const char* command, board_t* board, search_state_t* sea
                    MOVE_OVERHEAD_MAX);
             printf("option name EvalFile type string default %s\n",
                    *nnue_loaded_path() ? nnue_loaded_path() : "<empty>");
+            print_tunable_options(); /* Only in a TIKI_TUNE build. */
             printf("uciok\n");
             break;
         case uci_cmd_setoption:

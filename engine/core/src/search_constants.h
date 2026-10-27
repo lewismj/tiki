@@ -66,4 +66,7 @@ static_assert(CAPTURE_SCORE + MVV_LVA_MAX < PV_MOVE_SCORE && PV_MOVE_SCORE < TT_
 static_assert(KILLER_1_SCORE < CAPTURE_SCORE + MVV_LVA_MIN && KILLER_2_SCORE < KILLER_1_SCORE, "killers under captures");
 static_assert(HISTORY_MAX < KILLER_2_SCORE, "quiet moves under the killers");
 static_assert(BAD_CAPTURE_SCORE + MVV_LVA_MAX < -HISTORY_MAX, "losing captures under every quiet move");
+
+/* Built with TIKI_TUNE, the tunable constants above become variables set by UCI options (tune.h). */
+#include "tune.h"
 #endif

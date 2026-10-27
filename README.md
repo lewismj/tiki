@@ -55,7 +55,8 @@ cd build && ctest -LE slow        # unit tests and bench smoke test; 'ctest' als
 ```
 
 Or `scripts/build-linux-wsl.sh` (Linux or WSL) and `scripts\build-windows.bat` (Windows), which take the options
-below as flags, e.g. `--embed --test` (see `scripts/README.md`, or `--help`).
+below as flags, e.g. `--embed --test` (see `scripts/README.md`, or `--help`). `make` builds just the engine with
+the network in, as OpenBench does (see [OpenBench](#openbench)).
 
 The unit tests build a small material-counting network in code, so they don't need a network file. The bench smoke
 test runs `tiki`, so it's skipped unless `TIKI_EVALFILE` is set or a network is built in.
@@ -68,6 +69,8 @@ test runs `tiki`, so it's skipped unless `TIKI_EVALFILE` is set or a network is 
 - `-DTIKI_SEARCH_STATS=ON` counts move ordering statistics in the search (beta cutoffs, first move and quiet
   cutoffs), printed by `bench`. Off by default, so a normal build doesn't count them.
 - `-DTIKI_BUILD_BENCHMARKS=OFF` skips fetching and building Google Benchmark.
+- `-DTIKI_BUILD_TESTS=OFF` skips the unit tests, and fetching Unity for them.
+- `-DTIKI_TUNE=ON` makes the tunable search parameters UCI options, for SPSA (see [OpenBench](#openbench)).
 - `-DTIKI_EMBED_NETWORK=ON` builds a network into `tiki`, so it runs with no `.nnue` file, `TIKI_EVALFILE` or
   run script (for tournaments, or a GUI that only accepts an executable). It's the newest network in `models/` by
   the date in its name (`tiki-2026-11-05.nnue` over `tiki-2026-10-23.nnue`; git doesn't keep file times), or
@@ -157,6 +160,31 @@ scripts/match.sh gauntlet build/engine/app/tiki /path/to/engine1 /path/to/engine
   of known CCRL ratings this places tiki on that scale.
 - Settings come from the environment (`TC`, `CONCURRENCY`, `GAMES`, `ELO0`/`ELO1`, `NEW_EVALFILE`/`BASE_EVALFILE` to
   test networks, ...), see the top of either script. Games and results go to `matches/`.
+
+#### OpenBench
+
+Tiki builds the way [OpenBench](https://github.com/AndyGrant/OpenBench) expects, with the `Makefile` in the
+repository root (Linux, macOS or WSL; it wraps CMake):
+
+```
+make EXE=tiki-dev [CC=clang] [EVALFILE=path/to/net.nnue] [TUNE=1]
+./tiki-dev bench                # '... Nodes searched : N ... Nodes/second : N', as OpenBench reads it
+```
+
+It builds only the engine (no tests or benchmarks, so nothing is downloaded), with the network built in:
+`EVALFILE`, which OpenBench passes for a network uploaded to it, or the newest in `models/`. The engine
+config for an OpenBench server is `scripts/openbench/Tiki.json`: copy it to the server's `Engines/` and set
+`nps` to the `Nodes/second` of `bench` on the reference machine.
+
+**SPSA tuning.** `TUNE=1` (CMake `-DTIKI_TUNE=ON`) makes the search parameters in `engine/core/src/tune.h`
+variables, each with a UCI option of its name (`RFP_MARGIN`, `FUTILITY_MARGIN`, `LMP_BASE`, `SE_MARGIN`, ...),
+and `tiki tune` prints OpenBench's SPSA input for them (name, type, value, min, max, C_end, R_end). A normal
+build keeps them as constants. OpenBench can't pass `TUNE=1`, so a tune runs from a branch that has it:
+
+1. Make a branch with `TUNE ?= 1` in the `Makefile`, and push it.
+2. `make TUNE=1 && ./tiki tune`, and paste the lines into OpenBench's SPSA input for that branch.
+3. When the tune ends, copy the values into `engine/core/src/search_constants.h` on `main`, and test the
+   result with an SPRT against `main` before keeping it.
 
 ### NNUE
 

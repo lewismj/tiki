@@ -19,13 +19,15 @@ endif()
 
 include(FetchContent)
 
-FetchContent_Declare(
-        unity
-        GIT_REPOSITORY https://github.com/ThrowTheSwitch/Unity.git
-        GIT_TAG        v2.6.0
-)
+if (TIKI_BUILD_TESTS)
+    FetchContent_Declare(
+            unity
+            GIT_REPOSITORY https://github.com/ThrowTheSwitch/Unity.git
+            GIT_TAG        v2.6.0
+    )
 
-FetchContent_MakeAvailable(unity)
+    FetchContent_MakeAvailable(unity)
+endif()
 
 if (TIKI_BUILD_BENCHMARKS)
     # Only the library, none of its own tests or install rules.

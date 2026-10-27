@@ -135,6 +135,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_tt_lookup);
     RUN_TEST(test_singular_extension_conditions);
     RUN_TEST(test_singular_result);
+    RUN_TEST(test_tunable_parameters);
     RUN_TEST(test_excluded_move_search);
     RUN_TEST(test_iir_reduction);
     RUN_TEST(test_aspiration_search);

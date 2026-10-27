@@ -37,4 +37,8 @@ int64_t datagen_to_file(const char* path, int games, int depth, uint32_t seed);
  * Returns 0, or 1 if the network can't be loaded. Used to check the trainer's export. */
 int nnue_eval_fen(const char* net_path, const char* fen);
 
+/* OpenBench's SPSA input for the tunable search parameters, a line each (core/src/tune.h). Only a
+ * build with TIKI_TUNE has them, otherwise it says so. */
+void print_spsa_input(void);
+
 #endif

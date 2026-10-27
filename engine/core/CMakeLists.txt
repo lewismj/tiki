@@ -25,6 +25,7 @@ set (SOURCES
         src/datagen.c
         src/tools.c
         src/limits.c
+        src/tune.c
         src/nnue/nnue.c
         src/nnue/nnue_embedded.c
 )

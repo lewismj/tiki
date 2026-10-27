@@ -61,6 +61,7 @@ training/nets/
 !models/*.nnue
 
 # builds
+/tiki
 build
 /build-*
 /build-release/
