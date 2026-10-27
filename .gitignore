@@ -82,3 +82,7 @@ dist/
 
 # Candidate models for testing
 nnue_candidates/
+
+
+tiki-dev
+tiki-tune
