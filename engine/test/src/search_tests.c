@@ -133,14 +133,20 @@ void test_search_tables_cleared_between_searches() {
     search_state_t search_state;
     init_search_state(&search_state);
     search_state.history_moves[N][f3] = 123;
+    search_state.history_moves[n][c6] = -77;
     search_state.killer_moves[0][3] = 77;
     search_state.pv_table[0][0] = 88;
 
-    /* Before each 'go': nothing learnt by the previous search is kept. */
+    /* Before each 'go': the path tables are emptied, history is halved. */
     clear_pv_table(&search_state);
-    TEST_ASSERT_EQUAL_INT(0, search_state.history_moves[N][f3]);
+    TEST_ASSERT_EQUAL_INT(61, search_state.history_moves[N][f3]);
+    TEST_ASSERT_EQUAL_INT(-38, search_state.history_moves[n][c6]);
     TEST_ASSERT_EQUAL_UINT32(0, search_state.killer_moves[0][3]);
     TEST_ASSERT_EQUAL_UINT32(0, search_state.pv_table[0][0]);
+
+    /* A new game ('ucinewgame') starts with no history. */
+    init_search_state(&search_state);
+    TEST_ASSERT_EQUAL_INT(0, search_state.history_moves[N][f3]);
 }
 
 void test_search_stalemate_root() {
@@ -550,28 +556,37 @@ void test_quiescence_searches_promotion_with_negative_history() {
 
 void test_lmr_reduction() {
     /* No reduction for the first moves or shallow depths. */
-    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(1, 10, false));
-    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(3, 1, false));
+    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(1, 10, false, 0));
+    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(3, 1, false, 0));
 
     /* Grows with depth and with the move number, never decreasing. */
     for (int depth = 2; depth < 40; depth++) {
         for (int moves = 1; moves < 60; moves++) {
-            int r = lmr_reduction(depth, moves, false);
-            TEST_ASSERT_TRUE(r >= lmr_reduction(depth - 1, moves, false));
-            TEST_ASSERT_TRUE(r >= lmr_reduction(depth, moves - 1, false));
+            int r = lmr_reduction(depth, moves, false, 0);
+            TEST_ASSERT_TRUE(r >= lmr_reduction(depth - 1, moves, false, 0));
+            TEST_ASSERT_TRUE(r >= lmr_reduction(depth, moves - 1, false, 0));
             /* At least one ply is left to search. */
             TEST_ASSERT_TRUE(depth - 1 - r >= 1);
             /* PV nodes are reduced less, by one ply. */
-            int pv = lmr_reduction(depth, moves, true);
+            int pv = lmr_reduction(depth, moves, true, 0);
             TEST_ASSERT_TRUE(pv == r || pv == r - 1);
         }
     }
 
     /* A deep late move is reduced by more than the old flat 1. */
-    TEST_ASSERT_TRUE(lmr_reduction(12, 20, false) >= 2);
+    TEST_ASSERT_TRUE(lmr_reduction(12, 20, false, 0) >= 2);
 
     /* Moves past the end of the table use the last column. */
-    TEST_ASSERT_EQUAL_INT(lmr_reduction(20, LMR_TABLE_SIZE - 1, false), lmr_reduction(20, 200, false));
+    TEST_ASSERT_EQUAL_INT(lmr_reduction(20, LMR_TABLE_SIZE - 1, false, 0), lmr_reduction(20, 200, false, 0));
+
+    /* History: a ply less per LMR_HISTORY_DIVISOR of a good score, a ply more per one of a bad score. */
+    const int r = lmr_reduction(12, 20, false, 0);
+    TEST_ASSERT_EQUAL_INT(r, lmr_reduction(12, 20, false, LMR_HISTORY_DIVISOR - 1));
+    TEST_ASSERT_EQUAL_INT(r - 1, lmr_reduction(12, 20, false, LMR_HISTORY_DIVISOR));
+    TEST_ASSERT_EQUAL_INT(r + 1, lmr_reduction(12, 20, false, -LMR_HISTORY_DIVISOR));
+    /* Still within [0, depth - 2] at the history bounds. */
+    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(12, 20, false, HISTORY_MAX));
+    TEST_ASSERT_EQUAL_INT(10, lmr_reduction(12, 20, false, -HISTORY_MAX));
 }
 
 void test_iir_reduction() {

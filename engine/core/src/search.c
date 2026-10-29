@@ -263,13 +263,18 @@ bool can_reduce(int depth, int moves_searched, bool is_quiet, bool gives_check, 
 }
 
 /**
- * Late move reduction for a quiet move, from the log table, one ply less in PV nodes. Clamped so
- * the reduced search still has at least one ply (depth - 1 - r >= 1).
+ * Late move reduction for a quiet move, from the log table, one ply less in PV nodes, and adjusted
+ * by the move's history: history / LMR_HISTORY_DIVISOR plies less for a move that has often been
+ * good, more for one that hasn't. History averages about 900 in magnitude (bench), so a move well
+ * above or below average moves a ply, the strongest (+-HISTORY_MAX) up to 7. Clamped so the reduced
+ * search still has at least one ply (depth - 1 - r >= 1). Against the same search without it (both
+ * with persistent history): SPRT +15.0 +- 7.4 after 3388 games, H1 accepted [0, 5].
  */
-int lmr_reduction(int depth, int moves_searched, bool is_pv_node) {
+int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history) {
     int r = lmr_table[depth < LMR_TABLE_SIZE ? depth : LMR_TABLE_SIZE - 1]
                      [moves_searched < LMR_TABLE_SIZE ? moves_searched : LMR_TABLE_SIZE - 1];
     if (is_pv_node) r--;
+    r -= history / LMR_HISTORY_DIVISOR;
     if (r > depth - 2) r = depth - 2;
     return r > 0 ? r : 0;
 }
@@ -588,7 +593,8 @@ int negamax(int alpha,
         const bool is_killer = mv == search_state->killer_moves[0][search_state->ply] ||
                                mv == search_state->killer_moves[1][search_state->ply];
         const int reduction = can_reduce(depth, num_moves_searched, is_quiet, gives_check, in_check, is_killer) ?
-                              lmr_reduction(depth, num_moves_searched, is_pv_node) : 0;
+                              lmr_reduction(depth, num_moves_searched, is_pv_node,
+                                            search_state->history_moves[get_piece_moved(mv)][get_target_square(mv)]) : 0;
         /* The TT move a ply deeper if it's singular, shallower if it isn't but beat beta (see above). */
         const int new_depth = depth - 1 + (mv == tt_move ? extension : 0);
 
@@ -802,14 +808,16 @@ static void print_info(int score, int depth, uint64_t nodes, const search_state_
 /**
  * Starts limits->threads - 1 helpers on copies of the root position, returns the number started
  * (fewer if memory or thread creation fails). Each helper sets up its own search state, only the
- * game history for repetitions (up to the root) and the scalars are copied from the main thread's.
+ * game history for repetitions (up to the root), the move history and the scalars are copied from
+ * the main thread's.
  */
 static int start_helpers(board_t* board, search_state_t* search_state, limits_t* limits, search_helper_t** helpers) {
     int count = limits->threads - 1;
     *helpers = helpers_kept;
     if (count <= 0) return 0;
 
-    /* Nothing in a helper carries over between searches, so a larger set starts afresh. */
+    /* Nothing in a helper carries over between searches (history is the main thread's), so a larger
+     * set starts afresh. */
     if (count > helpers_allocated) {
         search_helper_t* grown = allocate_helpers(count);
         if (grown == NULL) {
@@ -839,6 +847,7 @@ static int start_helpers(board_t* board, search_state_t* search_state, limits_t*
         state->score_pv = false;
         state->follow_pv = true;
         state->thread_id = started + 1;
+        memcpy(state->history_moves, search_state->history_moves, sizeof(state->history_moves));
         atomic_init(&state->shared_nodes, 0);
         helper->limits = limits;
         if (pthread_create(&helper->thread, NULL, helper_search, helper) != 0) break;

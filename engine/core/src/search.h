@@ -70,7 +70,7 @@ bool can_late_move_prune(int depth, int moves_searched, int alpha, bool in_check
 bool can_see_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node);
 int see_prune_threshold(int depth, bool is_quiet);
 bool can_reduce(int depth, int moves_searched, bool is_quiet, bool gives_check, bool in_check, bool is_killer);
-int lmr_reduction(int depth, int moves_searched, bool is_pv_node);
+int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history);
 int iir_reduction(int depth, move_t tt_move);
 bool can_singular_extend(int depth, int ply, int root_depth, move_t tt_move, int tt_depth, tt_entry_type tt_type,
                          int tt_score);

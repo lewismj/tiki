@@ -31,6 +31,7 @@ void init_lmr_table();
 #define LMR_MIN_DEPTH 3          /* Late move reduction from this depth...                                   */
 #define LMR_MIN_MOVES 3          /* ...after this many moves have been searched at the node.                 */
 #define LMR_TABLE_SIZE 64
+#define LMR_HISTORY_DIVISOR 1000 /* A quiet move is reduced history / this plies less (more if negative).     */
 #define IIR_MIN_DEPTH 4          /* Internal iterative reduction (no TT move) from this depth.               */
 #define ASPIRATION_WINDOW 25     /* Initial half-width of the root window around the previous score...       */
 #define ASPIRATION_MAX_DELTA 1000 /* ...doubled on each fail, full window once it's wider than this.         */
