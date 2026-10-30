@@ -109,6 +109,11 @@ static inline_always transposition_node_t* tt_entry(const uint64_t position_hash
     return &t_table[position_hash & (tt_size - 1)];
 }
 
+/* Starts loading the position's entry into the cache, so it's there by the time it's probed. */
+static inline_always void tt_prefetch(const uint64_t position_hash) {
+    __builtin_prefetch(tt_entry(position_hash));
+}
+
 /**
  * Loads the entry's data, true if it belongs to this position (and wasn't torn by a concurrent
  * save). 'data' is written either way, so a save can see what it would replace.

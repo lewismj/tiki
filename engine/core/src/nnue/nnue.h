@@ -51,15 +51,17 @@
 #define NNUE_MAGIC "TIKINNUE"
 #define NNUE_VERSION 1
 
+/* The weights and accumulators are 64 byte aligned (align, rows of 512 bytes), so no SIMD load
+ * splits a cache line. */
 typedef struct {
     int16_t* ft_weights;                    /* [NNUE_INPUTS][NNUE_HIDDEN] */
-    int16_t ft_bias[NNUE_HIDDEN];
-    int16_t out_weights[2 * NNUE_HIDDEN];   /* Side to move, then the other side. */
+    int16_t ft_bias[NNUE_HIDDEN] align;
+    int16_t out_weights[2 * NNUE_HIDDEN] align; /* Side to move, then the other side. */
     int32_t out_bias;
 } nnue_network_t;
 
 typedef struct {
-    int16_t values[2][NNUE_HIDDEN];         /* Indexed by perspective (white, black). */
+    int16_t values[2][NNUE_HIDDEN] align;   /* Indexed by perspective (white, black). */
 } nnue_accumulator_t;
 
 /**
@@ -95,7 +97,7 @@ typedef struct {
  * only applies the pieces that differ (usually a few) rather than adding all of them.
  */
 typedef struct {
-    int16_t values[NNUE_HIDDEN];
+    int16_t values[NNUE_HIDDEN] align;
     bitboard pieces[12];
 } nnue_cache_entry_t;
 

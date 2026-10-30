@@ -105,11 +105,15 @@ void score_moves(const move_buffer_t* buffer, int* scores, move_t tt_move, board
 /**
  * Selection sort one step at a time: swap the best scored move from i onwards into i and return it.
  * Most nodes cut off after one or two moves, so sorting the whole list up front is wasted work.
+ * The scan is branchless (the comparison mispredicts often), ties keep the earlier move.
  */
 move_t pick_next_move(move_buffer_t* buffer, int* scores, int i) {
     int best = i;
+    int best_score = scores[i];
     for (int j = i + 1; j < buffer->index; j++) {
-        if (scores[j] > scores[best]) best = j;
+        const bool better = scores[j] > best_score;
+        best = better ? j : best;
+        best_score = better ? scores[j] : best_score;
     }
     if (best != i) {
         move_t mv = buffer->moves[best];
@@ -359,6 +363,8 @@ bool is_draw(board_t* board, search_state_t* search_state) {
  */
 static inline_always bool search_make_move(board_t* board, search_state_t* search_state, move_t mv) {
     if (!make_move(board, mv)) return false;
+    /* The child probes the TT first thing, the NNUE push overlaps the memory load. */
+    tt_prefetch(board->hash);
     nnue_push(&search_state->nnue, board, mv);
     return true;
 }

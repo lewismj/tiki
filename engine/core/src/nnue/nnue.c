@@ -59,9 +59,30 @@ int nnue_active_features(const board_t* board, colour perspective, int* features
     return n;
 }
 
+/* Feature transformer weights, 64 byte aligned like the rest of the network (see nnue.h). */
+#define NNUE_FT_BYTES ((size_t) NNUE_INPUTS * NNUE_HIDDEN * sizeof(int16_t))
+static_assert(NNUE_FT_BYTES % 64 == 0, "aligned_alloc needs a multiple of the alignment");
+
+static int16_t* allocate_ft_weights(void) {
+#if defined(_WIN32)
+    return _aligned_malloc(NNUE_FT_BYTES, 64);
+#else
+    return aligned_alloc(64, NNUE_FT_BYTES);
+#endif
+}
+
+static void free_ft_weights(int16_t* weights) {
+#if defined(_WIN32)
+    _aligned_free(weights);
+#else
+    free(weights);
+#endif
+}
+
 bool nnue_allocate(void) {
     nnue_free();
-    nnue_net.ft_weights = calloc((size_t) NNUE_INPUTS * NNUE_HIDDEN, sizeof(int16_t));
+    nnue_net.ft_weights = allocate_ft_weights();
+    if (nnue_net.ft_weights != NULL) memset(nnue_net.ft_weights, 0, NNUE_FT_BYTES);
     loaded_path[0] = '\0';
     next_generation();
     memset(nnue_net.ft_bias, 0, sizeof(nnue_net.ft_bias));
@@ -71,7 +92,7 @@ bool nnue_allocate(void) {
 }
 
 void nnue_free(void) {
-    free(nnue_net.ft_weights);
+    free_ft_weights(nnue_net.ft_weights);
     nnue_net.ft_weights = NULL;
     loaded_path[0] = '\0';
 }
@@ -103,7 +124,7 @@ bool nnue_load_memory(const void* data, size_t size, const char* name) {
     if (!little_endian_host() || data == NULL) return false;
 
     /* Read into a new network, the current one is only replaced once this one is complete. */
-    nnue_network_t net = { .ft_weights = malloc(NNUE_FT_COUNT * sizeof(int16_t)) };
+    nnue_network_t net = { .ft_weights = allocate_ft_weights() };
     char magic[8];
     uint32_t header[3];
     size_t at = 0;
@@ -119,7 +140,7 @@ bool nnue_load_memory(const void* data, size_t size, const char* name) {
               at == size; /* Nothing after the network. */
 
     if (!ok) {
-        free(net.ft_weights);
+        free_ft_weights(net.ft_weights);
         return false;
     }
     nnue_free();
@@ -174,14 +195,33 @@ const char* nnue_simd(void) {
     return "avx2";
 }
 
-/* out = in + the 'added' rows - the 'removed' rows, over the whole accumulator ('out' may be 'in'). */
+/*
+ * out = in + the 'added' rows - the 'removed' rows, over the whole accumulator ('out' may be 'in').
+ * A tile of the accumulator stays in registers while every row is applied to it, half the
+ * accumulator at a time (8 of the 16 registers, the rest hold the rows' loads).
+ */
+#define NNUE_TILE_REGISTERS 8
+#define NNUE_TILE (NNUE_TILE_REGISTERS * 16)
+static_assert(NNUE_HIDDEN % NNUE_TILE == 0, "the accumulator is a whole number of tiles");
+
 static inline void apply_rows(int16_t* out, const int16_t* in, const int16_t* const* added, int added_count,
                               const int16_t* const* removed, int removed_count) {
-    for (int j = 0; j < NNUE_HIDDEN; j += 16) {
-        __m256i v = _mm256_loadu_si256((const __m256i*) (in + j));
-        for (int a = 0; a < added_count; a++) v = _mm256_add_epi16(v, _mm256_loadu_si256((const __m256i*) (added[a] + j)));
-        for (int r = 0; r < removed_count; r++) v = _mm256_sub_epi16(v, _mm256_loadu_si256((const __m256i*) (removed[r] + j)));
-        _mm256_storeu_si256((__m256i*) (out + j), v);
+    for (int t = 0; t < NNUE_HIDDEN; t += NNUE_TILE) {
+        __m256i v[NNUE_TILE_REGISTERS];
+        for (int k = 0; k < NNUE_TILE_REGISTERS; k++) v[k] = _mm256_loadu_si256((const __m256i*) (in + t + 16 * k));
+        for (int a = 0; a < added_count; a++) {
+            const int16_t* row = added[a] + t;
+            for (int k = 0; k < NNUE_TILE_REGISTERS; k++) {
+                v[k] = _mm256_add_epi16(v[k], _mm256_loadu_si256((const __m256i*) (row + 16 * k)));
+            }
+        }
+        for (int r = 0; r < removed_count; r++) {
+            const int16_t* row = removed[r] + t;
+            for (int k = 0; k < NNUE_TILE_REGISTERS; k++) {
+                v[k] = _mm256_sub_epi16(v[k], _mm256_loadu_si256((const __m256i*) (row + 16 * k)));
+            }
+        }
+        for (int k = 0; k < NNUE_TILE_REGISTERS; k++) _mm256_storeu_si256((__m256i*) (out + t + 16 * k), v[k]);
     }
 }
 
