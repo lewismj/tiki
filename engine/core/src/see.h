@@ -85,4 +85,60 @@ static inline_always int see(const board_t* board, move_t move) {
     return gain[0];
 }
 
+/**
+ * see(board, move) >= threshold, the question the search asks, answered without playing out the
+ * whole exchange (Stockfish's see_ge). 'swap' is how far the side that just captured is above the
+ * threshold if the other side doesn't recapture, less the value of the piece it would lose if it
+ * does; each side stops as soon as the result can't change. The attackers are found once, then
+ * only the sliders behind a capturing piece are added (x-rays). Same rules as see: least valuable
+ * attacker first, no king recapture into an attacked square, pins ignored.
+ */
+static inline_always bool see_ge(const board_t* board, move_t move, int threshold) {
+    const square target = get_target_square(move);
+
+    /* Even winning the captured piece for nothing doesn't reach the threshold. */
+    int swap = captured_value(board, move) - threshold;
+    if (swap < 0) return false;
+    /* Even losing the moving piece for it stays at or above the threshold. */
+    swap = see_values[get_piece_moved(move)] - swap;
+    if (swap <= 0) return true;
+
+    bitboard occupancy = board->occupancy[both] ^ (1ULL << get_source_square(move));
+    if (get_enpassant_flag(move)) {
+        occupancy ^= 1ULL << (board->side == white ? target + 8 : target - 8);
+    }
+    const bitboard diagonal = board->pieces[B] | board->pieces[b] | board->pieces[Q] | board->pieces[q];
+    const bitboard straight = board->pieces[R] | board->pieces[r] | board->pieces[Q] | board->pieces[q];
+    bitboard attackers = attackers_to(board, target, occupancy);
+
+    colour side = board->side;
+    bool result = true;
+    while (true) {
+        side ^= 1;
+        attackers &= occupancy;
+        const bitboard own = attackers & board->occupancy[side];
+        if (!own) break;
+        result = !result;
+
+        /* Least valuable attacker (pieces in P, N, B, R, Q, K order), there is one. */
+        const int* pieces = side == white ? white_pieces : black_pieces;
+        int i = 0;
+        bitboard candidates;
+        while (!(candidates = own & board->pieces[pieces[i]])) i++;
+
+        /* The king doesn't recapture while the other side still attacks the square. Unlike
+         * Stockfish's see_ge, a king that does recapture is then played like any other piece, as see
+         * does: leaving its square can uncover a slider that takes it after all. */
+        if (i == 5 && (attackers & board->occupancy[side ^ 1])) return !result;
+
+        swap = see_values[pieces[i]] - swap;
+        if (swap < (int) result) break;
+
+        occupancy ^= candidates & -candidates;
+        if (i == 0 || i == 2 || i == 4 || i == 5) attackers |= bishop_attack(target, occupancy) & diagonal;
+        if (i == 3 || i == 4 || i == 5) attackers |= rook_attack(target, occupancy) & straight;
+    }
+    return result;
+}
+
 #endif

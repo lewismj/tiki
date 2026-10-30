@@ -14,6 +14,7 @@
 #include "../../core/src/search_constants.h"
 #include "../../core/src/move_generator.h"
 #include "test_network.h"
+#include "test_positions.h"
 
 #define START_FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
@@ -25,6 +26,12 @@ static const char* const positions[] = {
         "6k1/6p1/6Pp/ppp5/3pn2P/1P3K2/1PP2P2/8 b - - 3 54",
 };
 #define POSITION_COUNT ((int) (sizeof(positions) / sizeof(positions[0])))
+
+/* The property tests (an invariant in every position) also run over the shared test_positions. */
+#define PROPERTY_POSITION_COUNT (POSITION_COUNT + TEST_POSITION_COUNT)
+static const char* property_position(int i) {
+    return i < POSITION_COUNT ? positions[i] : test_positions[i - POSITION_COUNT];
+}
 
 
 static int compare_ints(const void* a, const void* b) {
@@ -92,9 +99,9 @@ void test_nnue_feature_index_known_values() {
 
 void test_nnue_features_in_range_and_unique() {
     int features[NNUE_MAX_ACTIVE];
-    for (int i = 0; i < POSITION_COUNT; i++) {
+    for (int i = 0; i < PROPERTY_POSITION_COUNT; i++) {
         board_t board;
-        parse_fen(positions[i], &board);
+        parse_fen(property_position(i), &board);
         for (int c = white; c <= black; c++) {
             int n = sorted_features(&board, c, features);
             TEST_ASSERT_EQUAL_INT(pop_count(board.occupancy[both]), n);
@@ -108,9 +115,9 @@ void test_nnue_features_in_range_and_unique() {
 
 void test_nnue_feature_symmetry() {
     int a[NNUE_MAX_ACTIVE], b[NNUE_MAX_ACTIVE];
-    for (int i = 0; i < POSITION_COUNT; i++) {
+    for (int i = 0; i < PROPERTY_POSITION_COUNT; i++) {
         board_t board, flipped, mirrored;
-        parse_fen(positions[i], &board);
+        parse_fen(property_position(i), &board);
         colour_flip(&board, &flipped);
         mirror(&board, &mirrored);
 
@@ -154,12 +161,12 @@ void test_nnue_evaluate_known_value() {
 
 void test_nnue_evaluate_colour_symmetric() {
     random_network(12345);
-    for (int i = 0; i < POSITION_COUNT; i++) {
+    for (int i = 0; i < PROPERTY_POSITION_COUNT; i++) {
         board_t board, flipped;
-        parse_fen(positions[i], &board);
+        parse_fen(property_position(i), &board);
         colour_flip(&board, &flipped);
         /* Same position for the other colour, same score for the side to move. */
-        TEST_ASSERT_EQUAL_INT_MESSAGE(nnue_evaluate(&board), nnue_evaluate(&flipped), positions[i]);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(nnue_evaluate(&board), nnue_evaluate(&flipped), property_position(i));
     }
     nnue_free();
 }
@@ -417,9 +424,9 @@ void test_nnue_refresh_matches_plain_sum() {
     /* The accumulator code (SIMD if built) against a plain sum of the feature rows. */
     random_network(2718);
     int features[NNUE_MAX_ACTIVE];
-    for (int i = 0; i < POSITION_COUNT; i++) {
+    for (int i = 0; i < PROPERTY_POSITION_COUNT; i++) {
         board_t board;
-        parse_fen(positions[i], &board);
+        parse_fen(property_position(i), &board);
         nnue_accumulator_t accumulator;
         nnue_refresh(&board, &accumulator);
         for (int c = white; c <= black; c++) {
@@ -427,7 +434,7 @@ void test_nnue_refresh_matches_plain_sum() {
             for (int j = 0; j < NNUE_HIDDEN; j++) {
                 int sum = nnue_net.ft_bias[j];
                 for (int f = 0; f < n; f++) sum += nnue_net.ft_weights[(size_t) features[f] * NNUE_HIDDEN + j];
-                TEST_ASSERT_EQUAL_INT16_MESSAGE((int16_t) sum, accumulator.values[c][j], positions[i]);
+                TEST_ASSERT_EQUAL_INT16_MESSAGE((int16_t) sum, accumulator.values[c][j], property_position(i));
             }
         }
     }

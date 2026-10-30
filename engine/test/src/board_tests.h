@@ -11,6 +11,7 @@ void test_slider_attacks_match_reference();
 void test_generate_captures_matches_filtered_moves();
 void test_generate_captures_promotions();
 void test_see();
+void test_see_ge_matches_see();
 void test_board_to_fen_round_trip();
 
 #endif

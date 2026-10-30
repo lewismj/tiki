@@ -74,6 +74,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_generate_captures_matches_filtered_moves);
     RUN_TEST(test_generate_captures_promotions);
     RUN_TEST(test_see);
+    RUN_TEST(test_see_ge_matches_see);
     RUN_TEST(test_board_to_fen_round_trip);
     RUN_TEST(test_nnue_feature_index_known_values);
     RUN_TEST(test_nnue_features_in_range_and_unique);

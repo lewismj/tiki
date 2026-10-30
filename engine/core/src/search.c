@@ -34,7 +34,7 @@ int score_move(move_t move, move_t tt_move, board_t* board, search_state_t* sear
             if (is_bit_set(&board->pieces[pieces[i]], target)) {
                 /* Losing captures (SEE < 0) after the quiet moves. Only possible when the
                  * attacker is worth more than the victim, so SEE is skipped otherwise. */
-                if (see_values[piece] > see_values[pieces[i]] && see(board, move) < 0) {
+                if (see_values[piece] > see_values[pieces[i]] && !see_ge(board, move, 0)) {
                     return BAD_CAPTURE_SCORE + search_const.mvv_lva[piece][pieces[i]];
                 }
                 return CAPTURE_SCORE + search_const.mvv_lva[piece][pieces[i]];
@@ -576,7 +576,7 @@ int negamax(int alpha,
 
         /* SEE pruning, also before making the move. Promotions are always searched. */
         if (!get_promoted_piece(mv) && can_see_prune(depth, num_moves_searched, alpha, in_check, is_pv_node) &&
-            see(board, mv) < see_prune_threshold(depth, is_quiet)) continue;
+            !see_ge(board, mv, see_prune_threshold(depth, is_quiet))) continue;
 
         if (!search_make_move(board, search_state, mv)) {
             pop_move(board);

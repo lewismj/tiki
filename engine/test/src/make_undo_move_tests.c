@@ -5,6 +5,7 @@
 #include "../../core/src/board.h"
 #include "../../core/src/move_generator.h"
 #include "../../core/src/uci.h"
+#include "test_positions.h"
 
 
 void test_make_move_hash1() {
@@ -100,10 +101,11 @@ void test_undo_restores_state1() {
             "r3k2r/p1ppqpb1/bn2pnp1/3PN3/Pp2P3/2N2Q1p/1PPBBPPP/R3K2R b KQkq a3 0 1",
     };
     static int sz = 14;
-    for (int i=0; i<sz; i++) {
+    for (int i=0; i<sz + TEST_POSITION_COUNT; i++) {
+        const char* input = i < sz ? fen[i] : test_positions[i - sz];
         board_t board, original;
-        parse_fen(fen[i], &original);
-        parse_fen(fen[i], &board);
+        parse_fen(input, &original);
+        parse_fen(input, &board);
         TEST_ASSERT_EQUAL_UINT64(original.hash, board.hash);
 
         /*
@@ -172,6 +174,13 @@ void test_incremental_hash_matches_full() {
         parse_fen(positions[i].fen, &board);
         TEST_ASSERT_EQUAL_UINT64(compute_hash(&board), board.hash);
         TEST_ASSERT_EQUAL_INT_MESSAGE(0, hash_mismatches(&board, positions[i].depth), positions[i].fen);
+    }
+    /* The shared positions, two plies deep. */
+    for (int i = 0; i < TEST_POSITION_COUNT; i++) {
+        board_t board;
+        parse_fen(test_positions[i], &board);
+        TEST_ASSERT_EQUAL_UINT64(compute_hash(&board), board.hash);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, hash_mismatches(&board, 2), test_positions[i]);
     }
 }
 
