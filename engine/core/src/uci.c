@@ -268,6 +268,8 @@ void parse_go_limits(const char* command, const board_t* board, limits_t* limits
     if ((arg= strstr(command, "movetime")))
         limits->move_time = atoi(arg+9);
 
+    /* Without 'movestogo' the rest of the game is sudden death, TM_MOVES_LEFT is the estimate. */
+    const bool moves_to_go_given = strstr(command, "movestogo") != NULL;
     if ((arg = strstr(command, "movestogo")))
         limits->moves_to_go = atoi(arg+10);
     if (limits->moves_to_go < 1) limits->moves_to_go = 1;
@@ -302,25 +304,35 @@ void parse_go_limits(const char* command, const board_t* board, limits_t* limits
         int available = limits->time - move_overhead;
         if (available < 0) available = 0;
 
-        int budget;
+        /* Hard and soft limits in ms from now, see limits.h. */
+        int hard, soft;
         if (limits->move_time != -1) {
-            budget = available;
+            /* 'movetime': all of it, and every depth that starts in time is searched. */
+            hard = soft = available;
+        } else if (moves_to_go_given && limits->moves_to_go == 1) {
+            /* The last move before the time control can use all of it. */
+            hard = available;
+            soft = available / 2;
         } else {
+            const int moves_left = moves_to_go_given ? limits->moves_to_go : TM_MOVES_LEFT;
+            const int64_t base = available / moves_left + (int64_t) limits->increment * TM_INCREMENT_PERCENT / 100;
             /* Never more than half of what's left, however large the increment, so a low clock can't
-             * run out. All of it for the last move before the time control ('movestogo 1'). */
-            budget = available / limits->moves_to_go + limits->increment;
-            const int cap = limits->moves_to_go == 1 ? available : available / 2;
-            if (budget > cap) budget = cap;
+             * run out. */
+            const int64_t cap = available / 2;
+            int64_t h = base * TM_HARD_PERCENT / 100;
+            int64_t s = base * TM_SOFT_PERCENT / 100;
+            if (h > cap) h = cap;
+            if (s > h) s = h;
+            hard = (int) h;
+            soft = (int) s;
+            limits->adaptive = true;
         }
         /* With nothing left, a moment: the search returns its depth 1 move, or the first legal one. */
-        if (budget < 1) budget = 1;
-        limits->time = budget;
-        limits->stop_time = limits->start_time + (uint64_t) budget;
-
-        /* Don't start a new depth after half the allocation, 'movetime' can use all of it. */
-        limits->soft_stop_time = limits->move_time != -1 ?
-                                 limits->stop_time :
-                                 limits->start_time + (limits->stop_time - limits->start_time) / 2;
+        if (hard < 1) hard = 1;
+        if (soft < 1) soft = 1;
+        limits->time = hard;
+        limits->stop_time = limits->start_time + (uint64_t) hard;
+        limits->soft_stop_time = limits->start_time + (uint64_t) soft;
     }
 }
 

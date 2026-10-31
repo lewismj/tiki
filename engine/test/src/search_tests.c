@@ -236,6 +236,45 @@ void test_time_limit_stops_at_first_check() {
     TEST_ASSERT_TRUE(make_move(&board, mv));
 }
 
+void test_tm_scale() {
+    /* Just changed and the moves close (30% of the nodes): more than the soft time. */
+    TEST_ASSERT_TRUE(tm_scale(0, 30, 100) > 2.0);
+    /* Stable for long and clearly best (90%): well under it. */
+    TEST_ASSERT_TRUE(tm_scale(TM_STABILITY_MAX, 90, 100) < 0.7);
+
+    /* More stability, or a larger share of the nodes, never gives more time. */
+    for (int s = 0; s < TM_STABILITY_MAX; s++) {
+        TEST_ASSERT_TRUE(tm_scale(s + 1, 50, 100) <= tm_scale(s, 50, 100));
+    }
+    for (uint64_t n = 0; n < 100; n += 10) {
+        TEST_ASSERT_TRUE(tm_scale(2, n + 10, 100) <= tm_scale(2, n, 100));
+    }
+
+    /* Out of range: stability is capped, and no root nodes counts as all on the best move. */
+    TEST_ASSERT_TRUE(tm_scale(TM_STABILITY_MAX, 50, 100) == tm_scale(TM_STABILITY_MAX + 10, 50, 100));
+    TEST_ASSERT_TRUE(tm_scale(1, 100, 100) == tm_scale(1, 0, 0));
+    TEST_ASSERT_TRUE(tm_scale(1, 100, 100) == tm_scale(1, 200, 100));
+}
+
+void test_clock_search_within_hard_limit() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* A real clock search: however the soft limit is scaled, it ends by the hard limit (plus the
+     * time to unwind the search and a little slack for a loaded machine). */
+    setup_position("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+                   &board, &search_state, &limits, MAX_SEARCH_DEPTH);
+    parse_go_limits("go wtime 2000 btime 2000 winc 20 binc 20", &board, &limits);
+    limits.quiet = true;
+    TEST_ASSERT_TRUE(limits.adaptive);
+
+    move_t mv = find_best_move(&board, &search_state, &limits);
+    const uint64_t elapsed = clock_time_ms() - limits.start_time;
+    TEST_ASSERT_TRUE(elapsed <= limits.stop_time - limits.start_time + 50);
+    TEST_ASSERT_TRUE(make_move(&board, mv));
+}
+
 void test_pick_next_move_order() {
     move_buffer_t buffer;
     int scores[MOVE_BUFFER_SIZE];

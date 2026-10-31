@@ -9,6 +9,8 @@ void test_bench_positions_are_legal();
 void test_bench_is_deterministic();
 void test_time_checked_once_per_2048_nodes();
 void test_time_limit_stops_at_first_check();
+void test_tm_scale();
+void test_clock_search_within_hard_limit();
 void test_pick_next_move_order();
 void test_quiescence_sees_quiet_queen_promotion();
 void test_check_extended_at_horizon();

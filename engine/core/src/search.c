@@ -448,7 +448,10 @@ int negamax(int alpha,
     search_state->pv_length[search_state->ply] = search_state->ply;
 
     /* The root, the accumulators start again from this position. */
-    if (search_state->ply == 0) nnue_reset(&search_state->nnue);
+    if (search_state->ply == 0) {
+        nnue_reset(&search_state->nnue);
+        search_state->best_move_nodes = 0;
+    }
 
     /* Whether this node is on the previous iteration's PV, set by the parent for this node only. */
     const bool follow_pv = search_state->follow_pv;
@@ -595,6 +598,9 @@ int negamax(int alpha,
             continue;
         }
 
+        /* At the root, the nodes this move takes, for time management (tm_scale). */
+        const uint64_t nodes_before_move = search_state->nodes;
+
         /* Late move reduction. Killers are for this ply, checked before ++ply. */
         const bool is_killer = mv == search_state->killer_moves[0][search_state->ply] ||
                                mv == search_state->killer_moves[1][search_state->ply];
@@ -636,6 +642,7 @@ int negamax(int alpha,
 
         if (score > alpha) {
             best_move = mv;
+            if (search_state->ply == 0) search_state->best_move_nodes = search_state->nodes - nodes_before_move;
 
             search_state->pv_table[search_state->ply][search_state->ply] = mv;
             for (int j = search_state->ply + 1; j < search_state->pv_length[search_state->ply + 1]; j++) {
@@ -869,17 +876,33 @@ static void stop_helpers(limits_t* limits, search_helper_t* helpers, int count) 
     }
 }
 
+/* By how many depths in a row the best move has stayed the same (capped at the last entry): more
+ * time when it just changed, less when it has held. */
+static const double tm_stability_scale[TM_STABILITY_MAX + 1] = { 2.5, 1.2, 0.9, 0.8, 0.75 };
+
+double tm_scale(int stability, uint64_t best_move_nodes, uint64_t root_nodes) {
+    if (stability < 0) stability = 0;
+    if (stability > TM_STABILITY_MAX) stability = TM_STABILITY_MAX;
+    /* The best move's share of the root's nodes: near 1 it's clearly best, low when others came close. */
+    const double fraction = root_nodes ? (double) best_move_nodes / (double) root_nodes : 1.0;
+    const double nodes_scale = (1.5 - (fraction > 1.0 ? 1.0 : fraction)) * 1.35;
+    return tm_stability_scale[stability] * nodes_scale;
+}
+
 move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* limits) {
     int score = 0;
 
     int depth = limits->depth;
     move_t move = 0;
+    move_t previous_move = 0;
+    int stability = 0;
 
     search_state->thread_id = 0;
     search_helper_t* helpers;
     const int helper_count = start_helpers(board, search_state, limits, &helpers);
 
     for (int i = 1; i <= depth; i++) {
+        const uint64_t nodes_before = search_state->nodes;
         score = aspiration_search(board, search_state, limits, i, score);
 
         /* The search may have been stopped, the PV table is then partly overwritten so keep
@@ -893,8 +916,22 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
             print_info(score, i, total_nodes(search_state, helpers, helper_count), search_state, limits);
         }
 
-        /* Soft limit, the next depth is unlikely to complete in the time left. */
-        if (limits->time_set && clock_time_ms() > limits->soft_stop_time) break;
+        stability = move == previous_move ? stability + 1 : 0;
+        previous_move = move;
+
+        /* Soft limit: no new depth after it. With a clock it's scaled by how settled the search is,
+         * from TM_SCALE_MIN_DEPTH on, and never later than the hard limit. */
+        if (limits->time_set) {
+            uint64_t soft_stop = limits->soft_stop_time;
+            if (limits->adaptive && i >= TM_SCALE_MIN_DEPTH) {
+                const double scale = tm_scale(stability, search_state->best_move_nodes,
+                                              search_state->nodes - nodes_before);
+                soft_stop = limits->start_time +
+                            (uint64_t) ((double) (limits->soft_stop_time - limits->start_time) * scale);
+                if (soft_stop > limits->stop_time) soft_stop = limits->stop_time;
+            }
+            if (clock_time_ms() > soft_stop) break;
+        }
     }
 
     stop_helpers(limits, helpers, helper_count);

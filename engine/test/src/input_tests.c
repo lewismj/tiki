@@ -220,12 +220,18 @@ void test_soft_time_limit() {
     limits_t limits;
     parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
 
+    /* A clock: soft and hard limits from the base time (limits.h), the soft one scaled in the search. */
     parse_go_limits("go wtime 60000 btime 60000", &board, &limits);
     TEST_ASSERT_TRUE(limits.time_set);
-    TEST_ASSERT_EQUAL_UINT64(limits.start_time + (limits.stop_time - limits.start_time) / 2, limits.soft_stop_time);
+    TEST_ASSERT_TRUE(limits.adaptive);
+    const uint64_t base = (60000 - MOVE_OVERHEAD_DEFAULT) / TM_MOVES_LEFT;
+    TEST_ASSERT_EQUAL_UINT64(limits.start_time + base * TM_SOFT_PERCENT / 100, limits.soft_stop_time);
+    TEST_ASSERT_EQUAL_UINT64(limits.start_time + base * TM_HARD_PERCENT / 100, limits.stop_time);
     TEST_ASSERT_TRUE(limits.soft_stop_time < limits.stop_time);
 
+    /* 'movetime' isn't scaled, every depth started in time is searched. */
     parse_go_limits("go movetime 1000", &board, &limits);
+    TEST_ASSERT_FALSE(limits.adaptive);
     TEST_ASSERT_EQUAL_UINT64(limits.stop_time, limits.soft_stop_time);
 }
 

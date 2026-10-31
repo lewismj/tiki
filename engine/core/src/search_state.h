@@ -40,6 +40,7 @@ typedef struct align {
     uint8_t pv_length[MAX_PLY];
     uint64_t nodes;
     uint64_t pv_nodes;         /* Nodes that ordered the previous iteration's PV move first (tests). */
+    uint64_t best_move_nodes;  /* Nodes the root's best move took in the last root search (time management). */
 #ifdef TIKI_SEARCH_STATS
     search_stats_t stats;
 #endif
@@ -80,6 +81,7 @@ static inline_always void age_history(search_state_t* search_state) {
 static inline_always void init_search_state(search_state_t* search_state) {
     search_state->nodes = 0;
     search_state->pv_nodes = 0;
+    search_state->best_move_nodes = 0;
 #ifdef TIKI_SEARCH_STATS
     memset(&search_state->stats, 0, sizeof(search_state->stats));
 #endif
@@ -101,6 +103,7 @@ static inline_always void init_search_state(search_state_t* search_state) {
 static inline_always void clear_pv_table(search_state_t* search_state) {
     search_state->nodes = 0;
     search_state->pv_nodes = 0;
+    search_state->best_move_nodes = 0;
     atomic_init(&search_state->shared_nodes, 0);
     search_state->ply = 0;
     search_state->null_move_index = 0;

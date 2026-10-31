@@ -24,6 +24,13 @@
  */
 move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* limits);
 
+/**
+ * The factor on the soft time limit after a completed depth (see limits.h): from how many depths
+ * in a row the best move has been unchanged ('stability', 0 when it just changed) and the share of
+ * the root's nodes ('root_nodes', that depth's) its search took ('best_move_nodes').
+ */
+double tm_scale(int stability, uint64_t best_move_nodes, uint64_t root_nodes);
+
 /* Prints 'bestmove', 'bestmove 0000' for no move. */
 void print_bestmove(move_t mv);
 
