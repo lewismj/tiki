@@ -80,6 +80,8 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_nnue_features_in_range_and_unique);
     RUN_TEST(test_nnue_feature_symmetry);
     RUN_TEST(test_nnue_evaluate_known_value);
+    RUN_TEST(test_nnue_output_buckets);
+    RUN_TEST(test_nnue_load_single_output_network);
     RUN_TEST(test_nnue_evaluate_colour_symmetric);
     RUN_TEST(test_nnue_save_load_round_trip);
     RUN_TEST(test_nnue_incremental_matches_refresh);

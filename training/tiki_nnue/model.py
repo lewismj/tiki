@@ -1,14 +1,17 @@
 """The float network, trained here and quantised by export.py into what engine/core/src/nnue/nnue.c runs.
 
     accumulator = ft_bias + sum of ft rows for the active features (one per perspective)
-    y = out(SCReLU(acc_stm) ++ SCReLU(acc_nstm)), SCReLU(x) = clamp(x, 0, 1)^2
+    y = out[bucket](SCReLU(acc_stm) ++ SCReLU(acc_nstm)), SCReLU(x) = clamp(x, 0, 1)^2
     eval (centipawns) = y * SCALE
+
+with one output layer per bucket of piece counts (features.output_bucket), so the opening, middlegame
+and endgame each get their own weighting of the same accumulator.
 """
 
 import torch
 from torch import nn
 
-from .features import INPUTS
+from .features import INPUTS, OUTPUT_BUCKETS
 
 HIDDEN = 256
 QA = 255        # Accumulator scale (an activation of 1.0 is QA).
@@ -32,16 +35,18 @@ class TikiNNUE(nn.Module):
         self.hidden = hidden
         self.ft = nn.EmbeddingBag(INPUTS, hidden, mode="sum")
         self.ft_bias = nn.Parameter(torch.zeros(hidden))
-        self.out = nn.Linear(2 * hidden, 1)
+        self.out = nn.Linear(2 * hidden, OUTPUT_BUCKETS)     # Row b is bucket b's output layer.
         nn.init.normal_(self.ft.weight, mean=0.0, std=0.05)
         nn.init.normal_(self.out.weight, mean=0.0, std=0.05)
         nn.init.zeros_(self.out.bias)
 
-    def forward(self, stm_indices, stm_offsets, nstm_indices, nstm_offsets):
-        """Inputs as for nn.EmbeddingBag (flat indices, start offset per sample). Returns eval / SCALE."""
+    def forward(self, stm_indices, stm_offsets, nstm_indices, nstm_offsets, bucket):
+        """Inputs as for nn.EmbeddingBag (flat indices, start offset per sample) and each sample's
+        output bucket. Returns eval / SCALE."""
         us = self.ft(stm_indices, stm_offsets) + self.ft_bias
         them = self.ft(nstm_indices, nstm_offsets) + self.ft_bias
-        return self.out(torch.cat([screlu(us), screlu(them)], dim=1)).squeeze(1)
+        outputs = self.out(torch.cat([screlu(us), screlu(them)], dim=1))    # [batch, OUTPUT_BUCKETS]
+        return outputs.gather(1, bucket.long().unsqueeze(1)).squeeze(1)
 
     @torch.no_grad()
     def clip_weights(self):

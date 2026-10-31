@@ -87,7 +87,7 @@ bool nnue_allocate(void) {
     next_generation();
     memset(nnue_net.ft_bias, 0, sizeof(nnue_net.ft_bias));
     memset(nnue_net.out_weights, 0, sizeof(nnue_net.out_weights));
-    nnue_net.out_bias = 0;
+    memset(nnue_net.out_bias, 0, sizeof(nnue_net.out_bias));
     return nnue_net.ft_weights != NULL;
 }
 
@@ -107,10 +107,14 @@ static bool little_endian_host(void) {
     return *(const uint8_t*) &one == 1;
 }
 
-/* Size of a network in the file format, every valid file is exactly this long. */
+/* Size of a network in the file format with 'buckets' output layers, every valid file is exactly
+ * this long (8 for version 2, 1 for version 1). */
 #define NNUE_FT_COUNT ((size_t) NNUE_INPUTS * NNUE_HIDDEN)
-#define NNUE_FILE_SIZE (8 + 3 * sizeof(uint32_t) + NNUE_FT_COUNT * sizeof(int16_t) + \
-                        NNUE_HIDDEN * sizeof(int16_t) + 2 * NNUE_HIDDEN * sizeof(int16_t) + sizeof(int32_t))
+#define NNUE_FILE_SIZE_FOR(buckets) (8 + 3 * sizeof(uint32_t) + NNUE_FT_COUNT * sizeof(int16_t) + \
+                                     NNUE_HIDDEN * sizeof(int16_t) + \
+                                     (buckets) * (2 * NNUE_HIDDEN * sizeof(int16_t) + sizeof(int32_t)))
+#define NNUE_FILE_SIZE NNUE_FILE_SIZE_FOR(NNUE_OUTPUT_BUCKETS)
+#define NNUE_FILE_SIZE_SINGLE_OUTPUT NNUE_FILE_SIZE_FOR(1)
 
 /* Copies the next 'bytes' of 'data' to 'out', false if fewer are left. */
 static bool take(const uint8_t* data, size_t size, size_t* at, void* out, size_t bytes) {
@@ -132,12 +136,23 @@ bool nnue_load_memory(const void* data, size_t size, const char* name) {
               take(data, size, &at, magic, sizeof(magic)) &&
               memcmp(magic, NNUE_MAGIC, sizeof(magic)) == 0 &&
               take(data, size, &at, header, sizeof(header)) &&
-              header[0] == NNUE_VERSION && header[1] == NNUE_INPUTS && header[2] == NNUE_HIDDEN &&
+              (header[0] == NNUE_VERSION || header[0] == NNUE_VERSION_SINGLE_OUTPUT) &&
+              header[1] == NNUE_INPUTS && header[2] == NNUE_HIDDEN &&
               take(data, size, &at, net.ft_weights, NNUE_FT_COUNT * sizeof(int16_t)) &&
-              take(data, size, &at, net.ft_bias, sizeof(net.ft_bias)) &&
-              take(data, size, &at, net.out_weights, sizeof(net.out_weights)) &&
-              take(data, size, &at, &net.out_bias, sizeof(net.out_bias)) &&
-              at == size; /* Nothing after the network. */
+              take(data, size, &at, net.ft_bias, sizeof(net.ft_bias));
+    if (ok && header[0] == NNUE_VERSION) {
+        ok = take(data, size, &at, net.out_weights, sizeof(net.out_weights)) &&
+             take(data, size, &at, net.out_bias, sizeof(net.out_bias));
+    } else if (ok) {
+        /* One output layer, the same in every bucket. */
+        ok = take(data, size, &at, net.out_weights[0], sizeof(net.out_weights[0])) &&
+             take(data, size, &at, &net.out_bias[0], sizeof(net.out_bias[0]));
+        for (int b = 1; b < NNUE_OUTPUT_BUCKETS; b++) {
+            memcpy(net.out_weights[b], net.out_weights[0], sizeof(net.out_weights[0]));
+            net.out_bias[b] = net.out_bias[0];
+        }
+    }
+    ok = ok && at == size; /* Nothing after the network. */
 
     if (!ok) {
         free_ft_weights(net.ft_weights);
@@ -155,11 +170,13 @@ bool nnue_load(const char* path) {
     if (file == NULL) return false;
 
     /* One byte more than a network, so a longer file is rejected too. */
+    static_assert(NNUE_FILE_SIZE > NNUE_FILE_SIZE_SINGLE_OUTPUT, "the larger format sets the buffer size");
     uint8_t* data = malloc(NNUE_FILE_SIZE + 1);
     const size_t size = data != NULL ? fread(data, 1, NNUE_FILE_SIZE + 1, file) : 0;
     fclose(file);
 
-    const bool ok = size == NNUE_FILE_SIZE && nnue_load_memory(data, size, path);
+    const bool ok = (size == NNUE_FILE_SIZE || size == NNUE_FILE_SIZE_SINGLE_OUTPUT) &&
+                    nnue_load_memory(data, size, path);
     free(data);
     return ok;
 }
@@ -175,8 +192,8 @@ bool nnue_save(const char* path) {
               fwrite(header, sizeof(uint32_t), 3, file) == 3 &&
               fwrite(nnue_net.ft_weights, sizeof(int16_t), ft_count, file) == ft_count &&
               fwrite(nnue_net.ft_bias, sizeof(int16_t), NNUE_HIDDEN, file) == NNUE_HIDDEN &&
-              fwrite(nnue_net.out_weights, sizeof(int16_t), 2 * NNUE_HIDDEN, file) == 2 * NNUE_HIDDEN &&
-              fwrite(&nnue_net.out_bias, sizeof(int32_t), 1, file) == 1;
+              fwrite(nnue_net.out_weights, sizeof(nnue_net.out_weights), 1, file) == 1 &&
+              fwrite(nnue_net.out_bias, sizeof(nnue_net.out_bias), 1, file) == 1;
     return fclose(file) == 0 && ok;
 }
 
@@ -248,9 +265,10 @@ static inline __m256i output_half(__m256i sum, const int16_t* values, const int1
     return sum;
 }
 
-static inline int64_t output_sum(const int16_t* us, const int16_t* them) {
-    __m256i sum = output_half(_mm256_setzero_si256(), us, nnue_net.out_weights);
-    sum = output_half(sum, them, nnue_net.out_weights + NNUE_HIDDEN);
+static inline int64_t output_sum(const int16_t* us, const int16_t* them, int bucket) {
+    const int16_t* weights = nnue_net.out_weights[bucket];
+    __m256i sum = output_half(_mm256_setzero_si256(), us, weights);
+    sum = output_half(sum, them, weights + NNUE_HIDDEN);
     int64_t lanes[4];
     _mm256_storeu_si256((__m256i*) lanes, sum);
     return lanes[0] + lanes[1] + lanes[2] + lanes[3];
@@ -272,10 +290,10 @@ static inline void apply_rows(int16_t* out, const int16_t* in, const int16_t* co
     }
 }
 
-static int64_t output_sum_scalar(const int16_t* us, const int16_t* them);
+static int64_t output_sum_scalar(const int16_t* us, const int16_t* them, int bucket);
 
-static inline int64_t output_sum(const int16_t* us, const int16_t* them) {
-    return output_sum_scalar(us, them);
+static inline int64_t output_sum(const int16_t* us, const int16_t* them, int bucket) {
+    return output_sum_scalar(us, them, bucket);
 }
 
 #endif
@@ -286,26 +304,31 @@ static inline int64_t screlu(int16_t x) {
 }
 
 /* Plain C reference, int64 so SCReLU (up to QA^2) times a weight can't overflow. */
-static int64_t output_sum_scalar(const int16_t* us, const int16_t* them) {
+static int64_t output_sum_scalar(const int16_t* us, const int16_t* them, int bucket) {
+    const int16_t* weights = nnue_net.out_weights[bucket];
     int64_t sum = 0;
     for (int i = 0; i < NNUE_HIDDEN; i++) {
-        sum += screlu(us[i]) * nnue_net.out_weights[i];
-        sum += screlu(them[i]) * nnue_net.out_weights[NNUE_HIDDEN + i];
+        sum += screlu(us[i]) * weights[i];
+        sum += screlu(them[i]) * weights[NNUE_HIDDEN + i];
     }
     return sum;
 }
 
-static inline int scale_output(int64_t sum) {
-    int64_t result = sum / NNUE_QA + nnue_net.out_bias;
+static inline int scale_output(int64_t sum, int bucket) {
+    int64_t result = sum / NNUE_QA + nnue_net.out_bias[bucket];
     return (int) (result * NNUE_SCALE / (NNUE_QA * NNUE_QB));
 }
 
-int nnue_output(const nnue_accumulator_t* accumulator, colour side) {
-    return scale_output(output_sum(accumulator->values[side], accumulator->values[side ^ 1]));
+int nnue_output(const nnue_accumulator_t* accumulator, colour side, int bucket) {
+    return scale_output(output_sum(accumulator->values[side], accumulator->values[side ^ 1], bucket), bucket);
 }
 
-int nnue_output_scalar(const nnue_accumulator_t* accumulator, colour side) {
-    return scale_output(output_sum_scalar(accumulator->values[side], accumulator->values[side ^ 1]));
+int nnue_output_scalar(const nnue_accumulator_t* accumulator, colour side, int bucket) {
+    return scale_output(output_sum_scalar(accumulator->values[side], accumulator->values[side ^ 1], bucket), bucket);
+}
+
+static inline int board_bucket(const board_t* board) {
+    return nnue_output_bucket(pop_count(board->occupancy[both]));
 }
 
 /* From scratch: the bias plus every active feature's row. */
@@ -324,7 +347,7 @@ void nnue_refresh(const board_t* board, nnue_accumulator_t* accumulator) {
 int nnue_evaluate(const board_t* board) {
     nnue_accumulator_t accumulator;
     nnue_refresh(board, &accumulator);
-    return nnue_output(&accumulator, board->side);
+    return nnue_output(&accumulator, board->side, board_bucket(board));
 }
 
 void nnue_stack_init(nnue_stack_t* stack) {
@@ -446,5 +469,5 @@ int nnue_evaluate_incremental(nnue_stack_t* stack, const board_t* board) {
     for (int c = white; c <= black; c++) {
         if (!top->computed[c]) update_perspective(stack, board, c);
     }
-    return nnue_output(&top->accumulator, board->side);
+    return nnue_output(&top->accumulator, board->side, board_bucket(board));
 }

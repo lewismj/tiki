@@ -6,9 +6,12 @@
 Only nets from the same training lineage average well: checkpoints of one run, or nets fine-tuned from the same
 parent. Independently trained nets learn their hidden units in different orders, and their average plays badly.
 
-The format (engine/core/src/nnue/nnue.c, little endian):
+The format (engine/core/src/nnue/nnue.h, little endian):
     char magic[8] = "TIKINNUE", uint32 version, uint32 inputs, uint32 hidden,
-    int16 ft_weights[inputs * hidden], int16 ft_bias[hidden], int16 out_weights[2 * hidden], int32 out_bias.
+    int16 ft_weights[inputs * hidden], int16 ft_bias[hidden],
+    int16 out_weights[buckets * 2 * hidden], int32 out_bias[buckets]
+with 8 output buckets in version 2 and 1 in version 1 (before output buckets). The nets averaged must all
+have the same version, which the output keeps.
 """
 
 import argparse
@@ -17,7 +20,7 @@ import sys
 import numpy as np
 
 MAGIC = b"TIKINNUE"
-VERSION = 1
+BUCKETS = {1: 1, 2: 8}      # Output layers in each version of the format.
 HEADER = np.dtype([("magic", "S8"), ("version", "<u4"), ("inputs", "<u4"), ("hidden", "<u4")])
 
 
@@ -27,11 +30,12 @@ def read_net(path):
     if len(data) < HEADER.itemsize:
         sys.exit(f"{path}: too short to be a network")
     header = np.frombuffer(data, HEADER, count=1)[0]
-    if header["magic"] != MAGIC or header["version"] != VERSION:
-        sys.exit(f"{path}: not a version {VERSION} tiki network")
-    inputs, hidden = int(header["inputs"]), int(header["hidden"])
+    if header["magic"] != MAGIC or int(header["version"]) not in BUCKETS:
+        sys.exit(f"{path}: not a tiki network (versions {', '.join(map(str, BUCKETS))})")
+    version, inputs, hidden = int(header["version"]), int(header["inputs"]), int(header["hidden"])
+    buckets = BUCKETS[version]
 
-    layout = [("<i2", inputs * hidden), ("<i2", hidden), ("<i2", 2 * hidden), ("<i4", 1)]
+    layout = [("<i2", inputs * hidden), ("<i2", hidden), ("<i2", buckets * 2 * hidden), ("<i4", buckets)]
     expected = HEADER.itemsize + sum(np.dtype(dtype).itemsize * count for dtype, count in layout)
     if len(data) != expected:
         sys.exit(f"{path}: {len(data)} bytes, expected {expected} for {inputs} inputs and {hidden} hidden")
@@ -40,7 +44,7 @@ def read_net(path):
     for dtype, count in layout:
         arrays.append(np.frombuffer(data, dtype, count=count, offset=at))
         at += np.dtype(dtype).itemsize * count
-    return (VERSION, inputs, hidden), arrays
+    return (version, inputs, hidden), arrays
 
 
 def main():
@@ -62,7 +66,8 @@ def main():
     shape = nets[0][0]
     for path, (other, _) in zip(args.nets, nets):
         if other != shape:
-            sys.exit(f"{path}: {other[1]} inputs and {other[2]} hidden, {args.nets[0]} has {shape[1]} and {shape[2]}")
+            sys.exit(f"{path}: version {other[0]}, {other[1]} inputs and {other[2]} hidden, "
+                     f"{args.nets[0]} has version {shape[0]}, {shape[1]} and {shape[2]}")
 
     # Average in float64 (exact for these integers), round to nearest and clip to the stored type.
     with open(args.output, "wb") as out:

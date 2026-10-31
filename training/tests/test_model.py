@@ -1,4 +1,5 @@
 import os
+import struct
 import sys
 import tempfile
 import unittest
@@ -10,6 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from tiki_nnue.data import collate, parse_line
 from tiki_nnue.export import dequantise, export, quantise, quantised_eval, read_network, write_network
+from tiki_nnue.features import OUTPUT_BUCKETS, output_bucket
 from tiki_nnue.model import SCALE, TikiNNUE, loss_fn
 
 FENS = [
@@ -34,7 +36,7 @@ def evaluate(model, fens):
     """Float eval in centipawns (side to move)."""
     batch = collate([parse_line(f"{fen} | 0 | 0.5") for fen in fens])
     with torch.no_grad():
-        return (model(*batch[:4]) * SCALE).tolist()
+        return (model(*batch[:5]) * SCALE).tolist()
 
 
 class ModelTests(unittest.TestCase):
@@ -61,9 +63,46 @@ class ModelTests(unittest.TestCase):
             path = os.path.join(directory, "net.nnue")
             write_network(network, path)
             loaded = read_network(path)
-        for key in ("ft_weights", "ft_bias", "out_weights"):
+        for key in ("ft_weights", "ft_bias", "out_weights", "out_bias"):
             np.testing.assert_array_equal(network[key], loaded[key])
-        self.assertEqual(network["out_bias"], loaded["out_bias"])
+
+    def test_single_output_network_loads_into_every_bucket(self):
+        """A version 1 file (one output layer) reads as that layer in every bucket."""
+        network = quantise(self.model)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "net.nnue")
+            with open(path, "wb") as file:
+                file.write(b"TIKINNUE" + struct.pack("<III", 1, 22528, 256))
+                for key in ("ft_weights", "ft_bias"):
+                    file.write(network[key].astype("<i2").tobytes())
+                file.write(network["out_weights"][3].astype("<i2").tobytes())
+                file.write(struct.pack("<i", int(network["out_bias"][3])))
+            loaded = read_network(path)
+        np.testing.assert_array_equal(network["ft_weights"], loaded["ft_weights"])
+        self.assertEqual((OUTPUT_BUCKETS, 512), loaded["out_weights"].shape)
+        for bucket in range(OUTPUT_BUCKETS):
+            np.testing.assert_array_equal(network["out_weights"][3], loaded["out_weights"][bucket])
+            self.assertEqual(network["out_bias"][3], loaded["out_bias"][bucket])
+
+    def test_output_bucket_by_piece_count(self):
+        self.assertEqual([0, 0, 0, 0, 1, 1, 1, 1, 2], [output_bucket(n) for n in range(2, 11)])
+        self.assertEqual(7, output_bucket(30))
+        self.assertEqual(7, output_bucket(32))
+
+    def test_each_bucket_has_its_own_output(self):
+        """Changing one bucket's output layer changes only the positions in that bucket."""
+        def bucket(fen):
+            return output_bucket(sum(ch.isalpha() for ch in fen.split()[0]))
+
+        before = evaluate(self.model, FENS)
+        changed = bucket(FENS[2])           # 10 pieces, bucket 2: no other position shares it.
+        with torch.no_grad():
+            self.model.out.bias[changed] += 0.5
+        for fen, a, b in zip(FENS, before, evaluate(self.model, FENS)):
+            if bucket(fen) == changed:
+                self.assertAlmostEqual(a + 0.5 * SCALE, b, places=2)
+            else:
+                self.assertAlmostEqual(a, b, places=4)
 
     def test_quantised_matches_dequantised_float(self):
         """The integer evaluation is the float formula on the quantised weights, only the integer
@@ -86,7 +125,7 @@ class ModelTests(unittest.TestCase):
         optimiser = torch.optim.Adam(self.model.parameters(), lr=1e-2)
 
         def loss():
-            return loss_fn(self.model(*batch[:4]), batch[4], batch[5], wdl=0.3)
+            return loss_fn(self.model(*batch[:5]), batch[5], batch[6], wdl=0.3)
 
         start = loss().item()
         for _ in range(200):
@@ -103,8 +142,8 @@ class ModelTests(unittest.TestCase):
             export(self.model, path)
             with open(path, "rb") as file:
                 self.assertEqual(b"TIKINNUE", file.read(8))
-            # header + ft weights + ft bias + out weights (int16) + out bias (int32)
-            self.assertEqual(20 + 2 * (22528 * 256 + 256 + 512) + 4, os.path.getsize(path))
+            # header + ft weights + ft bias + out weights (int16) + out biases (int32), per bucket
+            self.assertEqual(20 + 2 * (22528 * 256 + 256 + 8 * 512) + 8 * 4, os.path.getsize(path))
 
 
 if __name__ == "__main__":

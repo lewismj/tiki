@@ -136,8 +136,8 @@ def run_epoch(model, batches, device, wdl, optimiser=None, progress=None, task=N
         return mean, rate
 
     with torch.set_grad_enabled(optimiser is not None):
-        for stm_indices, stm_offsets, nstm_indices, nstm_offsets, score, result in batches:
-            output = model(stm_indices, stm_offsets, nstm_indices, nstm_offsets)
+        for stm_indices, stm_offsets, nstm_indices, nstm_offsets, bucket, score, result in batches:
+            output = model(stm_indices, stm_offsets, nstm_indices, nstm_offsets, bucket)
             loss = loss_fn(output, score, result, wdl)
             if optimiser is not None:
                 optimiser.zero_grad(set_to_none=True)

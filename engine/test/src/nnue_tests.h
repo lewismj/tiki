@@ -6,6 +6,8 @@ void test_nnue_feature_index_known_values();
 void test_nnue_features_in_range_and_unique();
 void test_nnue_feature_symmetry();
 void test_nnue_evaluate_known_value();
+void test_nnue_output_buckets();
+void test_nnue_load_single_output_network();
 void test_nnue_evaluate_colour_symmetric();
 void test_nnue_save_load_round_trip();
 void test_nnue_incremental_matches_refresh();

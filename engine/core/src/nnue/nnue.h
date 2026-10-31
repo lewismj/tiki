@@ -9,7 +9,8 @@
 #include "../board.h"
 
 /**
- * Tiki's NNUE: HalfKAv2_hm features -> 256 x 2 accumulator -> SCReLU -> 1 output.
+ * Tiki's NNUE: HalfKAv2_hm features -> 256 x 2 accumulator -> SCReLU -> 1 output, from one of 8
+ * output layers chosen by the number of pieces on the board (output buckets).
  * The trainer (training/tiki_nnue) implements the same features and quantisation, any change
  * here must be made there too (training/tests check the two agree).
  *
@@ -23,18 +24,24 @@
  *     (type * 2 + (colour != perspective)), and 10 for either king ("A": both kings share one).
  *   - index = bucket * 704 + kind * 64 + oriented square. 32 * 11 * 64 = 22528 inputs.
  *
+ * Output bucket = (pieces on the board, kings included, - 2) / 4: 2-5 pieces is 0 ... 30-32 is 7.
+ * Both perspectives share the accumulator, only the output layer depends on the bucket.
+ *
  * Quantisation (what the trainer exports):
  *   accumulator = ft_bias + sum of ft_weights rows for active features, int16, scale QA.
  *   SCReLU(x) = clamp(x, 0, QA)^2.
- *   eval = (sum(SCReLU(acc_stm) * out_w[0..255]) + sum(SCReLU(acc_nstm) * out_w[256..511])) / QA
- *          + out_bias, then * SCALE / (QA * QB). Integer division truncates (C semantics).
+ *   eval = (sum(SCReLU(acc_stm) * out_w[b][0..255]) + sum(SCReLU(acc_nstm) * out_w[b][256..511])) / QA
+ *          + out_bias[b], then * SCALE / (QA * QB), for output bucket b. Integer division truncates
+ *          (C semantics).
  *   Float model: y = SCReLU_f(acc_f) . w + b with acc_f = acc / QA, w = out_w / QB,
  *   b = out_bias / (QA * QB), and eval in centipawns = y * SCALE.
  *
- * File format (little endian):
+ * File format (little endian), version 2:
  *   char magic[8] = "TIKINNUE", uint32 version, uint32 inputs, uint32 hidden,
  *   int16 ft_weights[inputs][hidden] (row per feature), int16 ft_bias[hidden],
- *   int16 out_weights[2 * hidden] (side to move half first), int32 out_bias.
+ *   int16 out_weights[8][2 * hidden] (per bucket, side to move half first), int32 out_bias[8].
+ * Version 1 (before output buckets) has one out_weights[2 * hidden] and out_bias. It still loads, as
+ * that output layer in every bucket, so it evaluates exactly as before. Networks are saved as version 2.
  */
 
 #define NNUE_KING_BUCKETS 32
@@ -43,21 +50,23 @@
 #define NNUE_INPUTS (NNUE_KING_BUCKETS * NNUE_PIECE_SQUARES)    /* 22528 */
 #define NNUE_HIDDEN 256
 #define NNUE_MAX_ACTIVE 32                                      /* One feature per piece. */
+#define NNUE_OUTPUT_BUCKETS 8
 
 #define NNUE_QA 255
 #define NNUE_QB 64
 #define NNUE_SCALE 400
 
 #define NNUE_MAGIC "TIKINNUE"
-#define NNUE_VERSION 1
+#define NNUE_VERSION 2
+#define NNUE_VERSION_SINGLE_OUTPUT 1                            /* Before output buckets, still loaded. */
 
 /* The weights and accumulators are 64 byte aligned (align, rows of 512 bytes), so no SIMD load
  * splits a cache line. */
 typedef struct {
     int16_t* ft_weights;                    /* [NNUE_INPUTS][NNUE_HIDDEN] */
     int16_t ft_bias[NNUE_HIDDEN] align;
-    int16_t out_weights[2 * NNUE_HIDDEN] align; /* Side to move, then the other side. */
-    int32_t out_bias;
+    int16_t out_weights[NNUE_OUTPUT_BUCKETS][2 * NNUE_HIDDEN] align; /* Side to move, then the other side. */
+    int32_t out_bias[NNUE_OUTPUT_BUCKETS];
 } nnue_network_t;
 
 typedef struct {
@@ -154,9 +163,15 @@ uint32_t nnue_generation(void);
 /* "avx2" or "scalar", the accumulator and output code compiled in (TIKI_USE_AVX2). */
 const char* nnue_simd(void);
 
-/* The output layer, as nnue_evaluate uses it (SIMD if compiled in) and the plain C reference. */
-int nnue_output(const nnue_accumulator_t* accumulator, colour side);
-int nnue_output_scalar(const nnue_accumulator_t* accumulator, colour side);
+/* The output bucket of a position with 'pieces' pieces (kings included, so at least 2). */
+static inline int nnue_output_bucket(int pieces) {
+    const int bucket = (pieces - 2) / 4;
+    return bucket < 0 ? 0 : bucket >= NNUE_OUTPUT_BUCKETS ? NNUE_OUTPUT_BUCKETS - 1 : bucket;
+}
+
+/* The output layer of 'bucket', as nnue_evaluate uses it (SIMD if compiled in) and the plain C reference. */
+int nnue_output(const nnue_accumulator_t* accumulator, colour side, int bucket);
+int nnue_output_scalar(const nnue_accumulator_t* accumulator, colour side, int bucket);
 
 /* A new stack: empty, and its refresh cache to be built on first use. */
 void nnue_stack_init(nnue_stack_t* stack);
