@@ -1,3 +1,4 @@
+* text=auto eol=lf
 *.ipynb -linguist-detectable
 
 # Shell scripts must keep LF line endings (core.autocrlf would give them CRLF on Windows checkouts).
@@ -9,3 +10,5 @@ scripts/run_engine.wsl.example text eol=crlf
 
 # Networks are binary, never convert their line endings.
 *.nnue binary
+
+

@@ -24,6 +24,13 @@
  */
 move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* limits);
 
+/**
+ * The factor on the soft time limit after a completed depth (see limits.h): from how many depths
+ * in a row the best move has been unchanged ('stability', 0 when it just changed) and the share of
+ * the root's nodes ('root_nodes', that depth's) its search took ('best_move_nodes').
+ */
+double tm_scale(int stability, uint64_t best_move_nodes, uint64_t root_nodes);
+
 /* Prints 'bestmove', 'bestmove 0000' for no move. */
 void print_bestmove(move_t mv);
 
@@ -70,7 +77,7 @@ bool can_late_move_prune(int depth, int moves_searched, int alpha, bool in_check
 bool can_see_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node);
 int see_prune_threshold(int depth, bool is_quiet);
 bool can_reduce(int depth, int moves_searched, bool is_quiet, bool gives_check, bool in_check, bool is_killer);
-int lmr_reduction(int depth, int moves_searched, bool is_pv_node);
+int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history);
 int iir_reduction(int depth, move_t tt_move);
 bool can_singular_extend(int depth, int ply, int root_depth, move_t tt_move, int tt_depth, tt_entry_type tt_type,
                          int tt_score);

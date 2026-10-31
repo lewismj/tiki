@@ -40,6 +40,7 @@ typedef struct align {
     uint8_t pv_length[MAX_PLY];
     uint64_t nodes;
     uint64_t pv_nodes;         /* Nodes that ordered the previous iteration's PV move first (tests). */
+    uint64_t best_move_nodes;  /* Nodes the root's best move took in the last root search (time management). */
 #ifdef TIKI_SEARCH_STATS
     search_stats_t stats;
 #endif
@@ -57,20 +58,30 @@ typedef struct align {
 
 
 /**
- * The tables one search fills (PV, history, killers), emptied before each search. Keeping history
- * from move to move lost Elo (SPRT -16 +- 9).
+ * The tables tied to one search's path from the root (PV, killers, excluded moves), emptied before
+ * each search. History isn't one of them, see age_history.
  */
 static inline_always void clear_search_tables(search_state_t* search_state) {
     memset(search_state->pv_table, 0ULL, sizeof(search_state->pv_table));
     memset(search_state->pv_length, 0ULL, sizeof(search_state->pv_length));
-    memset(search_state->history_moves, 0, sizeof (search_state->history_moves));
     memset(search_state->killer_moves, 0, sizeof (search_state->killer_moves));
     memset(search_state->excluded_moves, 0, sizeof (search_state->excluded_moves));
+}
+
+/**
+ * History is kept from move to move in a game, halved before each search so older results fade.
+ * Keeping it unchanged lost Elo (SPRT -16 +- 9, before the scaled bonus). Halving it against
+ * clearing it: +4.7 +- 5.6 after 5960 games, stopped at LLR 1.23 [0, 5] (kept as not a loss).
+ */
+static inline_always void age_history(search_state_t* search_state) {
+    int32_t* h = &search_state->history_moves[0][0];
+    for (size_t i = 0; i < sizeof(search_state->history_moves) / sizeof(*h); i++) h[i] /= 2;
 }
 
 static inline_always void init_search_state(search_state_t* search_state) {
     search_state->nodes = 0;
     search_state->pv_nodes = 0;
+    search_state->best_move_nodes = 0;
 #ifdef TIKI_SEARCH_STATS
     memset(&search_state->stats, 0, sizeof(search_state->stats));
 #endif
@@ -83,6 +94,7 @@ static inline_always void init_search_state(search_state_t* search_state) {
     search_state->score_pv = false;
     search_state->follow_pv = true;
     clear_search_tables(search_state);
+    memset(search_state->history_moves, 0, sizeof (search_state->history_moves));
     memset(search_state->repetition_check, 0ULL, sizeof(search_state->repetition_check));
     nnue_stack_init(&search_state->nnue);
 }
@@ -91,6 +103,7 @@ static inline_always void init_search_state(search_state_t* search_state) {
 static inline_always void clear_pv_table(search_state_t* search_state) {
     search_state->nodes = 0;
     search_state->pv_nodes = 0;
+    search_state->best_move_nodes = 0;
     atomic_init(&search_state->shared_nodes, 0);
     search_state->ply = 0;
     search_state->null_move_index = 0;
@@ -98,6 +111,7 @@ static inline_always void clear_pv_table(search_state_t* search_state) {
     search_state->score_pv = false;
     search_state->follow_pv = true;
     clear_search_tables(search_state);
+    age_history(search_state);
     nnue_reset(&search_state->nnue);
 }
 

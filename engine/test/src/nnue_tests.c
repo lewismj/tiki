@@ -14,6 +14,7 @@
 #include "../../core/src/search_constants.h"
 #include "../../core/src/move_generator.h"
 #include "test_network.h"
+#include "test_positions.h"
 
 #define START_FEN "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
@@ -26,6 +27,20 @@ static const char* const positions[] = {
 };
 #define POSITION_COUNT ((int) (sizeof(positions) / sizeof(positions[0])))
 
+/* The property tests (an invariant in every position) also run over the shared test_positions. */
+#define PROPERTY_POSITION_COUNT (POSITION_COUNT + TEST_POSITION_COUNT)
+static const char* property_position(int i) {
+    return i < POSITION_COUNT ? positions[i] : test_positions[i - POSITION_COUNT];
+}
+
+
+static uint8_t* saved_network(size_t* size);
+
+#ifdef _WIN32
+#define TEMP_TEMPLATE "tiki_nnue_test_XXXXXX"       /* No /tmp, the current directory. */
+#else
+#define TEMP_TEMPLATE "/tmp/tiki_nnue_test_XXXXXX"
+#endif
 
 static int compare_ints(const void* a, const void* b) {
     return *(const int*) a - *(const int*) b;
@@ -37,6 +52,13 @@ static int sorted_features(const board_t* board, colour perspective, int* featur
     return n;
 }
 
+/* occupancy[] from pieces[], for the boards built here (the output bucket counts occupancy[both]). */
+static void set_occupancy(board_t* board) {
+    board->occupancy[white] = board->occupancy[black] = 0;
+    for (int pc = P; pc <= k; pc++) board->occupancy[pc < p ? white : black] |= board->pieces[pc];
+    board->occupancy[both] = board->occupancy[white] | board->occupancy[black];
+}
+
 /* Colours swapped and the board flipped vertically, the same position for the other side. */
 static void colour_flip(const board_t* in, board_t* out) {
     memset(out, 0, sizeof(*out));
@@ -45,6 +67,7 @@ static void colour_flip(const board_t* in, board_t* out) {
         int flipped = pc < p ? pc + 6 : pc - 6;
         while (pieces) out->pieces[flipped] |= 1ULL << (get_lsb_and_pop_bit(&pieces) ^ 56);
     }
+    set_occupancy(out);
     out->side = in->side ^ 1;
     out->en_passant = none_sq;
 }
@@ -56,6 +79,7 @@ static void mirror(const board_t* in, board_t* out) {
         bitboard pieces = in->pieces[pc];
         while (pieces) out->pieces[pc] |= 1ULL << (get_lsb_and_pop_bit(&pieces) ^ 7);
     }
+    set_occupancy(out);
     out->side = in->side;
     out->en_passant = none_sq;
 }
@@ -68,9 +92,11 @@ static void random_network(uint32_t seed) {
         nnue_net.ft_weights[i] = (int16_t) ((int) (next_random_32(&state) % 129) - 64);
     for (int i = 0; i < NNUE_HIDDEN; i++)
         nnue_net.ft_bias[i] = (int16_t) ((int) (next_random_32(&state) % 101) - 50);
-    for (int i = 0; i < 2 * NNUE_HIDDEN; i++)
-        nnue_net.out_weights[i] = (int16_t) ((int) (next_random_32(&state) % 255) - 127);
-    nnue_net.out_bias = (int32_t) (next_random_32(&state) % 2001) - 1000;
+    for (int b = 0; b < NNUE_OUTPUT_BUCKETS; b++) {
+        for (int i = 0; i < 2 * NNUE_HIDDEN; i++)
+            nnue_net.out_weights[b][i] = (int16_t) ((int) (next_random_32(&state) % 255) - 127);
+        nnue_net.out_bias[b] = (int32_t) (next_random_32(&state) % 2001) - 1000;
+    }
 }
 
 
@@ -92,9 +118,9 @@ void test_nnue_feature_index_known_values() {
 
 void test_nnue_features_in_range_and_unique() {
     int features[NNUE_MAX_ACTIVE];
-    for (int i = 0; i < POSITION_COUNT; i++) {
+    for (int i = 0; i < PROPERTY_POSITION_COUNT; i++) {
         board_t board;
-        parse_fen(positions[i], &board);
+        parse_fen(property_position(i), &board);
         for (int c = white; c <= black; c++) {
             int n = sorted_features(&board, c, features);
             TEST_ASSERT_EQUAL_INT(pop_count(board.occupancy[both]), n);
@@ -108,9 +134,9 @@ void test_nnue_features_in_range_and_unique() {
 
 void test_nnue_feature_symmetry() {
     int a[NNUE_MAX_ACTIVE], b[NNUE_MAX_ACTIVE];
-    for (int i = 0; i < POSITION_COUNT; i++) {
+    for (int i = 0; i < PROPERTY_POSITION_COUNT; i++) {
         board_t board, flipped, mirrored;
-        parse_fen(positions[i], &board);
+        parse_fen(property_position(i), &board);
         colour_flip(&board, &flipped);
         mirror(&board, &mirrored);
 
@@ -132,18 +158,22 @@ void test_nnue_evaluate_known_value() {
     board_t board;
     parse_fen(START_FEN, &board);
 
+    /* 32 pieces: the last output bucket. */
+    const int b = NNUE_OUTPUT_BUCKETS - 1;
+    TEST_ASSERT_EQUAL_INT(b, nnue_output_bucket(32));
+
     /* Only the output bias, QA * QB is 1.0, which is SCALE centipawns. */
-    nnue_net.out_bias = NNUE_QA * NNUE_QB;
+    nnue_net.out_bias[b] = NNUE_QA * NNUE_QB;
     TEST_ASSERT_EQUAL_INT(NNUE_SCALE, nnue_evaluate(&board));
 
     /* One hidden unit at activation 1.0 (bias QA) with weight 1.0 (QB) for the side to move: +1.0. */
     nnue_net.ft_bias[0] = NNUE_QA;
-    nnue_net.out_weights[0] = NNUE_QB;
+    nnue_net.out_weights[b][0] = NNUE_QB;
     TEST_ASSERT_EQUAL_INT(2 * NNUE_SCALE, nnue_evaluate(&board));
 
     /* The same unit counted against the side to move instead: back to +0.0 + bias. */
-    nnue_net.out_weights[0] = 0;
-    nnue_net.out_weights[NNUE_HIDDEN] = -NNUE_QB;
+    nnue_net.out_weights[b][0] = 0;
+    nnue_net.out_weights[b][NNUE_HIDDEN] = -NNUE_QB;
     TEST_ASSERT_EQUAL_INT(0, nnue_evaluate(&board));
 
     /* SCReLU clamps at QA, a larger accumulator doesn't add more. */
@@ -152,14 +182,85 @@ void test_nnue_evaluate_known_value() {
     nnue_free();
 }
 
+void test_nnue_output_buckets() {
+    TEST_ASSERT_EQUAL_INT(0, nnue_output_bucket(2));
+    TEST_ASSERT_EQUAL_INT(0, nnue_output_bucket(5));
+    TEST_ASSERT_EQUAL_INT(1, nnue_output_bucket(6));
+    TEST_ASSERT_EQUAL_INT(6, nnue_output_bucket(29));
+    TEST_ASSERT_EQUAL_INT(7, nnue_output_bucket(30));
+    TEST_ASSERT_EQUAL_INT(7, nnue_output_bucket(32));
+
+    /* A position's evaluation uses its bucket's output layer and no other. */
+    random_network(99);
+    for (int i = 0; i < PROPERTY_POSITION_COUNT; i++) {
+        board_t board;
+        parse_fen(property_position(i), &board);
+        const int bucket = nnue_output_bucket(pop_count(board.occupancy[both]));
+        const int before = nnue_evaluate(&board);
+
+        const int other = (bucket + 1) % NNUE_OUTPUT_BUCKETS;
+        nnue_net.out_bias[other] += NNUE_QA * NNUE_QB;
+        TEST_ASSERT_EQUAL_INT_MESSAGE(before, nnue_evaluate(&board), property_position(i));
+        nnue_net.out_bias[other] -= NNUE_QA * NNUE_QB;
+
+        /* +1.0 on its own bias is +SCALE centipawns (give or take the truncating division). */
+        nnue_net.out_bias[bucket] += NNUE_QA * NNUE_QB;
+        TEST_ASSERT_INT_WITHIN_MESSAGE(1, before + NNUE_SCALE, nnue_evaluate(&board), property_position(i));
+        nnue_net.out_bias[bucket] -= NNUE_QA * NNUE_QB;
+    }
+    nnue_free();
+}
+
+void test_nnue_load_single_output_network() {
+    /* A version 1 network (one output layer): bucket 3's layer of a random network, on its own. */
+    random_network(2024);
+    size_t size;
+    uint8_t* data = saved_network(&size);
+    const size_t outputs = size - (size_t) NNUE_OUTPUT_BUCKETS * (2 * NNUE_HIDDEN * sizeof(int16_t) + sizeof(int32_t));
+    const uint32_t version = NNUE_VERSION_SINGLE_OUTPUT;
+    memcpy(data + 8, &version, sizeof(version));
+    memmove(data + outputs, nnue_net.out_weights[3], sizeof(nnue_net.out_weights[3]));
+    memcpy(data + outputs + sizeof(nnue_net.out_weights[3]), &nnue_net.out_bias[3], sizeof(int32_t));
+    const size_t single_size = outputs + sizeof(nnue_net.out_weights[3]) + sizeof(int32_t);
+
+    int16_t weights[2 * NNUE_HIDDEN];
+    memcpy(weights, nnue_net.out_weights[3], sizeof(weights));
+    const int32_t bias = nnue_net.out_bias[3];
+    int16_t ft_bias[NNUE_HIDDEN];
+    memcpy(ft_bias, nnue_net.ft_bias, sizeof(ft_bias));
+    nnue_free();
+
+    /* Through a file too, nnue_load checks the size. */
+    char path[] = TEMP_TEMPLATE;
+    int fd = mkstemp(path);
+    TEST_ASSERT_TRUE(fd >= 0);
+    TEST_ASSERT_EQUAL_INT((int) single_size, (int) write(fd, data, (unsigned) single_size));
+    close(fd);
+    TEST_ASSERT_TRUE(nnue_load(path));
+    unlink(path);
+
+    TEST_ASSERT_EQUAL_INT16_ARRAY(ft_bias, nnue_net.ft_bias, NNUE_HIDDEN);
+    for (int b = 0; b < NNUE_OUTPUT_BUCKETS; b++) {
+        TEST_ASSERT_EQUAL_INT16_ARRAY(weights, nnue_net.out_weights[b], 2 * NNUE_HIDDEN);
+        TEST_ASSERT_EQUAL_INT32(bias, nnue_net.out_bias[b]);
+    }
+
+    /* The version 1 layout with version 2 in the header (or the reverse) is rejected. */
+    const uint32_t current = NNUE_VERSION;
+    memcpy(data + 8, &current, sizeof(current));
+    TEST_ASSERT_FALSE(nnue_load_memory(data, single_size, "wrong version"));
+    free(data);
+    nnue_free();
+}
+
 void test_nnue_evaluate_colour_symmetric() {
     random_network(12345);
-    for (int i = 0; i < POSITION_COUNT; i++) {
+    for (int i = 0; i < PROPERTY_POSITION_COUNT; i++) {
         board_t board, flipped;
-        parse_fen(positions[i], &board);
+        parse_fen(property_position(i), &board);
         colour_flip(&board, &flipped);
         /* Same position for the other colour, same score for the side to move. */
-        TEST_ASSERT_EQUAL_INT_MESSAGE(nnue_evaluate(&board), nnue_evaluate(&flipped), positions[i]);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(nnue_evaluate(&board), nnue_evaluate(&flipped), property_position(i));
     }
     nnue_free();
 }
@@ -205,12 +306,6 @@ void test_nnue_save_load_round_trip() {
     TEST_ASSERT_EQUAL_INT(expected[0], nnue_evaluate(&board));
     unlink(path);
 }
-
-#ifdef _WIN32
-#define TEMP_TEMPLATE "tiki_nnue_test_XXXXXX"       /* No /tmp, the current directory. */
-#else
-#define TEMP_TEMPLATE "/tmp/tiki_nnue_test_XXXXXX"
-#endif
 
 /* The current network in the file format, plus one spare byte. The caller frees it. */
 static uint8_t* saved_network(size_t* size) {
@@ -397,8 +492,10 @@ void test_nnue_output_simd_matches_scalar() {
     nnue_accumulator_t accumulator;
     for (int trial = 0; trial < 200; trial++) {
         const int16_t extreme = (int16_t) (trial % 2 ? 32767 : -32768);
+        const int bucket = trial % NNUE_OUTPUT_BUCKETS;
         for (int i = 0; i < 2 * NNUE_HIDDEN; i++) {
-            nnue_net.out_weights[i] = (int16_t) (trial % 4 < 2 ? extreme : (int) (next_random_32(&rng) % 65536) - 32768);
+            nnue_net.out_weights[bucket][i] =
+                    (int16_t) (trial % 4 < 2 ? extreme : (int) (next_random_32(&rng) % 65536) - 32768);
         }
         for (int c = white; c <= black; c++) {
             for (int i = 0; i < NNUE_HIDDEN; i++) {
@@ -407,7 +504,7 @@ void test_nnue_output_simd_matches_scalar() {
             }
         }
         for (int side = white; side <= black; side++) {
-            TEST_ASSERT_EQUAL_INT(nnue_output_scalar(&accumulator, side), nnue_output(&accumulator, side));
+            TEST_ASSERT_EQUAL_INT(nnue_output_scalar(&accumulator, side, bucket), nnue_output(&accumulator, side, bucket));
         }
     }
     nnue_free();
@@ -417,9 +514,9 @@ void test_nnue_refresh_matches_plain_sum() {
     /* The accumulator code (SIMD if built) against a plain sum of the feature rows. */
     random_network(2718);
     int features[NNUE_MAX_ACTIVE];
-    for (int i = 0; i < POSITION_COUNT; i++) {
+    for (int i = 0; i < PROPERTY_POSITION_COUNT; i++) {
         board_t board;
-        parse_fen(positions[i], &board);
+        parse_fen(property_position(i), &board);
         nnue_accumulator_t accumulator;
         nnue_refresh(&board, &accumulator);
         for (int c = white; c <= black; c++) {
@@ -427,7 +524,7 @@ void test_nnue_refresh_matches_plain_sum() {
             for (int j = 0; j < NNUE_HIDDEN; j++) {
                 int sum = nnue_net.ft_bias[j];
                 for (int f = 0; f < n; f++) sum += nnue_net.ft_weights[(size_t) features[f] * NNUE_HIDDEN + j];
-                TEST_ASSERT_EQUAL_INT16_MESSAGE((int16_t) sum, accumulator.values[c][j], positions[i]);
+                TEST_ASSERT_EQUAL_INT16_MESSAGE((int16_t) sum, accumulator.values[c][j], property_position(i));
             }
         }
     }

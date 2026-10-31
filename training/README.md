@@ -7,7 +7,7 @@ implement the features and the integer evaluation, and the tests check that they
 ### Network
 
 ```text
-HalfKAv2_hm (22528) -> 256 per side -> SCReLU -> concat (512) -> 1
+HalfKAv2_hm (22528) -> 256 per side -> SCReLU -> concat (512) -> 1, one of 8 output layers by piece count
 ```
 
 - **Features (HalfKAv2_hm).** For each side ("perspective"), every piece is a feature indexed by
@@ -17,6 +17,12 @@ HalfKAv2_hm (22528) -> 256 per side -> SCReLU -> concat (512) -> 1
   (the "A"). So 32 × 11 × 64 = 22528 inputs, and at most 32 are active.
 - **Accumulator.** 256 values per perspective: the feature transformer's bias plus the sum of
   the active features' rows. The side to move's half comes first in the output layer.
+- **Output buckets.** 8 output layers (512 -> 1 each) share the accumulator, and a position uses
+  the one for its number of pieces, kings included: (pieces - 2) / 4, so 2-5 pieces is bucket 0 and
+  30-32 bucket 7. The opening, middlegame and endgame each get their own weighting at almost no cost
+  in speed. Networks are saved as format version 2. Version 1 networks (one output layer, from before
+  output buckets) still load, in the engine and the trainer, as that layer in every bucket, so they
+  evaluate exactly as they did, but their checkpoints (`.pt`) can't be resumed.
 - **Quantisation.** Accumulator × 255 (QA) as int16, output weights × 64 (QB) as int16, output
   bias × QA × QB as int32. Eval in centipawns = network output × 400 (SCALE).
 

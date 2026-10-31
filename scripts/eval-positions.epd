@@ -1,0 +1,8 @@
+B4rk1/p1qnbppp/b3p3/1p2P3/5P2/1PN3P1/PB2Q2P/R4RK1 b - - bm Qb6+; ce -99; acd 31; id "amoeba-3.4-x64-tiki B29 ply 33"; c0 "tiki played Rxa8 (cost 150cp); tiki 10s Qb6+ -97; SEARCH: depth finds a good move";
+r5k1/pb1nbppp/1q2p3/1p2P3/4NP2/1P4P1/PB2Q2P/R2R1K2 b - - bm Bd5; ce -247; acd 26; id "amoeba-3.4-x64-tiki B29 ply 39"; c0 "tiki played Qc6 (cost 160cp); tiki 10s Bc6 -176; EVAL: deep search still errs";
+r1q2rk1/1p2b1p1/1nnpp2p/3b1pN1/p2P2PP/2PB2NR/PP3P2/R1BQ1K2 w - - bm gxf5; ce -135; acd 25; id "tiki-amoeba-3.4-x64 A41 ply 38"; c0 "tiki played Nh5 (cost 215cp); tiki 10s gxf5 -73; SEARCH: depth finds a good move";
+r1q5/1p2b1k1/1nnp4/3bprpQ/p2P3P/2PB3R/PP3P2/R1B2K2 w - - bm hxg5; ce -441; acd 22; id "tiki-amoeba-3.4-x64 A41 ply 46"; c0 "tiki played Bxg5 (cost 190cp); tiki 10s hxg5 -177; SEARCH (move), EVAL (score off)";
+8/RN1rb1k1/6p1/1p1np3/6Pp/1PP2P1P/3BK3/8 w - - bm c4; ce -3; acd 37; id "tiki-amoeba-3.4-x64 B29 ply 80"; c0 "tiki played b4 (cost 342cp); tiki 10s c4 -49; SEARCH: depth finds a good move";
+8/RN1rb1k1/6p1/1p2p3/1P3nPp/2P1BP2/8/4K3 w - - bm Kf2; ce -370; acd 26; id "tiki-amoeba-3.4-x64 B29 ply 86"; c0 "tiki played Kf1 (cost 109cp); tiki 10s Kf2 -297; EVAL: deep search still errs";
+8/1N1rb1k1/6p1/1pB1p3/1P4Pp/R4P2/8/1n3K2 w - - bm Ra1; ce -536; acd 21; id "tiki-amoeba-3.4-x64 B29 ply 92"; c0 "tiki played Ra7 (cost 107cp); tiki 10s Ra1 -342; SEARCH (move), EVAL (score off)";
+5k2/1b2r2p/1P3N1P/3p2p1/1q1B1pP1/8/p1r2P1K/Q2R4 w - - bm Kg1; ce -649; acd 25; id "tiki-amoeba-3.4-x64 D11 ply 74"; c0 "tiki played Kg2 (cost 88cp); tiki 10s Kg1 -447; EVAL: deep search still errs";

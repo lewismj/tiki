@@ -133,14 +133,20 @@ void test_search_tables_cleared_between_searches() {
     search_state_t search_state;
     init_search_state(&search_state);
     search_state.history_moves[N][f3] = 123;
+    search_state.history_moves[n][c6] = -77;
     search_state.killer_moves[0][3] = 77;
     search_state.pv_table[0][0] = 88;
 
-    /* Before each 'go': nothing learnt by the previous search is kept. */
+    /* Before each 'go': the path tables are emptied, history is halved. */
     clear_pv_table(&search_state);
-    TEST_ASSERT_EQUAL_INT(0, search_state.history_moves[N][f3]);
+    TEST_ASSERT_EQUAL_INT(61, search_state.history_moves[N][f3]);
+    TEST_ASSERT_EQUAL_INT(-38, search_state.history_moves[n][c6]);
     TEST_ASSERT_EQUAL_UINT32(0, search_state.killer_moves[0][3]);
     TEST_ASSERT_EQUAL_UINT32(0, search_state.pv_table[0][0]);
+
+    /* A new game ('ucinewgame') starts with no history. */
+    init_search_state(&search_state);
+    TEST_ASSERT_EQUAL_INT(0, search_state.history_moves[N][f3]);
 }
 
 void test_search_stalemate_root() {
@@ -227,6 +233,45 @@ void test_time_limit_stops_at_first_check() {
     TEST_ASSERT_TRUE(limits.stop_search_flag);
     TEST_ASSERT_EQUAL_UINT64(1, limits.time_checks);
     TEST_ASSERT_TRUE(search_state.nodes >= 2048 && search_state.nodes < 2 * 2048);
+    TEST_ASSERT_TRUE(make_move(&board, mv));
+}
+
+void test_tm_scale() {
+    /* Just changed and the moves close (30% of the nodes): more than the soft time. */
+    TEST_ASSERT_TRUE(tm_scale(0, 30, 100) > 2.0);
+    /* Stable for long and clearly best (90%): well under it. */
+    TEST_ASSERT_TRUE(tm_scale(TM_STABILITY_MAX, 90, 100) < 0.7);
+
+    /* More stability, or a larger share of the nodes, never gives more time. */
+    for (int s = 0; s < TM_STABILITY_MAX; s++) {
+        TEST_ASSERT_TRUE(tm_scale(s + 1, 50, 100) <= tm_scale(s, 50, 100));
+    }
+    for (uint64_t n = 0; n < 100; n += 10) {
+        TEST_ASSERT_TRUE(tm_scale(2, n + 10, 100) <= tm_scale(2, n, 100));
+    }
+
+    /* Out of range: stability is capped, and no root nodes counts as all on the best move. */
+    TEST_ASSERT_TRUE(tm_scale(TM_STABILITY_MAX, 50, 100) == tm_scale(TM_STABILITY_MAX + 10, 50, 100));
+    TEST_ASSERT_TRUE(tm_scale(1, 100, 100) == tm_scale(1, 0, 0));
+    TEST_ASSERT_TRUE(tm_scale(1, 100, 100) == tm_scale(1, 200, 100));
+}
+
+void test_clock_search_within_hard_limit() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* A real clock search: however the soft limit is scaled, it ends by the hard limit (plus the
+     * time to unwind the search and a little slack for a loaded machine). */
+    setup_position("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+                   &board, &search_state, &limits, MAX_SEARCH_DEPTH);
+    parse_go_limits("go wtime 2000 btime 2000 winc 20 binc 20", &board, &limits);
+    limits.quiet = true;
+    TEST_ASSERT_TRUE(limits.adaptive);
+
+    move_t mv = find_best_move(&board, &search_state, &limits);
+    const uint64_t elapsed = clock_time_ms() - limits.start_time;
+    TEST_ASSERT_TRUE(elapsed <= limits.stop_time - limits.start_time + 50);
     TEST_ASSERT_TRUE(make_move(&board, mv));
 }
 
@@ -550,28 +595,37 @@ void test_quiescence_searches_promotion_with_negative_history() {
 
 void test_lmr_reduction() {
     /* No reduction for the first moves or shallow depths. */
-    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(1, 10, false));
-    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(3, 1, false));
+    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(1, 10, false, 0));
+    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(3, 1, false, 0));
 
     /* Grows with depth and with the move number, never decreasing. */
     for (int depth = 2; depth < 40; depth++) {
         for (int moves = 1; moves < 60; moves++) {
-            int r = lmr_reduction(depth, moves, false);
-            TEST_ASSERT_TRUE(r >= lmr_reduction(depth - 1, moves, false));
-            TEST_ASSERT_TRUE(r >= lmr_reduction(depth, moves - 1, false));
+            int r = lmr_reduction(depth, moves, false, 0);
+            TEST_ASSERT_TRUE(r >= lmr_reduction(depth - 1, moves, false, 0));
+            TEST_ASSERT_TRUE(r >= lmr_reduction(depth, moves - 1, false, 0));
             /* At least one ply is left to search. */
             TEST_ASSERT_TRUE(depth - 1 - r >= 1);
             /* PV nodes are reduced less, by one ply. */
-            int pv = lmr_reduction(depth, moves, true);
+            int pv = lmr_reduction(depth, moves, true, 0);
             TEST_ASSERT_TRUE(pv == r || pv == r - 1);
         }
     }
 
     /* A deep late move is reduced by more than the old flat 1. */
-    TEST_ASSERT_TRUE(lmr_reduction(12, 20, false) >= 2);
+    TEST_ASSERT_TRUE(lmr_reduction(12, 20, false, 0) >= 2);
 
     /* Moves past the end of the table use the last column. */
-    TEST_ASSERT_EQUAL_INT(lmr_reduction(20, LMR_TABLE_SIZE - 1, false), lmr_reduction(20, 200, false));
+    TEST_ASSERT_EQUAL_INT(lmr_reduction(20, LMR_TABLE_SIZE - 1, false, 0), lmr_reduction(20, 200, false, 0));
+
+    /* History: a ply less per LMR_HISTORY_DIVISOR of a good score, a ply more per one of a bad score. */
+    const int r = lmr_reduction(12, 20, false, 0);
+    TEST_ASSERT_EQUAL_INT(r, lmr_reduction(12, 20, false, LMR_HISTORY_DIVISOR - 1));
+    TEST_ASSERT_EQUAL_INT(r - 1, lmr_reduction(12, 20, false, LMR_HISTORY_DIVISOR));
+    TEST_ASSERT_EQUAL_INT(r + 1, lmr_reduction(12, 20, false, -LMR_HISTORY_DIVISOR));
+    /* Still within [0, depth - 2] at the history bounds. */
+    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(12, 20, false, HISTORY_MAX));
+    TEST_ASSERT_EQUAL_INT(10, lmr_reduction(12, 20, false, -HISTORY_MAX));
 }
 
 void test_iir_reduction() {

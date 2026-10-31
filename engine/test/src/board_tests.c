@@ -10,6 +10,7 @@
 #include "../../core/src/move_generator.h"
 #include "../../core/src/uci.h"
 #include "../../core/src/see.h"
+#include "test_positions.h"
 
 
 void test_parse_fen_fields() {
@@ -256,6 +257,66 @@ void test_see() {
     TEST_ASSERT_EQUAL_INT(320 - 500, see_of("4k3/3r4/8/8/3N4/4P3/8/4K3 b - - 0 1", "d7d4"));
 }
 
+/* see_ge(t) == (see() >= t) for every move of 'board', thresholds around see() and across the range. */
+static void check_see_ge(const board_t* board, int* checked) {
+    move_buffer_t buffer;
+    buffer.index = 0;
+    generate_moves((board_t*) board, &buffer);
+    for (int m = 0; m < buffer.index; m++) {
+        const move_t mv = buffer.moves[m];
+        const int value = see(board, mv);
+        for (int t = -2000; t <= 2000; t += 50) {
+            TEST_ASSERT_EQUAL_INT_MESSAGE(value >= t, see_ge(board, mv, t), "see_ge against see over the range");
+        }
+        for (int t = value - 1; t <= value + 1; t++) {
+            TEST_ASSERT_EQUAL_INT_MESSAGE(value >= t, see_ge(board, mv, t), "see_ge against see at its value");
+        }
+        (*checked)++;
+    }
+}
+
+void test_see_ge_matches_see() {
+    /* The test_see positions and some with long exchanges, x-rays, kings and en passant, then the
+     * shared test_positions, plus every position a move away from each. */
+    static const char* const fens[] = {
+            "4k3/8/8/3p4/8/8/8/3QK3 w - - 0 1",
+            "3rk3/8/8/3p4/8/8/3R4/3RK3 w - - 0 1",
+            "8/8/8/4k3/3p4/8/1B6/3RK3 w - - 0 1",
+            "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+            "r3k2r/p1ppqpb1/bn2pnp1/3PN3/Pp2P3/2N2Q1p/1PPBBPPP/R3K2R w KQkq - 0 1",
+            "r3k2r/p1ppqpb1/bn2pnp1/3PN3/Pp2P3/2N2Q1p/1PPBBPPP/R3K2R b KQkq a3 0 1",
+            "1k1r3q/1ppn3p/p4b2/4p3/8/P2N2P1/1PP1R1BP/2K1Q3 w - - 0 1",
+            "1k1r4/1pp4p/p7/4p3/8/P5P1/1PP4P/2K1R3 w - - 0 1",
+            "2r1r1k1/pp1bppbp/3p1np1/q3P3/2P2P2/1P2B3/P1N1B1PP/2RQ1RK1 b - - 0 1",
+            "r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 0 1",
+            "3q2k1/pb3p1p/4pbp1/2r5/PpN2N2/1P2P2P/5PP1/Q2R2K1 b - - 0 1",
+            "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+            "rnbqkb1r/ppp1pppp/5n2/3p4/2PP4/2N5/PP2PPPP/R1BQKBNR b KQkq - 0 1",
+            "6k1/1b4pp/8/3q4/3R4/3Q4/3R4/6K1 b - - 0 1",
+    };
+    const char* all_fens[sizeof(fens) / sizeof(fens[0]) + TEST_POSITION_COUNT];
+    size_t count = 0;
+    for (size_t i = 0; i < sizeof(fens) / sizeof(fens[0]); i++) all_fens[count++] = fens[i];
+    for (int i = 0; i < TEST_POSITION_COUNT; i++) all_fens[count++] = test_positions[i];
+
+    int checked = 0;
+    for (size_t i = 0; i < count; i++) {
+        board_t board;
+        parse_fen(all_fens[i], &board);
+        check_see_ge(&board, &checked);
+
+        move_buffer_t buffer;
+        buffer.index = 0;
+        generate_moves(&board, &buffer);
+        for (int m = 0; m < buffer.index; m++) {
+            /* An illegal move is made too, and undone with pop_move all the same. */
+            if (make_move(&board, buffer.moves[m])) check_see_ge(&board, &checked);
+            pop_move(&board);
+        }
+    }
+    TEST_ASSERT_TRUE(checked > 80000);   /* 88769 moves. */
+}
+
 void test_board_to_fen_round_trip() {
     static const char* const fens[] = {
             "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -263,13 +324,15 @@ void test_board_to_fen_round_trip() {
             "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 11",
             "4k3/8/8/8/8/8/8/4K2R w K - 99 70",
     };
+    const int count = (int) (sizeof(fens) / sizeof(fens[0]));
     char fen[128];
-    for (size_t i = 0; i < sizeof(fens) / sizeof(fens[0]); i++) {
+    for (int i = 0; i < count + TEST_POSITION_COUNT; i++) {
+        const char* input = i < count ? fens[i] : test_positions[i - count];
         board_t board;
-        parse_fen(fens[i], &board);
+        parse_fen(input, &board);
         /* The full move number isn't on the board, take it from the input. */
-        const char* fullmove = strrchr(fens[i], ' ') + 1;
+        const char* fullmove = strrchr(input, ' ') + 1;
         board_to_fen(&board, atoi(fullmove), fen, sizeof(fen));
-        TEST_ASSERT_EQUAL_STRING(fens[i], fen);
+        TEST_ASSERT_EQUAL_STRING(input, fen);
     }
 }

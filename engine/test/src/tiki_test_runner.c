@@ -74,11 +74,14 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_generate_captures_matches_filtered_moves);
     RUN_TEST(test_generate_captures_promotions);
     RUN_TEST(test_see);
+    RUN_TEST(test_see_ge_matches_see);
     RUN_TEST(test_board_to_fen_round_trip);
     RUN_TEST(test_nnue_feature_index_known_values);
     RUN_TEST(test_nnue_features_in_range_and_unique);
     RUN_TEST(test_nnue_feature_symmetry);
     RUN_TEST(test_nnue_evaluate_known_value);
+    RUN_TEST(test_nnue_output_buckets);
+    RUN_TEST(test_nnue_load_single_output_network);
     RUN_TEST(test_nnue_evaluate_colour_symmetric);
     RUN_TEST(test_nnue_save_load_round_trip);
     RUN_TEST(test_nnue_incremental_matches_refresh);
@@ -98,6 +101,8 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_bench_is_deterministic);
     RUN_TEST(test_time_checked_once_per_2048_nodes);
     RUN_TEST(test_time_limit_stops_at_first_check);
+    RUN_TEST(test_tm_scale);
+    RUN_TEST(test_clock_search_within_hard_limit);
     RUN_TEST(test_pick_next_move_order);
     RUN_TEST(test_quiescence_sees_quiet_queen_promotion);
     RUN_TEST(test_check_extended_at_horizon);

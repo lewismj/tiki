@@ -9,6 +9,7 @@ PIECE_KINDS = 11
 PIECE_SQUARES = PIECE_KINDS * 64            # 704
 INPUTS = KING_BUCKETS * PIECE_SQUARES       # 22528
 MAX_ACTIVE = 32
+OUTPUT_BUCKETS = 8                          # Output layers, chosen by the number of pieces (output_bucket).
 
 WHITE, BLACK = 0, 1
 PIECES = "PNBRQKpnbrqk"
@@ -49,6 +50,12 @@ def feature_index(perspective, king, piece, sq):
     colour = BLACK if piece >= 6 else WHITE
     kind = 10 if kind_type == 5 else kind_type * 2 + (colour != perspective)
     return bucket * PIECE_SQUARES + kind * 64 + oriented_sq
+
+
+def output_bucket(piece_count):
+    """The output layer for a position with 'piece_count' pieces (kings included): (n - 2) / 4,
+    so 2-5 pieces is bucket 0 ... 30-32 bucket 7. Works on ints and integer tensors alike."""
+    return (piece_count - 2) // 4
 
 
 def active_features(pieces, perspective):

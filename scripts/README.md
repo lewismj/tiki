@@ -44,3 +44,8 @@
    <base>` tests whether a change makes tiki stronger, `gauntlet <tiki> <engine>...` measures it against other
    engines. Settings (time control, concurrency, games, SPRT bounds, networks) come from the environment, see the
    top of either script. Results go to `matches/`.
+
+-- *nnue_average.py* Averages networks weight by weight into one (Python 3 with numpy), optionally weighted:
+   `python3 scripts/nnue_average.py a.nnue b.nnue -o out.nnue --weights 1 3`. It only helps for nets from the same
+   training lineage (checkpoints of one run, or fine-tunes of the same parent); independently trained nets don't
+   average. SPRT the result against the best of its inputs.

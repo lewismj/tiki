@@ -14,7 +14,7 @@ import numpy as np
 import torch
 
 from .binary import PAD
-from .features import BLACK, KING, PIECE_SQUARES, WHITE, active_features, parse_fen
+from .features import BLACK, KING, PIECE_SQUARES, WHITE, active_features, output_bucket, parse_fen
 
 
 def parse_line(line):
@@ -28,7 +28,9 @@ def parse_line(line):
 
 
 def collate(samples):
-    """Batches samples into EmbeddingBag inputs: flat index tensors plus a start offset per sample."""
+    """Batches samples into the model's inputs, EmbeddingBag style (flat index tensors plus a start
+    offset per sample) and each sample's output bucket, then the targets:
+    (stm indices, stm offsets, nstm indices, nstm offsets, bucket, score, result)."""
     def bag(lists):
         offsets, flat = [], []
         for features in lists:
@@ -38,9 +40,10 @@ def collate(samples):
 
     stm_indices, stm_offsets = bag(s[0] for s in samples)
     nstm_indices, nstm_offsets = bag(s[1] for s in samples)
+    bucket = torch.tensor([output_bucket(len(s[0])) for s in samples], dtype=torch.long)   # A feature per piece.
     score = torch.tensor([s[2] for s in samples], dtype=torch.float32)
     result = torch.tensor([s[3] for s in samples], dtype=torch.float32)
-    return stm_indices, stm_offsets, nstm_indices, nstm_offsets, score, result
+    return stm_indices, stm_offsets, nstm_indices, nstm_offsets, bucket, score, result
 
 
 def perspective_features(pieces, perspective):
@@ -79,9 +82,10 @@ def batch_tensors(records, device="cpu"):
     side = tensor(records["side"]).int()
     stm_indices, stm_offsets = perspective_features(pieces, side)
     nstm_indices, nstm_offsets = perspective_features(pieces, side ^ 1)
+    bucket = output_bucket((pieces != PAD).sum(dim=1)).long()
     score = tensor(records["score"]).float()
     result = tensor(records["result"]).float() / 2
-    return stm_indices, stm_offsets, nstm_indices, nstm_offsets, score, result
+    return stm_indices, stm_offsets, nstm_indices, nstm_offsets, bucket, score, result
 
 
 VALIDATION_BLOCK = 4096

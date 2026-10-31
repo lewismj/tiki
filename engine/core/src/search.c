@@ -34,7 +34,7 @@ int score_move(move_t move, move_t tt_move, board_t* board, search_state_t* sear
             if (is_bit_set(&board->pieces[pieces[i]], target)) {
                 /* Losing captures (SEE < 0) after the quiet moves. Only possible when the
                  * attacker is worth more than the victim, so SEE is skipped otherwise. */
-                if (see_values[piece] > see_values[pieces[i]] && see(board, move) < 0) {
+                if (see_values[piece] > see_values[pieces[i]] && !see_ge(board, move, 0)) {
                     return BAD_CAPTURE_SCORE + search_const.mvv_lva[piece][pieces[i]];
                 }
                 return CAPTURE_SCORE + search_const.mvv_lva[piece][pieces[i]];
@@ -105,11 +105,15 @@ void score_moves(const move_buffer_t* buffer, int* scores, move_t tt_move, board
 /**
  * Selection sort one step at a time: swap the best scored move from i onwards into i and return it.
  * Most nodes cut off after one or two moves, so sorting the whole list up front is wasted work.
+ * The scan is branchless (the comparison mispredicts often), ties keep the earlier move.
  */
 move_t pick_next_move(move_buffer_t* buffer, int* scores, int i) {
     int best = i;
+    int best_score = scores[i];
     for (int j = i + 1; j < buffer->index; j++) {
-        if (scores[j] > scores[best]) best = j;
+        const bool better = scores[j] > best_score;
+        best = better ? j : best;
+        best_score = better ? scores[j] : best_score;
     }
     if (best != i) {
         move_t mv = buffer->moves[best];
@@ -263,13 +267,18 @@ bool can_reduce(int depth, int moves_searched, bool is_quiet, bool gives_check, 
 }
 
 /**
- * Late move reduction for a quiet move, from the log table, one ply less in PV nodes. Clamped so
- * the reduced search still has at least one ply (depth - 1 - r >= 1).
+ * Late move reduction for a quiet move, from the log table, one ply less in PV nodes, and adjusted
+ * by the move's history: history / LMR_HISTORY_DIVISOR plies less for a move that has often been
+ * good, more for one that hasn't. History averages about 900 in magnitude (bench), so a move well
+ * above or below average moves a ply, the strongest (+-HISTORY_MAX) up to 7. Clamped so the reduced
+ * search still has at least one ply (depth - 1 - r >= 1). Against the same search without it (both
+ * with persistent history): SPRT +15.0 +- 7.4 after 3388 games, H1 accepted [0, 5].
  */
-int lmr_reduction(int depth, int moves_searched, bool is_pv_node) {
+int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history) {
     int r = lmr_table[depth < LMR_TABLE_SIZE ? depth : LMR_TABLE_SIZE - 1]
                      [moves_searched < LMR_TABLE_SIZE ? moves_searched : LMR_TABLE_SIZE - 1];
     if (is_pv_node) r--;
+    r -= history / LMR_HISTORY_DIVISOR;
     if (r > depth - 2) r = depth - 2;
     return r > 0 ? r : 0;
 }
@@ -354,6 +363,8 @@ bool is_draw(board_t* board, search_state_t* search_state) {
  */
 static inline_always bool search_make_move(board_t* board, search_state_t* search_state, move_t mv) {
     if (!make_move(board, mv)) return false;
+    /* The child probes the TT first thing, the NNUE push overlaps the memory load. */
+    tt_prefetch(board->hash);
     nnue_push(&search_state->nnue, board, mv);
     return true;
 }
@@ -437,7 +448,10 @@ int negamax(int alpha,
     search_state->pv_length[search_state->ply] = search_state->ply;
 
     /* The root, the accumulators start again from this position. */
-    if (search_state->ply == 0) nnue_reset(&search_state->nnue);
+    if (search_state->ply == 0) {
+        nnue_reset(&search_state->nnue);
+        search_state->best_move_nodes = 0;
+    }
 
     /* Whether this node is on the previous iteration's PV, set by the parent for this node only. */
     const bool follow_pv = search_state->follow_pv;
@@ -565,7 +579,7 @@ int negamax(int alpha,
 
         /* SEE pruning, also before making the move. Promotions are always searched. */
         if (!get_promoted_piece(mv) && can_see_prune(depth, num_moves_searched, alpha, in_check, is_pv_node) &&
-            see(board, mv) < see_prune_threshold(depth, is_quiet)) continue;
+            !see_ge(board, mv, see_prune_threshold(depth, is_quiet))) continue;
 
         if (!search_make_move(board, search_state, mv)) {
             pop_move(board);
@@ -584,11 +598,15 @@ int negamax(int alpha,
             continue;
         }
 
+        /* At the root, the nodes this move takes, for time management (tm_scale). */
+        const uint64_t nodes_before_move = search_state->nodes;
+
         /* Late move reduction. Killers are for this ply, checked before ++ply. */
         const bool is_killer = mv == search_state->killer_moves[0][search_state->ply] ||
                                mv == search_state->killer_moves[1][search_state->ply];
         const int reduction = can_reduce(depth, num_moves_searched, is_quiet, gives_check, in_check, is_killer) ?
-                              lmr_reduction(depth, num_moves_searched, is_pv_node) : 0;
+                              lmr_reduction(depth, num_moves_searched, is_pv_node,
+                                            search_state->history_moves[get_piece_moved(mv)][get_target_square(mv)]) : 0;
         /* The TT move a ply deeper if it's singular, shallower if it isn't but beat beta (see above). */
         const int new_depth = depth - 1 + (mv == tt_move ? extension : 0);
 
@@ -624,6 +642,7 @@ int negamax(int alpha,
 
         if (score > alpha) {
             best_move = mv;
+            if (search_state->ply == 0) search_state->best_move_nodes = search_state->nodes - nodes_before_move;
 
             search_state->pv_table[search_state->ply][search_state->ply] = mv;
             for (int j = search_state->ply + 1; j < search_state->pv_length[search_state->ply + 1]; j++) {
@@ -802,14 +821,16 @@ static void print_info(int score, int depth, uint64_t nodes, const search_state_
 /**
  * Starts limits->threads - 1 helpers on copies of the root position, returns the number started
  * (fewer if memory or thread creation fails). Each helper sets up its own search state, only the
- * game history for repetitions (up to the root) and the scalars are copied from the main thread's.
+ * game history for repetitions (up to the root), the move history and the scalars are copied from
+ * the main thread's.
  */
 static int start_helpers(board_t* board, search_state_t* search_state, limits_t* limits, search_helper_t** helpers) {
     int count = limits->threads - 1;
     *helpers = helpers_kept;
     if (count <= 0) return 0;
 
-    /* Nothing in a helper carries over between searches, so a larger set starts afresh. */
+    /* Nothing in a helper carries over between searches (history is the main thread's), so a larger
+     * set starts afresh. */
     if (count > helpers_allocated) {
         search_helper_t* grown = allocate_helpers(count);
         if (grown == NULL) {
@@ -839,6 +860,7 @@ static int start_helpers(board_t* board, search_state_t* search_state, limits_t*
         state->score_pv = false;
         state->follow_pv = true;
         state->thread_id = started + 1;
+        memcpy(state->history_moves, search_state->history_moves, sizeof(state->history_moves));
         atomic_init(&state->shared_nodes, 0);
         helper->limits = limits;
         if (pthread_create(&helper->thread, NULL, helper_search, helper) != 0) break;
@@ -854,17 +876,33 @@ static void stop_helpers(limits_t* limits, search_helper_t* helpers, int count) 
     }
 }
 
+/* By how many depths in a row the best move has stayed the same (capped at the last entry): more
+ * time when it just changed, less when it has held. */
+static const double tm_stability_scale[TM_STABILITY_MAX + 1] = { 2.5, 1.2, 0.9, 0.8, 0.75 };
+
+double tm_scale(int stability, uint64_t best_move_nodes, uint64_t root_nodes) {
+    if (stability < 0) stability = 0;
+    if (stability > TM_STABILITY_MAX) stability = TM_STABILITY_MAX;
+    /* The best move's share of the root's nodes: near 1 it's clearly best, low when others came close. */
+    const double fraction = root_nodes ? (double) best_move_nodes / (double) root_nodes : 1.0;
+    const double nodes_scale = (1.5 - (fraction > 1.0 ? 1.0 : fraction)) * 1.35;
+    return tm_stability_scale[stability] * nodes_scale;
+}
+
 move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* limits) {
     int score = 0;
 
     int depth = limits->depth;
     move_t move = 0;
+    move_t previous_move = 0;
+    int stability = 0;
 
     search_state->thread_id = 0;
     search_helper_t* helpers;
     const int helper_count = start_helpers(board, search_state, limits, &helpers);
 
     for (int i = 1; i <= depth; i++) {
+        const uint64_t nodes_before = search_state->nodes;
         score = aspiration_search(board, search_state, limits, i, score);
 
         /* The search may have been stopped, the PV table is then partly overwritten so keep
@@ -878,8 +916,22 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
             print_info(score, i, total_nodes(search_state, helpers, helper_count), search_state, limits);
         }
 
-        /* Soft limit, the next depth is unlikely to complete in the time left. */
-        if (limits->time_set && clock_time_ms() > limits->soft_stop_time) break;
+        stability = move == previous_move ? stability + 1 : 0;
+        previous_move = move;
+
+        /* Soft limit: no new depth after it. With a clock it's scaled by how settled the search is,
+         * from TM_SCALE_MIN_DEPTH on, and never later than the hard limit. */
+        if (limits->time_set) {
+            uint64_t soft_stop = limits->soft_stop_time;
+            if (limits->adaptive && i >= TM_SCALE_MIN_DEPTH) {
+                const double scale = tm_scale(stability, search_state->best_move_nodes,
+                                              search_state->nodes - nodes_before);
+                soft_stop = limits->start_time +
+                            (uint64_t) ((double) (limits->soft_stop_time - limits->start_time) * scale);
+                if (soft_stop > limits->stop_time) soft_stop = limits->stop_time;
+            }
+            if (clock_time_ms() > soft_stop) break;
+        }
     }
 
     stop_helpers(limits, helpers, helper_count);

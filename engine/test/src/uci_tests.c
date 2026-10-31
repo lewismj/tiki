@@ -107,7 +107,9 @@ void test_go_clock_limits() {
     parse_go_limits("go wtime 60000 btime 60000 movestogo 10", &board, &limits);
     TEST_ASSERT_FALSE(limits.infinite);
     TEST_ASSERT_TRUE(limits.time_set);
-    TEST_ASSERT_EQUAL_UINT64(limits.start_time + (60000 - MOVE_OVERHEAD_DEFAULT) / 10, limits.stop_time);
+    /* 'movestogo' divides the clock by the moves left in the time control instead of the estimate. */
+    TEST_ASSERT_EQUAL_UINT64(limits.start_time + (60000 - MOVE_OVERHEAD_DEFAULT) / 10 * TM_HARD_PERCENT / 100,
+                             limits.stop_time);
 }
 
 /* The time a 'go' command allows the side to move (white, from the start position). */
@@ -123,8 +125,10 @@ static uint64_t move_budget(const char* command) {
 void test_go_low_clock_limits() {
     const uint64_t overhead = MOVE_OVERHEAD_DEFAULT;
 
-    /* Bullet: a share of the clock less the overhead, plus the increment. */
-    TEST_ASSERT_EQUAL_UINT64((1000 - overhead) / 30 + 10, move_budget("go wtime 1000 btime 1000 winc 10 binc 10"));
+    /* Bullet: the hard limit, a multiple of the base time (a share of the clock less the overhead, plus
+     * most of the increment). */
+    TEST_ASSERT_EQUAL_UINT64(((1000 - overhead) / TM_MOVES_LEFT + 10 * TM_INCREMENT_PERCENT / 100) * TM_HARD_PERCENT / 100,
+                             move_budget("go wtime 1000 btime 1000 winc 10 binc 10"));
 
     /* A low clock: never more than half of what's left, whatever the increment. It used to get 55 ms
      * here with a 10 ms increment, and lost on time. */

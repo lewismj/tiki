@@ -56,8 +56,9 @@ class BinaryTest(unittest.TestCase):
                     end = offsets[i + 1] if i + 1 < len(lines) else len(indices)
                     return sorted(indices[offsets[i]:end].tolist())
                 self.assertEqual(sample(expected), sample(actual), lines[i])
-        np.testing.assert_array_equal(np.clip(expected[4].numpy(), -32767, 32767), actual[4].numpy())
-        np.testing.assert_array_equal(expected[5].numpy(), actual[5].numpy())
+        np.testing.assert_array_equal(expected[4].numpy(), actual[4].numpy())       # Output bucket.
+        np.testing.assert_array_equal(np.clip(expected[5].numpy(), -32767, 32767), actual[5].numpy())
+        np.testing.assert_array_equal(expected[6].numpy(), actual[6].numpy())
 
     def test_batch_features_match_parse_line(self):
         self.assert_batch_matches(LINES)

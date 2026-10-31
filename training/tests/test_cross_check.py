@@ -35,7 +35,8 @@ class CrossCheckTests(unittest.TestCase):
         with torch.no_grad():
             model.ft.weight.mul_(10)
             model.ft_bias.uniform_(-0.5, 1.5)
-            model.out.bias.fill_(0.1)
+            model.out.bias.uniform_(-0.2, 0.2)          # A different output per bucket.
+            model.out.weight.normal_(0.0, 0.1)
         model.clip_weights()
         network = quantise(model)
 

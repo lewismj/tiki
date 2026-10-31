@@ -37,7 +37,7 @@ A UCI chess engine in C (C23), for Linux and other POSIX systems and for Windows
 
 - **Time control**: hard and soft limits. A new depth isn't started after half the time allocated to the move.
 
-- **Evaluation**: tiki's own HalfKAv2_hm network (22528 → 256×2 → 1), see [NNUE](#nnue). There's no hand-crafted
+- **Evaluation**: tiki's own HalfKAv2_hm network (22528 → 256×2 → 1, 8 output buckets), see [NNUE](#nnue). There's no hand-crafted
   evaluation, so tiki needs a network to run: set `TIKI_EVALFILE` to a `.nnue` file (the `EvalFile` UCI option
   changes it at runtime). The accumulators are updated incrementally along the search path, lazily: only when a
   position is evaluated. When a king moves, its side is refreshed through a cache of accumulators per king square
