@@ -136,6 +136,23 @@ class ModelTests(unittest.TestCase):
             self.model.clip_weights()
         self.assertLess(loss().item(), start * 0.2)
 
+    def test_wider_network_round_trip(self):
+        """A 512-wide net (--hidden 512) writes its width to the file and reads back as the same net,
+        evaluating as before."""
+        torch.manual_seed(2)
+        model = TikiNNUE(hidden=512)
+        model.clip_weights()
+        network = quantise(model)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "net.nnue")
+            write_network(network, path)
+            self.assertEqual(20 + 2 * (22528 * 512 + 512 + 8 * 1024) + 8 * 4, os.path.getsize(path))
+            loaded = read_network(path)
+        self.assertEqual((22528, 512), loaded["ft_weights"].shape)
+        for fen in FENS:
+            self.assertEqual(quantised_eval(network, fen), quantised_eval(loaded, fen))
+            self.assertLess(abs(quantised_eval(loaded, fen) - evaluate(dequantise(loaded), [fen])[0]), 2, fen)
+
     def test_export_writes_engine_format(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "net.nnue")
