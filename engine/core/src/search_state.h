@@ -22,7 +22,59 @@ typedef struct {
     uint64_t singular_extensions;
     uint64_t singular_reductions;
     uint64_t multi_cuts;
+    uint64_t cutoff_at[5];        /* Cutoffs by the cutting move's place among those searched: 1, 2, 3-4, 5-8, 9+. */
+    uint64_t capture_cutoffs;     /* Cutoffs by a capture (promotions that don't capture count as quiet). */
+    uint64_t tt_move_nodes;       /* Move loops (negamax) with a TT move... */
+    uint64_t tt_move_first;       /* ...where it was the first move searched (not pruned, legal)... */
+    uint64_t tt_move_cutoffs;     /* ...and where it caused the node's cutoff. */
+    uint64_t cutoff_nodes_tt;     /* Cutoffs at nodes with a TT move (the share of cutoffs it could take). */
+    uint64_t no_tt_cutoff_at[2][5]; /* Cutoffs at nodes without a TT move: [capture, quiet][place as cutoff_at]. */
+    uint64_t lmr_searches;        /* Reduced searches... */
+    uint64_t lmr_fail_highs;      /* ...that beat alpha, so the move was searched again at full depth... */
+    uint64_t lmr_research_holds;  /* ...where it still beat alpha (the reduction hid a good move). */
+    /* Quiet ordering by [depth band 1-3, 4-6, 7+][non-PV, PV][no TT move, TT move]: move loops that
+     * searched a quiet move, the quiet moves searched, the loops a quiet move cut off, and that
+     * move's place among the quiets searched (1, 2, 3-4, 5-8, 9+). Singular searches aren't counted. */
+    uint64_t quiet_nodes[3][2][2];
+    uint64_t quiets_searched[3][2][2];
+    uint64_t quiet_cut_nodes[3][2][2];
+    uint64_t quiet_cut_rank[3][2][2][5];
+    /* Reduced searches by [depth band][non-PV, PV][move place 4-5, 6-8, 9-16, 17+][reduction 1, 2, 3, 4+]:
+     * [0] searches, [1] beat alpha (so re-searched at full depth), and what the full depth search
+     * then found: [2] at or below alpha, [3] between alpha and beta, [4] at or above beta. */
+    uint64_t lmr[3][2][4][4][5];
+    /* Capture history's effect on ordering, by [depth band][non-PV, PV][no TT move, TT move], over the
+     * captures other than the TT move at move loops with at least two of them: the loops, those
+     * where it changed the top capture, the captures, those whose place among the captures it
+     * changed; and for cutoffs by such a capture, its place (1, 2, 3+) as ordered and with no history. */
+    uint64_t cap_loops[3][2][2];
+    uint64_t cap_top_changed[3][2][2];
+    uint64_t cap_moves[3][2][2];
+    uint64_t cap_rank_changed[3][2][2];
+    uint64_t cap_cut_rank[3][2][2][3];
+    uint64_t cap_cut_rank_without[3][2][2][3];
+    /* Captures searched (not the TT move) and those that cut off, by their capture history:
+     * [0] below -1000 (disfavoured), [1] within +-1000, [2] above +1000 (favoured). */
+    uint64_t cap_searched_by_history[3];
+    uint64_t cap_cut_by_history[3];
+    /* Capture history updates: bonuses, maluses, and updates leaving a value within 10% of the bound. */
+    uint64_t cap_bonuses;
+    uint64_t cap_maluses;
+    uint64_t cap_near_bound_updates;
+    /* Shadow comparison, nothing searched differently: the same captures ranked as the search orders
+     * them and with experiment A's scores (4 * the victim's SEE value + the same capture history
+     * term, no attacker term). By [depth band][non-PV, PV][no TT move, TT move]: loops with two or
+     * more captures where A's top capture differs, and the cutting capture's place (1, 2, 3+) in A. */
+    uint64_t victim_top_changed[3][2][2];
+    uint64_t victim_cut_rank[3][2][2][3];
+    /* Pairs of captures of different victim types (pawn .. queen) at the same loop, and how many
+     * the two schemes order differently. [lower type][higher type]. */
+    uint64_t victim_pairs[5][5];
+    uint64_t victim_pair_flips[5][5];
 } search_stats_t;
+
+/* Only 64-bit counters, so the bench can sum two of them word by word. */
+static_assert(sizeof(search_stats_t) % sizeof(uint64_t) == 0, "search_stats_t holds uint64_t counters only");
 #endif
 
 
@@ -35,6 +87,7 @@ typedef struct align {
     uint64_t repetition_check[MAX_MOVES];
     uint32_t pv_table[MAX_PLY][MAX_PLY];
     int32_t history_moves[12][64];
+    int32_t capture_history[12][64][6]; /* [moving piece][target square][captured piece type], see score_move. */
     uint32_t killer_moves[2][MAX_PLY];
     uint32_t excluded_moves[MAX_PLY]; /* The TT move a singular extension search leaves out at this ply (0: none). */
     uint8_t pv_length[MAX_PLY];
@@ -76,6 +129,8 @@ static inline_always void clear_search_tables(search_state_t* search_state) {
 static inline_always void age_history(search_state_t* search_state) {
     int32_t* h = &search_state->history_moves[0][0];
     for (size_t i = 0; i < sizeof(search_state->history_moves) / sizeof(*h); i++) h[i] /= 2;
+    int32_t* c = &search_state->capture_history[0][0][0];
+    for (size_t i = 0; i < sizeof(search_state->capture_history) / sizeof(*c); i++) c[i] /= 2;
 }
 
 static inline_always void init_search_state(search_state_t* search_state) {
@@ -95,6 +150,7 @@ static inline_always void init_search_state(search_state_t* search_state) {
     search_state->follow_pv = true;
     clear_search_tables(search_state);
     memset(search_state->history_moves, 0, sizeof (search_state->history_moves));
+    memset(search_state->capture_history, 0, sizeof (search_state->capture_history));
     memset(search_state->repetition_check, 0ULL, sizeof(search_state->repetition_check));
     nnue_stack_init(&search_state->nnue);
 }

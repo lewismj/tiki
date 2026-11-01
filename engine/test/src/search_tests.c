@@ -464,6 +464,88 @@ void test_history_stays_below_killers_and_captures() {
     TEST_ASSERT_TRUE(killer_score < capture_score);
 }
 
+void test_queen_promotion_ordered_with_captures() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* b7-b8: the queen promotion goes over the killers and every quiet, the underpromotion doesn't. */
+    setup_position("4k3/1P6/8/8/8/8/8/4K3 w - - 0 1", &board, &search_state, &limits, 1);
+    const move_t queen = parse_move("b7b8q", &board);
+    const move_t knight = parse_move("b7b8n", &board);
+    const move_t quiet = parse_move("e1e2", &board);
+    const move_t killer = parse_move("e1d1", &board);
+    for (int i = 0; i < 100000; i++) update_history(&search_state, quiet, 40);
+    search_state.killer_moves[0][0] = killer;
+
+    TEST_ASSERT_EQUAL_INT(QUEEN_PROMOTION_SCORE, score_move(queen, 0, &board, &search_state));
+    TEST_ASSERT_TRUE(score_move(queen, 0, &board, &search_state) > score_move(killer, 0, &board, &search_state));
+    TEST_ASSERT_TRUE(score_move(queen, 0, &board, &search_state) > score_move(quiet, 0, &board, &search_state));
+    TEST_ASSERT_TRUE(score_move(knight, 0, &board, &search_state) < KILLER_2_SCORE);
+}
+
+void test_capture_history_shifts_captures_within_band() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* 1.e4 d5, exd5: its history moves it by at most CAPTURE_HISTORY_SPAN, always over the killers. */
+    setup_position("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2", &board, &search_state, &limits, 1);
+    const move_t capture = parse_move("e4d5", &board);
+    const int base = score_move(capture, 0, &board, &search_state);
+
+    for (int i = 0; i < 100000; i++) update_capture_history(&search_state, &board, capture, 40);
+    TEST_ASSERT_EQUAL_INT(CAPTURE_HISTORY_MAX, search_state.capture_history[P][d5][0]);
+    TEST_ASSERT_EQUAL_INT(base + CAPTURE_HISTORY_SPAN, score_move(capture, 0, &board, &search_state));
+
+    for (int i = 0; i < 100000; i++) penalise_capture_history(&search_state, &board, capture, 40);
+    TEST_ASSERT_EQUAL_INT(-CAPTURE_HISTORY_MAX, search_state.capture_history[P][d5][0]);
+    TEST_ASSERT_EQUAL_INT(base - CAPTURE_HISTORY_SPAN, score_move(capture, 0, &board, &search_state));
+    TEST_ASSERT_TRUE(score_move(capture, 0, &board, &search_state) > KILLER_1_SCORE);
+
+    /* Halved before each search, like quiet history. */
+    clear_pv_table(&search_state);
+    TEST_ASSERT_EQUAL_INT(-CAPTURE_HISTORY_MAX / 2, search_state.capture_history[P][d5][0]);
+}
+
+void test_capture_history_reorders_captures() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* The d4 pawn takes a knight (c5) or a bishop (e5). MVV-LVA prefers the bishop, until its
+     * capture keeps failing and the knight's keeps cutting off. Keyed by the victim's type. */
+    setup_position("4k3/8/8/2n1b3/3P4/8/8/4K3 w - - 0 1", &board, &search_state, &limits, 1);
+    const move_t takes_knight = parse_move("d4c5", &board);
+    const move_t takes_bishop = parse_move("d4e5", &board);
+    TEST_ASSERT_TRUE(score_move(takes_bishop, 0, &board, &search_state) > score_move(takes_knight, 0, &board, &search_state));
+
+    for (int i = 0; i < 100000; i++) {
+        update_capture_history(&search_state, &board, takes_knight, 40);
+        penalise_capture_history(&search_state, &board, takes_bishop, 40);
+    }
+    TEST_ASSERT_EQUAL_INT(CAPTURE_HISTORY_MAX, search_state.capture_history[P][c5][1]);
+    TEST_ASSERT_EQUAL_INT(-CAPTURE_HISTORY_MAX, search_state.capture_history[P][e5][2]);
+    TEST_ASSERT_TRUE(score_move(takes_knight, 0, &board, &search_state) > score_move(takes_bishop, 0, &board, &search_state));
+}
+
+void test_losing_capture_with_history_stays_under_quiets() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* Qxf7+ loses the queen (SEE < 0): the best capture history can't lift it over a quiet move with
+     * the worst quiet history. */
+    setup_position("r1bqkbnr/pppp1ppp/2n5/4p2Q/4P3/8/PPPP1PPP/RNB1KBNR w KQkq - 2 3", &board, &search_state, &limits, 1);
+    const move_t quiet = parse_move("g1f3", &board);
+    const move_t losing_capture = parse_move("h5f7", &board);
+    for (int i = 0; i < 100000; i++) {
+        penalise_history(&search_state, quiet, 40);
+        update_capture_history(&search_state, &board, losing_capture, 40);
+    }
+    TEST_ASSERT_TRUE(score_move(losing_capture, 0, &board, &search_state) < score_move(quiet, 0, &board, &search_state));
+}
+
 void test_en_passant_scored_as_pawn_capture() {
     board_t board;
     search_state_t search_state;
@@ -582,12 +664,14 @@ void test_quiescence_searches_promotion_with_negative_history() {
     search_state_t search_state;
     limits_t limits;
 
-    /* As test_quiescence_sees_quiet_queen_promotion, but the malus has made a8=Q's history
-     * negative, which must not end the qsearch as if it were a losing capture. */
+    /* As test_quiescence_sees_quiet_queen_promotion, with a negative history for a8=Q: a queen
+     * promotion is ordered with the winning captures whatever its history, so the qsearch still
+     * searches it (it never sorts among the losing captures, which end the qsearch). */
     setup_position("8/P7/8/8/8/8/k7/7K w - - 0 1", &board, &search_state, &limits, 1);
     const move_t promotion = parse_move("a7a8q", &board);
     for (int i = 0; i < 100; i++) penalise_history(&search_state, promotion, 20);
-    TEST_ASSERT_TRUE(score_move(promotion, 0, &board, &search_state) < 0);
+    TEST_ASSERT_TRUE(search_state.history_moves[P][a8] < 0);
+    TEST_ASSERT_EQUAL_INT(QUEEN_PROMOTION_SCORE, score_move(promotion, 0, &board, &search_state));
 
     const int stand_pat = evaluation(&board, &search_state.nnue);
     TEST_ASSERT_TRUE(quiescence(-INF, INF, &board, &search_state, &limits) > stand_pat + 500);

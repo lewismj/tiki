@@ -59,6 +59,10 @@ move_t pick_next_move(move_buffer_t* buffer, int* scores, int i);
 /* Quiet move raised alpha, min(16 * depth^2, 1600) bonus with gravity, bounded by HISTORY_MAX. */
 void update_history(search_state_t* search_state, move_t mv, int depth);
 void penalise_history(search_state_t* search_state, move_t mv, int depth);
+/* Capture history: a capture caused a cutoff, or was searched before the move that did ('board' is
+ * the position the capture is made from). The same bonus and gravity as quiet history. */
+void update_capture_history(search_state_t* search_state, const board_t* board, move_t mv, int depth);
+void penalise_capture_history(search_state_t* search_state, const board_t* board, move_t mv, int depth);
 /* Non-capture caused a cutoff, the first killer at this ply (the old first becomes the second). */
 void store_killer(search_state_t* search_state, move_t mv);
 

@@ -111,6 +111,10 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_null_move_guards);
     RUN_TEST(test_history_bonus_and_bound);
     RUN_TEST(test_history_stays_below_killers_and_captures);
+    RUN_TEST(test_queen_promotion_ordered_with_captures);
+    RUN_TEST(test_capture_history_shifts_captures_within_band);
+    RUN_TEST(test_capture_history_reorders_captures);
+    RUN_TEST(test_losing_capture_with_history_stays_under_quiets);
     RUN_TEST(test_en_passant_scored_as_pawn_capture);
     RUN_TEST(test_losing_capture_ordered_after_quiet_moves);
     RUN_TEST(test_reverse_futility_guards);
