@@ -88,6 +88,7 @@ bool nnue_allocate(void) {
     memset(nnue_net.ft_bias, 0, sizeof(nnue_net.ft_bias));
     memset(nnue_net.out_weights, 0, sizeof(nnue_net.out_weights));
     memset(nnue_net.out_bias, 0, sizeof(nnue_net.out_bias));
+    nnue_net.small_output = false;
     return nnue_net.ft_weights != NULL;
 }
 
@@ -153,6 +154,13 @@ bool nnue_load_memory(const void* data, size_t size, const char* name) {
         }
     }
     ok = ok && at == size; /* Nothing after the network. */
+
+    net.small_output = true;
+    for (int b = 0; ok && b < NNUE_OUTPUT_BUCKETS; b++) {
+        for (int i = 0; i < 2 * NNUE_HIDDEN; i++) {
+            if (abs(net.out_weights[b][i]) > NNUE_OUT_WEIGHT_SMALL) net.small_output = false;
+        }
+    }
 
     if (!ok) {
         free_ft_weights(net.ft_weights);
@@ -265,8 +273,38 @@ static inline __m256i output_half(__m256i sum, const int16_t* values, const int1
     return sum;
 }
 
+/*
+ * The same sum for small output weights (nnue.h): SCReLU(v) * w = (v * w) * v, with v * w in int16
+ * and _mm256_madd_epi16 multiplying by v and adding pairs into int32. Each of the 8 int32 lanes sums
+ * 2 * NNUE_HIDDEN / 8 products of at most QA^2 * 127, which can't overflow.
+ */
+static_assert((int64_t) (2 * NNUE_HIDDEN / 8) * NNUE_QA * NNUE_QA * NNUE_OUT_WEIGHT_SMALL <= INT32_MAX,
+              "the int32 output sums would overflow, sum in int64 every so often");
+static_assert(NNUE_QA * NNUE_OUT_WEIGHT_SMALL <= INT16_MAX, "v * w must fit in int16");
+
+static inline __m256i output_half_small(__m256i sum, const int16_t* values, const int16_t* weights) {
+    const __m256i zero = _mm256_setzero_si256();
+    const __m256i qa = _mm256_set1_epi16(NNUE_QA);
+    for (int j = 0; j < NNUE_HIDDEN; j += 16) {
+        __m256i v = _mm256_loadu_si256((const __m256i*) (values + j));
+        v = _mm256_min_epi16(_mm256_max_epi16(v, zero), qa);
+        const __m256i w = _mm256_loadu_si256((const __m256i*) (weights + j));
+        sum = _mm256_add_epi32(sum, _mm256_madd_epi16(_mm256_mullo_epi16(v, w), v));
+    }
+    return sum;
+}
+
 static inline int64_t output_sum(const int16_t* us, const int16_t* them, int bucket) {
     const int16_t* weights = nnue_net.out_weights[bucket];
+    if (nnue_net.small_output) {
+        __m256i sum = output_half_small(_mm256_setzero_si256(), us, weights);
+        sum = output_half_small(sum, them, weights + NNUE_HIDDEN);
+        int32_t lanes[8];
+        _mm256_storeu_si256((__m256i*) lanes, sum);
+        int64_t total = 0;
+        for (int k = 0; k < 8; k++) total += lanes[k];
+        return total;
+    }
     __m256i sum = output_half(_mm256_setzero_si256(), us, weights);
     sum = output_half(sum, them, weights + NNUE_HIDDEN);
     int64_t lanes[4];

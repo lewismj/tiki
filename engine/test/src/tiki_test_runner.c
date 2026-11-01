@@ -86,6 +86,8 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_nnue_save_load_round_trip);
     RUN_TEST(test_nnue_incremental_matches_refresh);
     RUN_TEST(test_nnue_output_simd_matches_scalar);
+    RUN_TEST(test_nnue_output_small_matches_scalar);
+    RUN_TEST(test_nnue_load_sets_small_output);
     RUN_TEST(test_nnue_refresh_matches_plain_sum);
     RUN_TEST(test_nnue_cache_rebuilt_for_new_network);
     RUN_TEST(test_nnue_setoption_evalfile);

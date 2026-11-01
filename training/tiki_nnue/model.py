@@ -21,7 +21,7 @@ SCALE = 400     # Network output to centipawns, also the scale of the score -> w
 # Feature transformer weights are clipped so QA * w fits easily in int16 and 32 features plus the
 # bias can't overflow the int16 accumulator (33 * 1.98 * 255 < 32767).
 FT_CLIP = 1.98
-OUT_CLIP = 32767 / QB / 2
+OUT_CLIP = 127 / QB  # Quantised output weights fit in int8 range, so SCReLU(v) * w can use int16 (madd).
 
 
 def screlu(x):
