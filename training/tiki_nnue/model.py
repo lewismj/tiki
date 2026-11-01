@@ -13,7 +13,7 @@ from torch import nn
 
 from .features import INPUTS, OUTPUT_BUCKETS
 
-HIDDEN = 256
+HIDDEN = 512
 QA = 255        # Accumulator scale (an activation of 1.0 is QA).
 QB = 64         # Output weight scale.
 SCALE = 400     # Network output to centipawns, also the scale of the score -> win probability sigmoid.
