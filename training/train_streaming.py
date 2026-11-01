@@ -24,7 +24,7 @@ import torch
 from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, TimeElapsedColumn, TimeRemainingColumn
 
 from tiki_nnue.export import export
-from tiki_nnue.model import TikiNNUE
+from tiki_nnue.model import HIDDEN, TikiNNUE
 from tiki_nnue.stream import Epoch, StreamData, TrainingStream, ValidationBatches, data_files
 from train import Log, add_schedule_arguments, binary_files, console, load_scheduler, make_scheduler, run_epoch
 
@@ -37,6 +37,8 @@ def main():
     parser.add_argument("--epoch-positions", type=int, default=0,
                         help="positions per epoch (0: a whole pass over the data)")
     parser.add_argument("--batch-size", type=int, default=16384)
+    parser.add_argument("--hidden", type=int, default=HIDDEN,
+                        help="feature transformer width per side (the engine must be built with the same NNUE_HIDDEN)")
     parser.add_argument("--buffer", type=int, default=8_000_000, help="positions shuffled together (memory: ~68 bytes each, x2)")
     add_schedule_arguments(parser)
     parser.add_argument("--wdl", type=float, default=0.3, help="weight of the game result vs the search score")
@@ -73,7 +75,7 @@ def main():
     console.print(summary)
     log(summary)
 
-    model = TikiNNUE().to(args.device)
+    model = TikiNNUE(hidden=args.hidden).to(args.device)
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = make_scheduler(optimiser, args)
     first_epoch = 1

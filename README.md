@@ -35,9 +35,19 @@ A UCI chess engine in C (C23), for Linux and other POSIX systems and for Windows
     the move.
   - **Draws**: repetition (game history plus search path), the fifty-move rule and insufficient material.
 
-- **Time control**: hard and soft limits. A new depth isn't started after half the time allocated to the move.
+- **Time control**: from the clock (less `Move Overhead`) and the increment, a base time per move of
+  available / 20 + 75% of the increment (`movestogo n` divides by n instead of 20). Two limits come from it
+  (the constants are in `limits.h`):
+  - **Hard**: 250% of the base, never more than half of what's left. The search stops wherever it is.
+  - **Soft**: 60% of the base, checked after each completed depth. No new depth is started once it has passed.
+    From depth 5 it's scaled by how settled the search is, never past the hard limit:
+    - the best move's stability: ×2.5 when it has just changed, down to ×0.75 after four unchanged depths;
+    - the best move's share of the root's nodes: ×0.675 when it took them all, up to ×2.0 when it took few
+      (other moves came close).
+  - `movetime` uses all of its time. The last move before a `movestogo` control can use the whole clock. `depth`,
+    `nodes` and `infinite` aren't timed.
 
-- **Evaluation**: tiki's own HalfKAv2_hm network (22528 → 256×2 → 1, 8 output buckets), see [NNUE](#nnue). There's no hand-crafted
+- **Evaluation**: tiki's own HalfKAv2_hm network (22528 → 512×2 → 1, 8 output buckets), see [NNUE](#nnue). There's no hand-crafted
   evaluation, so tiki needs a network to run: set `TIKI_EVALFILE` to a `.nnue` file (the `EvalFile` UCI option
   changes it at runtime). The accumulators are updated incrementally along the search path, lazily: only when a
   position is evaluated. When a king moves, its side is refreshed through a cache of accumulators per king square
@@ -138,7 +148,7 @@ to build the network in.
   (default 11), with a 16 MB TT cleared before each one, and prints the total node count and nodes/second.
   - The node count only changes when the search or evaluation does, so it's a signature for refactors that shouldn't
     change behaviour. It depends on the network too, so compare signatures with the same one: with
-    `models/tiki-2026-10-26.nnue` it's **1,389,650** nodes.
+    `models/tiki-2026-11-02.nnue` it's **2,287,375** nodes.
   - Timings vary between runs and sessions, so only compare times from back-to-back runs.
 - `build/engine/benchmark/tiki_benchmark` runs Google Benchmark micro-benchmarks of evaluation, move generation,
   make/undo, perft and a fixed-depth search. Use it to compare an evaluation change on its own.
@@ -203,9 +213,11 @@ games (`lichess.py`) are labelled with Stockfish evals: a stronger teacher than 
 on them learns Stockfish's judgement (see the training README). Leela Chess Zero's self-play (`lc0.py`) is labelled
 with lc0's own evaluation, under the ODbL.
 
-The current network, `models/tiki-2026-10-26.nnue`, was trained on 650M positions from a year of Lichess games
-between players rated 2000+, with a cosine learning rate schedule. Its recipe, and the SPRT against the network
-before it (+121 Elo), are in the training README under "What worked".
+The current network, `models/tiki-2026-11-02.nnue`, is 512 wide per side. It was trained on 1.1B positions from 21
+months of Lichess games (2025-01 to 2026-09) between players rated 2000+: 61 epochs of 100M positions with a
+cosine learning rate schedule, the last with the output weights clipped to 127 / QB. It replaced the 256-wide
+networks, at least as strong in testing and with more room to improve on more data. Earlier recipes are in the
+training README under "What worked".
 
 The trainer's tests check its features and integer evaluation against the engine's
 (`TIKI_APP=... python3 -m unittest discover -s tests`).

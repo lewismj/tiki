@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from tiki_nnue.data import collate, parse_line
 from tiki_nnue.export import dequantise, export, quantise, quantised_eval, read_network, write_network
 from tiki_nnue.features import OUTPUT_BUCKETS, output_bucket
-from tiki_nnue.model import SCALE, TikiNNUE, loss_fn
+from tiki_nnue.model import HIDDEN, SCALE, TikiNNUE, loss_fn
 
 FENS = [
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -72,14 +72,14 @@ class ModelTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "net.nnue")
             with open(path, "wb") as file:
-                file.write(b"TIKINNUE" + struct.pack("<III", 1, 22528, 256))
+                file.write(b"TIKINNUE" + struct.pack("<III", 1, 22528, HIDDEN))
                 for key in ("ft_weights", "ft_bias"):
                     file.write(network[key].astype("<i2").tobytes())
                 file.write(network["out_weights"][3].astype("<i2").tobytes())
                 file.write(struct.pack("<i", int(network["out_bias"][3])))
             loaded = read_network(path)
         np.testing.assert_array_equal(network["ft_weights"], loaded["ft_weights"])
-        self.assertEqual((OUTPUT_BUCKETS, 512), loaded["out_weights"].shape)
+        self.assertEqual((OUTPUT_BUCKETS, 2 * HIDDEN), loaded["out_weights"].shape)
         for bucket in range(OUTPUT_BUCKETS):
             np.testing.assert_array_equal(network["out_weights"][3], loaded["out_weights"][bucket])
             self.assertEqual(network["out_bias"][3], loaded["out_bias"][bucket])
@@ -136,6 +136,24 @@ class ModelTests(unittest.TestCase):
             self.model.clip_weights()
         self.assertLess(loss().item(), start * 0.2)
 
+    def test_other_width_round_trip(self):
+        """A net of another width than the default (--hidden 256) writes its width to the file and reads back as the same net,
+        evaluating as before."""
+        torch.manual_seed(2)
+        model = TikiNNUE(hidden=256)
+        model.clip_weights()
+        network = quantise(model)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "net.nnue")
+            write_network(network, path)
+            self.assertEqual(20 + 2 * (22528 * 256 + 256 + 8 * 512) + 8 * 4, os.path.getsize(path))
+            self.assertNotEqual(256, HIDDEN)
+            loaded = read_network(path)
+        self.assertEqual((22528, 256), loaded["ft_weights"].shape)
+        for fen in FENS:
+            self.assertEqual(quantised_eval(network, fen), quantised_eval(loaded, fen))
+            self.assertLess(abs(quantised_eval(loaded, fen) - evaluate(dequantise(loaded), [fen])[0]), 2, fen)
+
     def test_export_writes_engine_format(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "net.nnue")
@@ -143,7 +161,7 @@ class ModelTests(unittest.TestCase):
             with open(path, "rb") as file:
                 self.assertEqual(b"TIKINNUE", file.read(8))
             # header + ft weights + ft bias + out weights (int16) + out biases (int32), per bucket
-            self.assertEqual(20 + 2 * (22528 * 256 + 256 + 8 * 512) + 8 * 4, os.path.getsize(path))
+            self.assertEqual(20 + 2 * (22528 * HIDDEN + HIDDEN + 8 * 2 * HIDDEN) + 8 * 4, os.path.getsize(path))
 
 
 if __name__ == "__main__":

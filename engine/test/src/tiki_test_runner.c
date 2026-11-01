@@ -86,6 +86,8 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_nnue_save_load_round_trip);
     RUN_TEST(test_nnue_incremental_matches_refresh);
     RUN_TEST(test_nnue_output_simd_matches_scalar);
+    RUN_TEST(test_nnue_output_small_matches_scalar);
+    RUN_TEST(test_nnue_load_sets_small_output);
     RUN_TEST(test_nnue_refresh_matches_plain_sum);
     RUN_TEST(test_nnue_cache_rebuilt_for_new_network);
     RUN_TEST(test_nnue_setoption_evalfile);
@@ -109,6 +111,10 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_null_move_guards);
     RUN_TEST(test_history_bonus_and_bound);
     RUN_TEST(test_history_stays_below_killers_and_captures);
+    RUN_TEST(test_queen_promotion_ordered_with_captures);
+    RUN_TEST(test_capture_history_shifts_captures_within_band);
+    RUN_TEST(test_capture_history_reorders_captures);
+    RUN_TEST(test_losing_capture_with_history_stays_under_quiets);
     RUN_TEST(test_en_passant_scored_as_pawn_capture);
     RUN_TEST(test_losing_capture_ordered_after_quiet_moves);
     RUN_TEST(test_reverse_futility_guards);

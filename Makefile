@@ -15,7 +15,7 @@
 
 EXE      ?= tiki
 EVALFILE ?=
-TUNE     ?= 1
+TUNE     ?= 0
 BUILD    := build-make
 
 ifeq ($(origin CC),default)

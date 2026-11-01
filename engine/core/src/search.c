@@ -11,8 +11,8 @@
 /**
  * Move ordering score, highest first. Each category has its own band (search_constants.h): the TT
  * move, the PV move (while following the previous iteration's PV), winning and equal captures by
- * MVV-LVA, the two killers, quiet moves (and promotions that don't capture) by history, then losing
- * captures.
+ * MVV-LVA plus their capture history, queen promotions, the two killers, quiet moves (and
+ * underpromotions) by history, then losing captures (also with their capture history).
  */
 int score_move(move_t move, move_t tt_move, board_t* board, search_state_t* search_state) {
     if (tt_move && move == tt_move) return TT_MOVE_SCORE;
@@ -27,21 +27,27 @@ int score_move(move_t move, move_t tt_move, board_t* board, search_state_t* sear
         piece piece = get_piece_moved(move);
         /* En passant, the target square is empty, the victim is the pawn beside it. */
         if (get_enpassant_flag(move)) {
-            return CAPTURE_SCORE + search_const.mvv_lva[piece][board->side == white ? p : P];
+            return CAPTURE_SCORE + search_const.mvv_lva[piece][board->side == white ? p : P] +
+                   search_state->capture_history[piece][target][0] / CAPTURE_HISTORY_DIVISOR;
         }
         const int* pieces = (board->side == white) ? black_pieces : white_pieces;
         for (int i = 0; i < 6; i++) {
             if (is_bit_set(&board->pieces[pieces[i]], target)) {
+                /* The capture's history ('i' is the victim's type) shifts it among the captures. */
+                const int history = search_state->capture_history[piece][target][i] / CAPTURE_HISTORY_DIVISOR;
                 /* Losing captures (SEE < 0) after the quiet moves. Only possible when the
                  * attacker is worth more than the victim, so SEE is skipped otherwise. */
                 if (see_values[piece] > see_values[pieces[i]] && !see_ge(board, move, 0)) {
-                    return BAD_CAPTURE_SCORE + search_const.mvv_lva[piece][pieces[i]];
+                    return BAD_CAPTURE_SCORE + search_const.mvv_lva[piece][pieces[i]] + history;
                 }
-                return CAPTURE_SCORE + search_const.mvv_lva[piece][pieces[i]];
+                return CAPTURE_SCORE + search_const.mvv_lva[piece][pieces[i]] + history;
             }
         }
         return 0;
     } else {
+        /* A queen promotion is tactical, it goes with the winning captures rather than the quiets. */
+        const piece promoted = get_promoted_piece(move);
+        if (promoted == Q || promoted == q) return QUEEN_PROMOTION_SCORE;
         if (search_state->killer_moves[0][search_state->ply] == move) return KILLER_1_SCORE;
         else if (search_state->killer_moves[1][search_state->ply] == move) return KILLER_2_SCORE;
         return search_state->history_moves[get_piece_moved(move)][get_target_square(move)];
@@ -65,6 +71,121 @@ static inline_always void add_history_bonus(search_state_t* search_state, move_t
     *h = history_gravity(*h, bonus);
 }
 
+/* The type (0 pawn .. 5 king) of the piece a capture takes, on the board it's made from. */
+static inline_always int captured_type(const board_t* board, move_t mv) {
+    if (get_enpassant_flag(mv)) return 0;
+    const piece victim = piece_on(board, get_target_square(mv), board->side ^ 1);
+    return victim == none ? 0 : victim % 6;
+}
+
+/* As add_history_bonus, for the capture's capture history, within +-CAPTURE_HISTORY_MAX. */
+static inline_always void add_capture_history_bonus(search_state_t* search_state, const board_t* board, move_t mv,
+                                                    int bonus) {
+    int32_t* h = &search_state->capture_history[get_piece_moved(mv)][get_target_square(mv)][captured_type(board, mv)];
+    const int v = *h + bonus - *h * (bonus < 0 ? -bonus : bonus) / CAPTURE_HISTORY_MAX;
+    *h = v > CAPTURE_HISTORY_MAX ? CAPTURE_HISTORY_MAX : (v < -CAPTURE_HISTORY_MAX ? -CAPTURE_HISTORY_MAX : v);
+#ifdef TIKI_SEARCH_STATS
+    if (bonus > 0) search_state->stats.cap_bonuses++;
+    else search_state->stats.cap_maluses++;
+    if ((*h < 0 ? -*h : *h) >= CAPTURE_HISTORY_MAX * 9 / 10) search_state->stats.cap_near_bound_updates++;
+#endif
+}
+
+#ifdef TIKI_SEARCH_STATS
+/* The statistics' depth bands: 1-3, 4-6, 7+. */
+static inline_always int stat_depth_band(int depth) {
+    return depth <= 3 ? 0 : depth <= 6 ? 1 : 2;
+}
+
+/* A capture's capture history (its stored value, not the ordering term), on the board it's made from. */
+static inline_always int stat_capture_history(const search_state_t* search_state, const board_t* board, move_t mv) {
+    return search_state->capture_history[get_piece_moved(mv)][get_target_square(mv)][captured_type(board, mv)];
+}
+
+static inline_always int stat_history_bucket(int h) {
+    return h < -1000 ? 0 : h > 1000 ? 2 : 1;
+}
+
+/* The node's captures other than the TT move, with their place among them as ordered and as they
+ * would be with no capture history (ties keep move generation order, as pick_next_move does). */
+typedef struct {
+    int count;
+    move_t moves[MOVE_BUFFER_SIZE];
+    uint8_t rank[MOVE_BUFFER_SIZE];
+    uint8_t rank_without[MOVE_BUFFER_SIZE];
+    uint8_t rank_victim[MOVE_BUFFER_SIZE];   /* Experiment A's ranking (search_state.h). */
+} stat_capture_ranks_t;
+
+/* Experiment A's score for a capture, in the same band as its actual score ('score' tells which). */
+static inline_always int stat_victim_score(int score, int victim_type, int history) {
+    const int band = score < 0 ? BAD_CAPTURE_SCORE : CAPTURE_SCORE;
+    return band + 4 * see_values[victim_type] + history / CAPTURE_HISTORY_DIVISOR;
+}
+
+static void stat_capture_ranks(stat_capture_ranks_t* ranks, const move_buffer_t* buffer, const int* scores,
+                               move_t tt_move, const board_t* board, search_state_t* search_state, int depth,
+                               bool is_pv_node) {
+    int with[MOVE_BUFFER_SIZE], without[MOVE_BUFFER_SIZE], victim_scores[MOVE_BUFFER_SIZE];
+    int victims[MOVE_BUFFER_SIZE];
+    ranks->count = 0;
+    for (int i = 0; i < buffer->index; i++) {
+        const move_t mv = buffer->moves[i];
+        if (!get_capture_flag(mv) || mv == tt_move) continue;
+        const int n = ranks->count++;
+        const int history = stat_capture_history(search_state, board, mv);
+        ranks->moves[n] = mv;
+        victims[n] = captured_type(board, mv);
+        with[n] = scores[i];
+        without[n] = scores[i] - history / CAPTURE_HISTORY_DIVISOR;
+        victim_scores[n] = stat_victim_score(scores[i], victims[n], history);
+    }
+    for (int i = 0; i < ranks->count; i++) {
+        int r = 1, r0 = 1, rv = 1;
+        for (int j = 0; j < ranks->count; j++) {
+            if (with[j] > with[i] || (with[j] == with[i] && j < i)) r++;
+            if (without[j] > without[i] || (without[j] == without[i] && j < i)) r0++;
+            if (victim_scores[j] > victim_scores[i] || (victim_scores[j] == victim_scores[i] && j < i)) rv++;
+        }
+        ranks->rank[i] = (uint8_t) r;
+        ranks->rank_without[i] = (uint8_t) r0;
+        ranks->rank_victim[i] = (uint8_t) rv;
+    }
+    if (ranks->count < 2) return;
+    const int b = stat_depth_band(depth), p = is_pv_node, t = tt_move != 0;
+    search_stats_t* stats = &search_state->stats;
+    stats->cap_loops[b][p][t]++;
+    stats->cap_moves[b][p][t] += (uint64_t) ranks->count;
+    for (int i = 0; i < ranks->count; i++) {
+        if (ranks->rank[i] != ranks->rank_without[i]) stats->cap_rank_changed[b][p][t]++;
+        if (ranks->rank[i] == 1 && ranks->rank_without[i] != 1) stats->cap_top_changed[b][p][t]++;
+        if (ranks->rank[i] == 1 && ranks->rank_victim[i] != 1) stats->victim_top_changed[b][p][t]++;
+        for (int j = i + 1; j < ranks->count; j++) {
+            if (victims[i] == victims[j] || victims[i] > 4 || victims[j] > 4) continue;
+            const int lo = victims[i] < victims[j] ? victims[i] : victims[j];
+            const int hi = victims[i] < victims[j] ? victims[j] : victims[i];
+            stats->victim_pairs[lo][hi]++;
+            if ((ranks->rank[i] < ranks->rank[j]) != (ranks->rank_victim[i] < ranks->rank_victim[j]))
+                stats->victim_pair_flips[lo][hi]++;
+        }
+    }
+}
+
+/* A cutoff by a capture other than the TT move: its place as ordered and with no capture history. */
+static void stat_capture_cut(const stat_capture_ranks_t* ranks, search_state_t* search_state, move_t mv, int depth,
+                             bool is_pv_node, bool has_tt_move) {
+    if (ranks->count < 2) return;
+    for (int i = 0; i < ranks->count; i++) {
+        if (ranks->moves[i] != mv) continue;
+        const int b = stat_depth_band(depth), p = is_pv_node, t = has_tt_move;
+        const int r = ranks->rank[i], r0 = ranks->rank_without[i], rv = ranks->rank_victim[i];
+        search_state->stats.cap_cut_rank[b][p][t][r >= 3 ? 2 : r - 1]++;
+        search_state->stats.cap_cut_rank_without[b][p][t][r0 >= 3 ? 2 : r0 - 1]++;
+        search_state->stats.victim_cut_rank[b][p][t][rv >= 3 ? 2 : rv - 1]++;
+        return;
+    }
+}
+#endif
+
 static inline_always int history_bonus(int depth) {
     return depth < 10 ? 16 * depth * depth : 1600;
 }
@@ -81,6 +202,17 @@ void update_history(search_state_t* search_state, move_t mv, int depth) {
  */
 void penalise_history(search_state_t* search_state, move_t mv, int depth) {
     add_history_bonus(search_state, mv, -history_bonus(depth));
+}
+
+/* A capture caused a beta cutoff ('board' is the position it was made from): the quiet history's
+ * bonus, min(16 * depth^2, 1600). */
+void update_capture_history(search_state_t* search_state, const board_t* board, move_t mv, int depth) {
+    add_capture_history_bonus(search_state, board, mv, history_bonus(depth));
+}
+
+/* A capture searched before the move that cut off didn't: the quiet history's malus. */
+void penalise_capture_history(search_state_t* search_state, const board_t* board, move_t mv, int depth) {
+    add_capture_history_bonus(search_state, board, mv, -history_bonus(depth));
 }
 
 /* A non-capture caused a cutoff: it becomes the first killer at this ply, the first moves down to
@@ -127,19 +259,75 @@ move_t pick_next_move(move_buffer_t* buffer, int* scores, int i) {
 }
 
 
-/* A beta cutoff, for the move ordering statistics. Nothing unless built with TIKI_SEARCH_STATS. */
+/* A beta cutoff, for the move ordering statistics. Nothing unless built with TIKI_SEARCH_STATS.
+ * 'moves_searched' includes the cutting move (1: the first). */
 static inline_always void count_cutoff(search_state_t* search_state, int moves_searched, bool is_quiet,
-                                       int quiets_searched) {
+                                       int quiets_searched, bool is_capture, bool has_tt_move, bool is_tt_move) {
 #ifdef TIKI_SEARCH_STATS
     search_stats_t* stats = &search_state->stats;
     stats->cutoffs++;
     if (moves_searched == 1) stats->first_move_cutoffs++;
+    const int place = moves_searched <= 1 ? 0 : moves_searched == 2 ? 1 : moves_searched <= 4 ? 2 :
+                      moves_searched <= 8 ? 3 : 4;
+    stats->cutoff_at[place]++;
+    if (is_capture) stats->capture_cutoffs++;
+    if (has_tt_move) stats->cutoff_nodes_tt++;
+    if (is_tt_move) stats->tt_move_cutoffs++;
+    /* At nodes without a TT move, by the cutting move's kind. */
+    if (!has_tt_move) stats->no_tt_cutoff_at[is_capture ? 0 : 1][place]++;
     if (is_quiet) {
         stats->quiet_cutoffs++;
         stats->quiets_before_cutoff += (uint64_t) quiets_searched;
     }
 #else
     (void) search_state; (void) moves_searched; (void) is_quiet; (void) quiets_searched;
+    (void) is_capture; (void) has_tt_move; (void) is_tt_move;
+#endif
+}
+
+/* Statistics counters (TIKI_SEARCH_STATS), nothing otherwise. */
+#ifdef TIKI_SEARCH_STATS
+#define COUNT_STAT(search_state, field) ((search_state)->stats.field++)
+#else
+#define COUNT_STAT(search_state, field) ((void) 0)
+#endif
+
+
+/* A move loop's quiet moves (TIKI_SEARCH_STATS): how many were searched, and whether the last of
+ * them cut off ('quiets' is then its place among them). */
+static inline_always void stat_quiet_node(search_state_t* search_state, int depth, bool is_pv_node, bool has_tt_move,
+                                          int quiets, bool cut_by_quiet) {
+#ifdef TIKI_SEARCH_STATS
+    if (quiets == 0) return;
+    const int b = stat_depth_band(depth), p = is_pv_node, t = has_tt_move;
+    search_stats_t* stats = &search_state->stats;
+    stats->quiet_nodes[b][p][t]++;
+    stats->quiets_searched[b][p][t] += (uint64_t) quiets;
+    if (cut_by_quiet) {
+        stats->quiet_cut_nodes[b][p][t]++;
+        stats->quiet_cut_rank[b][p][t][quiets <= 1 ? 0 : quiets == 2 ? 1 : quiets <= 4 ? 2 : quiets <= 8 ? 3 : 4]++;
+    }
+#else
+    (void) search_state; (void) depth; (void) is_pv_node; (void) has_tt_move; (void) quiets; (void) cut_by_quiet;
+#endif
+}
+
+/* A reduced search (TIKI_SEARCH_STATS): the move's place, the reduction, whether it beat alpha and,
+ * if so, where the full depth search's score ('score') fell against the window. */
+static inline_always void stat_lmr(search_state_t* search_state, int depth, bool is_pv_node, int place, int reduction,
+                                   bool beat_alpha, int score, int alpha, int beta) {
+#ifdef TIKI_SEARCH_STATS
+    const int pl = place <= 5 ? 0 : place <= 8 ? 1 : place <= 16 ? 2 : 3;
+    const int r = reduction >= 4 ? 3 : reduction - 1;
+    uint64_t* cell = search_state->stats.lmr[stat_depth_band(depth)][is_pv_node][pl][r];
+    cell[0]++;
+    if (beat_alpha) {
+        cell[1]++;
+        cell[score <= alpha ? 2 : score < beta ? 3 : 4]++;
+    }
+#else
+    (void) search_state; (void) depth; (void) is_pv_node; (void) place; (void) reduction; (void) beat_alpha;
+    (void) score; (void) alpha; (void) beta;
 #endif
 }
 
@@ -397,9 +585,8 @@ static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* 
         move_t mv = pick_next_move(&buffer, scores, i);
 
         if (!in_check) {
-            /* Sorted best first, so from here on every capture loses material (SEE < 0). Not a quiet
-             * promotion: it's scored by history, which the malus can make negative, and the losing
-             * captures (BAD_CAPTURE_SCORE) still sort after it. */
+            /* Sorted best first, so from here on every capture loses material (SEE < 0). Quiet queen
+             * promotions (QUEEN_PROMOTION_SCORE) sort with the winning captures, before this. */
             if (scores[i] < 0 && get_capture_flag(mv)) break;
 
             /* Delta pruning, even winning the piece can't bring the score up to alpha. */
@@ -557,6 +744,10 @@ int negamax(int alpha,
     }
     search_state->score_pv = pv_move != 0;
     score_moves(&buffer, scores, tt_move, board, search_state);
+#ifdef TIKI_SEARCH_STATS
+    stat_capture_ranks_t capture_ranks = { .count = 0 };
+    if (!excluded_move) stat_capture_ranks(&capture_ranks, &buffer, scores, tt_move, board, search_state, depth, is_pv_node);
+#endif
 
     const bool futile = is_futile(depth, static_eval, alpha, in_check, is_pv_node);
 
@@ -564,9 +755,14 @@ int negamax(int alpha,
     int num_moves_searched = 0;
     int score;
     move_t best_move = 0;
-    /* Quiet moves searched without a cutoff, for the history malus when a later quiet move cuts. */
+    if (tt_move && !excluded_move) COUNT_STAT(search_state, tt_move_nodes);
+    /* Quiet moves searched without a cutoff, for the history malus when a later quiet move cuts, and
+     * captures, for the capture history malus when any later move cuts. */
     move_t quiets_searched[MAX_QUIETS_PENALISED];
     int num_quiets_searched = 0;
+    move_t captures_searched[MAX_CAPTURES_PENALISED];
+    int num_captures_searched = 0;
+    int quiets_tried = 0; /* Quiet moves searched (not pruned), for the statistics. */
     for (int i=0; i < buffer.index; i++) {
         move_t mv = pick_next_move(&buffer, scores, i);
         if (mv == excluded_move) continue;
@@ -598,6 +794,18 @@ int negamax(int alpha,
             continue;
         }
 
+        if (is_quiet) quiets_tried++;
+#ifdef TIKI_SEARCH_STATS
+        /* The capture history read from the position the capture is made from: undone for the read. */
+        int stat_bucket = -1;
+        if (is_capture && mv != tt_move && !excluded_move) {
+            pop_move(board);
+            stat_bucket = stat_history_bucket(stat_capture_history(search_state, board, mv));
+            make_move(board, mv);
+            search_state->stats.cap_searched_by_history[stat_bucket]++;
+        }
+#endif
+
         /* At the root, the nodes this move takes, for time management (tm_scale). */
         const uint64_t nodes_before_move = search_state->nodes;
 
@@ -617,19 +825,28 @@ int negamax(int alpha,
 
         search_state->follow_pv = child_on_pv;
         if (num_moves_searched == 0 ) {
+            if (mv == tt_move && !excluded_move) COUNT_STAT(search_state, tt_move_first);
             score = -negamax(-beta, -alpha, new_depth, board, search_state, limits);
         } else {
             /* Principal variation search, null window (reduced for late moves). A reduced move that
              * beats alpha is searched again at full depth with the null window, then with the full
              * window if it's still inside it. */
             score = -negamax(-alpha - 1, -alpha, new_depth - reduction, board, search_state, limits);
+            const bool reduced_beat_alpha = reduction > 0 && score > alpha;
+            if (reduction > 0) COUNT_STAT(search_state, lmr_searches);
             if (score > alpha && reduction > 0) {
+                COUNT_STAT(search_state, lmr_fail_highs);
                 search_state->follow_pv = child_on_pv;
                 score = -negamax(-alpha - 1, -alpha, new_depth, board, search_state, limits);
+                if (score > alpha) COUNT_STAT(search_state, lmr_research_holds);
             }
             if (score > alpha && score < beta) {
                 search_state->follow_pv = child_on_pv;
                 score = -negamax(-beta, -alpha, new_depth, board, search_state, limits);
+            }
+            if (reduction > 0 && !excluded_move && !limits->stop_search_flag) {
+                stat_lmr(search_state, depth, is_pv_node, num_moves_searched + 1, reduction, reduced_beat_alpha, score,
+                         alpha, beta);
             }
         }
 
@@ -655,18 +872,34 @@ int negamax(int alpha,
             alpha = score;
 
             if (score >= beta) {
-                count_cutoff(search_state, num_moves_searched, is_quiet, num_quiets_searched);
+                count_cutoff(search_state, num_moves_searched, is_quiet, num_quiets_searched, is_capture, tt_move != 0,
+                             mv == tt_move);
                 if (!excluded_move) tt_save(board->hash, tt_beta, depth, search_state->ply, score, mv);
                 if (!is_capture) store_killer(search_state, mv);
                 if (is_quiet) {
                     for (int j = 0; j < num_quiets_searched; j++) penalise_history(search_state, quiets_searched[j], depth);
                 }
+                /* The capture that cut is rewarded, the captures tried before it (whatever cut) lose. */
+                if (is_capture) update_capture_history(search_state, board, mv, depth);
+                for (int j = 0; j < num_captures_searched; j++) {
+                    penalise_capture_history(search_state, board, captures_searched[j], depth);
+                }
+                if (!excluded_move) stat_quiet_node(search_state, depth, is_pv_node, tt_move != 0, quiets_tried, is_quiet);
+#ifdef TIKI_SEARCH_STATS
+                if (is_capture && mv != tt_move && !excluded_move) {
+                    stat_capture_cut(&capture_ranks, search_state, mv, depth, is_pv_node, tt_move != 0);
+                    if (stat_bucket >= 0) search_state->stats.cap_cut_by_history[stat_bucket]++;
+                }
+#endif
                 return beta;
             }
         }
 
         if (is_quiet && num_quiets_searched < MAX_QUIETS_PENALISED) quiets_searched[num_quiets_searched++] = mv;
+        if (is_capture && num_captures_searched < MAX_CAPTURES_PENALISED) captures_searched[num_captures_searched++] = mv;
     }
+
+    if (!excluded_move) stat_quiet_node(search_state, depth, is_pv_node, tt_move != 0, quiets_tried, false);
 
     /* Without the TT move there may be nothing else to play: no other move, so it's singular. */
     if (!has_legal_moves) {
@@ -861,6 +1094,7 @@ static int start_helpers(board_t* board, search_state_t* search_state, limits_t*
         state->follow_pv = true;
         state->thread_id = started + 1;
         memcpy(state->history_moves, search_state->history_moves, sizeof(state->history_moves));
+        memcpy(state->capture_history, search_state->capture_history, sizeof(state->capture_history));
         atomic_init(&state->shared_nodes, 0);
         helper->limits = limits;
         if (pthread_create(&helper->thread, NULL, helper_search, helper) != 0) break;

@@ -31,7 +31,7 @@ from rich.progress import (
 from tiki_nnue import binary
 from tiki_nnue.data import batch_tensors, validation_split
 from tiki_nnue.export import export
-from tiki_nnue.model import TikiNNUE, loss_fn
+from tiki_nnue.model import HIDDEN, TikiNNUE, loss_fn
 
 console = Console()
 UPDATE_EVERY = 16       # Batches between progress updates (each waits for the GPU to catch up).
@@ -163,6 +163,8 @@ def main():
     parser.add_argument("--out", default="nets", help="directory for checkpoints and exported networks")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=16384)
+    parser.add_argument("--hidden", type=int, default=HIDDEN,
+                        help="feature transformer width per side (the engine must be built with the same NNUE_HIDDEN)")
     add_schedule_arguments(parser)
     parser.add_argument("--wdl", type=float, default=0.3, help="weight of the game result vs the search score")
     parser.add_argument("--validation", type=float, default=0.02,
@@ -195,7 +197,7 @@ def main():
     console.print(summary)
     log(summary)
 
-    model = TikiNNUE().to(args.device)
+    model = TikiNNUE(hidden=args.hidden).to(args.device)
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = make_scheduler(optimiser, args)
     first_epoch = 1

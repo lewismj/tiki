@@ -12,6 +12,8 @@ void test_nnue_evaluate_colour_symmetric();
 void test_nnue_save_load_round_trip();
 void test_nnue_incremental_matches_refresh();
 void test_nnue_output_simd_matches_scalar();
+void test_nnue_output_small_matches_scalar();
+void test_nnue_load_sets_small_output();
 void test_nnue_refresh_matches_plain_sum();
 void test_nnue_cache_rebuilt_for_new_network();
 void test_nnue_setoption_evalfile();

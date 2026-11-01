@@ -38,6 +38,10 @@ void init_lmr_table();
 #define ASPIRATION_MIN_DEPTH 4   /* Shallower depths use the full window, their scores are less stable.      */
 #define HISTORY_MAX 7000         /* History scores stay within +-this, under the killers (8000, 9000).       */
 #define MAX_QUIETS_PENALISED 64  /* Quiet moves remembered per node for the history malus.                   */
+#define MAX_CAPTURES_PENALISED 32 /* Captures remembered per node for the capture history malus.             */
+#define CAPTURE_HISTORY_MAX 7000 /* Capture history stays within +-this...                                   */
+#define CAPTURE_HISTORY_DIVISOR 32 /* ...and moves a capture's ordering score by history / this (+-218, about */
+                                   /* two victims in MVV-LVA, whose victims are 100 apart).                  */
 #define BAD_CAPTURE_SCORE (-20000) /* Ordering offset for losing captures (SEE < 0), below every quiet move.  */
 #define DELTA_MARGIN 200         /* Qsearch delta pruning, skip a capture if eval + victim + margin <= alpha. */
 #define RFP_MAX_DEPTH 6          /* Reverse futility pruning up to this depth...                             */
@@ -57,16 +61,24 @@ void init_lmr_table();
 #define TT_MOVE_SCORE 30000      /* The TT move...                                                           */
 #define PV_MOVE_SCORE 20000      /* ...the PV move while following the PV...                                 */
 #define CAPTURE_SCORE 10000      /* ...winning or equal captures, plus mvv_lva...                            */
+#define QUEEN_PROMOTION_SCORE (CAPTURE_SCORE + 505) /* ...queen promotions without a capture, as a pawn  */
+                                                   /* taking a queen (captures that promote are captures). */
 #define KILLER_1_SCORE 9000      /* ...the killers...                                                        */
 #define KILLER_2_SCORE 8000
                                  /* ...quiet moves by history, within +-HISTORY_MAX, then losing captures.   */
 #define MVV_LVA_MIN 100          /* The range of search_const.mvv_lva (search_constants.c).                  */
 #define MVV_LVA_MAX 605
 
-static_assert(CAPTURE_SCORE + MVV_LVA_MAX < PV_MOVE_SCORE && PV_MOVE_SCORE < TT_MOVE_SCORE, "captures under the PV move");
-static_assert(KILLER_1_SCORE < CAPTURE_SCORE + MVV_LVA_MIN && KILLER_2_SCORE < KILLER_1_SCORE, "killers under captures");
+#define CAPTURE_HISTORY_SPAN (CAPTURE_HISTORY_MAX / CAPTURE_HISTORY_DIVISOR)
+static_assert(CAPTURE_SCORE + MVV_LVA_MAX + CAPTURE_HISTORY_SPAN < PV_MOVE_SCORE && PV_MOVE_SCORE < TT_MOVE_SCORE,
+              "captures under the PV move");
+static_assert(KILLER_1_SCORE < CAPTURE_SCORE + MVV_LVA_MIN - CAPTURE_HISTORY_SPAN && KILLER_2_SCORE < KILLER_1_SCORE,
+              "killers under captures");
+static_assert(KILLER_1_SCORE < QUEEN_PROMOTION_SCORE && QUEEN_PROMOTION_SCORE < PV_MOVE_SCORE,
+              "queen promotions over the killers");
 static_assert(HISTORY_MAX < KILLER_2_SCORE, "quiet moves under the killers");
-static_assert(BAD_CAPTURE_SCORE + MVV_LVA_MAX < -HISTORY_MAX, "losing captures under every quiet move");
+static_assert(BAD_CAPTURE_SCORE + MVV_LVA_MAX + CAPTURE_HISTORY_SPAN < -HISTORY_MAX,
+              "losing captures under every quiet move");
 
 /* Built with TIKI_TUNE, the tunable constants above become variables set by UCI options (tune.h). */
 #include "tune.h"

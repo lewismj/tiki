@@ -9,7 +9,7 @@
 #include "../board.h"
 
 /**
- * Tiki's NNUE: HalfKAv2_hm features -> 256 x 2 accumulator -> SCReLU -> 1 output, from one of 8
+ * Tiki's NNUE: HalfKAv2_hm features -> 512 x 2 accumulator -> SCReLU -> 1 output, from one of 8
  * output layers chosen by the number of pieces on the board (output buckets).
  * The trainer (training/tiki_nnue) implements the same features and quantisation, any change
  * here must be made there too (training/tests check the two agree).
@@ -30,7 +30,7 @@
  * Quantisation (what the trainer exports):
  *   accumulator = ft_bias + sum of ft_weights rows for active features, int16, scale QA.
  *   SCReLU(x) = clamp(x, 0, QA)^2.
- *   eval = (sum(SCReLU(acc_stm) * out_w[b][0..255]) + sum(SCReLU(acc_nstm) * out_w[b][256..511])) / QA
+ *   eval = (sum(SCReLU(acc_stm) * out_w[b][0..511]) + sum(SCReLU(acc_nstm) * out_w[b][512..1023])) / QA
  *          + out_bias[b], then * SCALE / (QA * QB), for output bucket b. Integer division truncates
  *          (C semantics).
  *   Float model: y = SCReLU_f(acc_f) . w + b with acc_f = acc / QA, w = out_w / QB,
@@ -48,7 +48,7 @@
 #define NNUE_PIECE_KINDS 11
 #define NNUE_PIECE_SQUARES (NNUE_PIECE_KINDS * 64)              /* 704   */
 #define NNUE_INPUTS (NNUE_KING_BUCKETS * NNUE_PIECE_SQUARES)    /* 22528 */
-#define NNUE_HIDDEN 256
+#define NNUE_HIDDEN 512
 #define NNUE_MAX_ACTIVE 32                                      /* One feature per piece. */
 #define NNUE_OUTPUT_BUCKETS 8
 
@@ -67,7 +67,17 @@ typedef struct {
     int16_t ft_bias[NNUE_HIDDEN] align;
     int16_t out_weights[NNUE_OUTPUT_BUCKETS][2 * NNUE_HIDDEN] align; /* Side to move, then the other side. */
     int32_t out_bias[NNUE_OUTPUT_BUCKETS];
+    bool small_output;                      /* Every out_weight within +-NNUE_OUT_WEIGHT_SMALL (see below). */
 } nnue_network_t;
+
+/*
+ * Output weights within +-127 (the trainer clips them to 127 / QB) let the AVX2 output layer work in
+ * int16 / int32: SCReLU(v) * w as (v * w) * v, v * w fits int16 (255 * 127) and _mm256_madd_epi16
+ * sums the pairs into int32. Exact, the int32 sums can't overflow (nnue.c). nnue_load_memory sets
+ * small_output for a network that qualifies; any other (older files, networks built in code, which
+ * start with it false) uses the int64 sums, with the same results.
+ */
+#define NNUE_OUT_WEIGHT_SMALL 127
 
 typedef struct {
     int16_t values[2][NNUE_HIDDEN] align;   /* Indexed by perspective (white, black). */

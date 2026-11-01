@@ -510,6 +510,65 @@ void test_nnue_output_simd_matches_scalar() {
     nnue_free();
 }
 
+void test_nnue_output_small_matches_scalar() {
+    /* The int16 / madd output (small_output) against the int64 reference, at its worst case for
+     * overflow: every weight +-127 (or random within it), accumulators clamped below 0 and above QA. */
+    random_network(6060);
+    nnue_net.small_output = true;
+    uint32_t rng = 11;
+    nnue_accumulator_t accumulator;
+    for (int trial = 0; trial < 200; trial++) {
+        const int16_t extreme = (int16_t) (trial % 2 ? NNUE_OUT_WEIGHT_SMALL : -NNUE_OUT_WEIGHT_SMALL);
+        const int bucket = trial % NNUE_OUTPUT_BUCKETS;
+        for (int i = 0; i < 2 * NNUE_HIDDEN; i++) {
+            nnue_net.out_weights[bucket][i] = (int16_t) (trial % 4 < 2 ? extreme
+                    : (int) (next_random_32(&rng) % (2 * NNUE_OUT_WEIGHT_SMALL + 1)) - NNUE_OUT_WEIGHT_SMALL);
+        }
+        for (int c = white; c <= black; c++) {
+            for (int i = 0; i < NNUE_HIDDEN; i++) {
+                accumulator.values[c][i] = (int16_t) (trial % 3 == 0 ? NNUE_QA + (int) (next_random_32(&rng) % 4)
+                                                                     : (int) (next_random_32(&rng) % 65536) - 32768);
+            }
+        }
+        for (int side = white; side <= black; side++) {
+            TEST_ASSERT_EQUAL_INT(nnue_output_scalar(&accumulator, side, bucket), nnue_output(&accumulator, side, bucket));
+        }
+    }
+    nnue_free();
+}
+
+void test_nnue_load_sets_small_output() {
+    /* Built in code: the int64 output, whatever the weights. */
+    random_network(77);
+    TEST_ASSERT_FALSE(nnue_net.small_output);
+    size_t size;
+    uint8_t* data = saved_network(&size);
+    nnue_free();
+
+    /* random_network's output weights are within +-127, the first of them set to each limit. */
+    const size_t out_at = 8 + 3 * sizeof(uint32_t) + ((size_t) NNUE_INPUTS * NNUE_HIDDEN + NNUE_HIDDEN) * sizeof(int16_t);
+    const int16_t limits[4] = { NNUE_OUT_WEIGHT_SMALL, -NNUE_OUT_WEIGHT_SMALL, NNUE_OUT_WEIGHT_SMALL + 1,
+                                -NNUE_OUT_WEIGHT_SMALL - 1 };
+    for (int i = 0; i < 4; i++) {
+        memcpy(data + out_at, &limits[i], sizeof(int16_t));
+        TEST_ASSERT_TRUE(nnue_load_memory(data, size, "limits"));
+        TEST_ASSERT_EQUAL_INT16(limits[i], nnue_net.out_weights[0][0]);
+        TEST_ASSERT_EQUAL(i < 2, nnue_net.small_output);
+    }
+
+    /* The last output weight counts too. */
+    const int16_t large = NNUE_OUT_WEIGHT_SMALL + 1, small = 0;
+    memcpy(data + out_at, &small, sizeof(int16_t));
+    memcpy(data + out_at + (NNUE_OUTPUT_BUCKETS * 2 * NNUE_HIDDEN - 1) * sizeof(int16_t), &large, sizeof(int16_t));
+    TEST_ASSERT_TRUE(nnue_load_memory(data, size, "last"));
+    TEST_ASSERT_FALSE(nnue_net.small_output);
+
+    TEST_ASSERT_TRUE(nnue_allocate());
+    TEST_ASSERT_FALSE(nnue_net.small_output);
+    free(data);
+    nnue_free();
+}
+
 void test_nnue_refresh_matches_plain_sum() {
     /* The accumulator code (SIMD if built) against a plain sum of the feature rows. */
     random_network(2718);
