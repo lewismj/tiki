@@ -90,6 +90,8 @@ typedef struct align {
     int32_t capture_history[12][64][6]; /* [moving piece][target square][captured piece type], see score_move. */
     uint32_t killer_moves[2][MAX_PLY];
     uint32_t excluded_moves[MAX_PLY]; /* The TT move a singular extension search leaves out at this ply (0: none). */
+    int static_evals[MAX_PLY];        /* The network's eval at each ply of the search path, -INF in check (improving). */
+    uint8_t nmp_min_ply;              /* No null move below this ply (0: none), during a null move verification. */
     uint8_t pv_length[MAX_PLY];
     uint64_t nodes;
     uint64_t pv_nodes;         /* Nodes that ordered the previous iteration's PV move first (tests). */
@@ -119,6 +121,7 @@ static inline_always void clear_search_tables(search_state_t* search_state) {
     memset(search_state->pv_length, 0ULL, sizeof(search_state->pv_length));
     memset(search_state->killer_moves, 0, sizeof (search_state->killer_moves));
     memset(search_state->excluded_moves, 0, sizeof (search_state->excluded_moves));
+    search_state->nmp_min_ply = 0;
 }
 
 /**

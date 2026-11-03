@@ -342,7 +342,7 @@ void test_null_move_guards() {
     TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board, &search_state.nnue), false, false));
 
     /* Depth, check and PV node. */
-    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, NULL_MOVE_DEPTH_BOUND - 1, low_beta, evaluation(&board, &search_state.nnue), false, false));
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, NMP_MIN_DEPTH - 1, low_beta, evaluation(&board, &search_state.nnue), false, false));
     TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board, &search_state.nnue), true, false));
     TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board, &search_state.nnue), false, true));
 
@@ -363,6 +363,20 @@ void test_null_move_guards() {
     search_state.null_move_index = 0;
     search_state.repetition_index = 1;
 
+    /* Inside a null move verification search: not below nmp_min_ply. */
+    search_state.nmp_min_ply = 3;
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board, &search_state.nnue), false, false));
+    search_state.ply = 3;
+    search_state.repetition_index = 3;
+    TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board, &search_state.nnue), false, false));
+    search_state.nmp_min_ply = 0;
+    search_state.ply = 1;
+    search_state.repetition_index = 1;
+
+    /* Beta a mate score: not even with the eval above it. */
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, -MATE_VALUE + 10, evaluation(&board, &search_state.nnue), false, false));
+    TEST_ASSERT_FALSE(can_null_move(&board, &search_state, 5, MATE_VALUE - 10, MATE_VALUE, false, false));
+
     /* Side to move has only king and pawns (the opponent's pieces don't matter). */
     setup_position("4k3/8/8/2r5/8/8/PPP5/4K3 w - - 0 1", &board, &search_state, &limits, 5);
     search_state.ply = 1;
@@ -372,6 +386,36 @@ void test_null_move_guards() {
     search_state.ply = 1;
     search_state.repetition_index = 1;
     TEST_ASSERT_TRUE(can_null_move(&board, &search_state, 5, low_beta, evaluation(&board, &search_state.nnue), false, false));
+}
+
+void test_null_move_depth() {
+    /* depth - (base + depth / div + min((eval - beta) / eval_div, eval_max)), at least 0. */
+    for (int depth = NMP_MIN_DEPTH; depth <= 30; depth++) {
+        const int base = depth - NMP_R_BASE - depth / NMP_R_DEPTH_DIV;
+        TEST_ASSERT_EQUAL_INT(base > 0 ? base : 0, null_move_depth(depth, 0, 0));
+        const int far = depth - NMP_R_BASE - depth / NMP_R_DEPTH_DIV - NMP_R_EVAL_MAX;
+        TEST_ASSERT_EQUAL_INT(far > 0 ? far : 0, null_move_depth(depth, 100000, 0));
+        /* The eval term grows by one per NMP_R_EVAL_DIV above beta. */
+        TEST_ASSERT_TRUE(null_move_depth(depth, NMP_R_EVAL_DIV, 0) <= null_move_depth(depth, NMP_R_EVAL_DIV - 1, 0));
+        /* Always shallower than the node, never below qsearch. */
+        TEST_ASSERT_TRUE(null_move_depth(depth, 0, 0) < depth && null_move_depth(depth, 100000, 0) >= 0);
+        TEST_ASSERT_TRUE(null_move_depth(depth + 1, 0, 0) >= null_move_depth(depth, 0, 0));
+    }
+    /* At the shallowest depths (up to NMP_R_BASE) the null move goes straight to qsearch. */
+    for (int depth = 1; depth <= NMP_R_BASE; depth++) TEST_ASSERT_EQUAL_INT(0, null_move_depth(depth, 0, 0));
+}
+
+void test_null_move_verification_restores_state() {
+    /* White a rook and bishop up: null move cutoffs everywhere, and deep enough for the verification
+     * search (NMP_VERIFY_DEPTH). Afterwards null moves are allowed again (nmp_min_ply cleared) and
+     * the search still sees the win. */
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+    setup_position("8/8/4k3/8/8/2B5/3RK3/8 w - - 0 1", &board, &search_state, &limits, NMP_VERIFY_DEPTH + 1);
+    const int score = negamax(-INF, INF, NMP_VERIFY_DEPTH + 1, &board, &search_state, &limits);
+    TEST_ASSERT_EQUAL_INT(0, search_state.nmp_min_ply);
+    TEST_ASSERT_TRUE(score > 300);
 }
 
 void test_history_bonus_and_bound() {
@@ -589,23 +633,41 @@ void test_losing_capture_ordered_after_quiet_moves() {
 
 void test_reverse_futility_guards() {
     /* Eval 500 above beta 0 at depth 3: 500 - 3 * RFP_MARGIN >= 0. */
-    TEST_ASSERT_TRUE(can_reverse_futility_prune(3, 500, 0, false, false, 1));
+    TEST_ASSERT_TRUE(can_reverse_futility_prune(3, 500, 0, false, false, 1, false));
     /* Margin grows with depth. */
-    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 3 * RFP_MARGIN - 1, 0, false, false, 1));
-    TEST_ASSERT_TRUE(can_reverse_futility_prune(3, 3 * RFP_MARGIN, 0, false, false, 1));
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 3 * RFP_MARGIN - 1, 0, false, false, 1, false));
+    TEST_ASSERT_TRUE(can_reverse_futility_prune(3, 3 * RFP_MARGIN, 0, false, false, 1, false));
     /* Too deep, in check, PV node, root, mate bound. */
-    TEST_ASSERT_FALSE(can_reverse_futility_prune(RFP_MAX_DEPTH + 1, 5000, 0, false, false, 1));
-    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 500, 0, true, false, 1));
-    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 500, 0, false, true, 1));
-    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 500, 0, false, false, 0));
-    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, MATE_VALUE, MATE_VALUE - 10, false, false, 1));
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(RFP_MAX_DEPTH + 1, 5000, 0, false, false, 1, false));
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 500, 0, true, false, 1, false));
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 500, 0, false, true, 1, false));
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 500, 0, false, false, 0, false));
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, MATE_VALUE, MATE_VALUE - 10, false, false, 1, false));
+    /* Improving: the margin is RFP_IMPROVING smaller. */
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 3 * RFP_MARGIN - RFP_IMPROVING - 1, 0, false, false, 1, true));
+    TEST_ASSERT_TRUE(can_reverse_futility_prune(3, 3 * RFP_MARGIN - RFP_IMPROVING, 0, false, false, 1, true));
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 3 * RFP_MARGIN - RFP_IMPROVING, 0, false, false, 1, false));
+    /* At depth 1 an improving position still needs a positive margin (RFP_IMPROVING < RFP_MARGIN). */
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(1, 0, 0, false, false, 1, true));
+}
+
+void test_improving() {
+    /* Against two plies up, or four if that was in check (-INF); with neither, improving. */
+    TEST_ASSERT_TRUE(is_improving(50, 40, -INF));
+    TEST_ASSERT_FALSE(is_improving(40, 40, -INF));
+    TEST_ASSERT_FALSE(is_improving(30, 40, 0));
+    TEST_ASSERT_TRUE(is_improving(30, -INF, 20));
+    TEST_ASSERT_FALSE(is_improving(10, -INF, 20));
+    TEST_ASSERT_TRUE(is_improving(-500, -INF, -INF));
 }
 
 void test_futility_guards() {
-    /* Eval 400 below alpha 0 at depth 2: -400 + 2 * FUTILITY_MARGIN <= 0. */
+    /* Eval 400 below alpha 0 at depth 2: -400 + FUTILITY_BASE + 2 * FUTILITY_MARGIN <= 0. */
     TEST_ASSERT_TRUE(is_futile(2, -400, 0, false, false));
-    TEST_ASSERT_FALSE(is_futile(2, -2 * FUTILITY_MARGIN + 1, 0, false, false));
-    TEST_ASSERT_TRUE(is_futile(2, -2 * FUTILITY_MARGIN, 0, false, false));
+    TEST_ASSERT_FALSE(is_futile(2, -(FUTILITY_BASE + 2 * FUTILITY_MARGIN) + 1, 0, false, false));
+    TEST_ASSERT_TRUE(is_futile(2, -(FUTILITY_BASE + 2 * FUTILITY_MARGIN), 0, false, false));
+    /* Up to FUTILITY_MAX_DEPTH. */
+    TEST_ASSERT_TRUE(is_futile(FUTILITY_MAX_DEPTH, -5000, 0, false, false));
     /* Too deep, in check, PV node, mate bound. */
     TEST_ASSERT_FALSE(is_futile(FUTILITY_MAX_DEPTH + 1, -5000, 0, false, false));
     TEST_ASSERT_FALSE(is_futile(2, -400, 0, true, false));
@@ -615,16 +677,24 @@ void test_futility_guards() {
 
 void test_late_move_pruning_guards() {
     /* Depth 2: pruned from the 3 + 4 = 7th move searched. */
-    TEST_ASSERT_FALSE(can_late_move_prune(2, LMP_BASE + 3, 0, false, false));
-    TEST_ASSERT_TRUE(can_late_move_prune(2, LMP_BASE + 4, 0, false, false));
-    TEST_ASSERT_TRUE(can_late_move_prune(1, LMP_BASE + 1, 0, false, false));
+    TEST_ASSERT_FALSE(can_late_move_prune(2, LMP_BASE + 3, 0, false, false, true));
+    TEST_ASSERT_TRUE(can_late_move_prune(2, LMP_BASE + 4, 0, false, false, true));
+    TEST_ASSERT_TRUE(can_late_move_prune(1, LMP_BASE + 1, 0, false, false, true));
     /* Too deep, in check, PV node, mate bound. */
-    TEST_ASSERT_FALSE(can_late_move_prune(LMP_MAX_DEPTH + 1, 200, 0, false, false));
-    TEST_ASSERT_FALSE(can_late_move_prune(2, 50, 0, true, false));
-    TEST_ASSERT_FALSE(can_late_move_prune(2, 50, 0, false, true));
-    TEST_ASSERT_FALSE(can_late_move_prune(2, 50, -MATE_VALUE + 10, false, false));
+    TEST_ASSERT_FALSE(can_late_move_prune(LMP_MAX_DEPTH + 1, 200, 0, false, false, true));
+    TEST_ASSERT_FALSE(can_late_move_prune(2, 50, 0, true, false, true));
+    TEST_ASSERT_FALSE(can_late_move_prune(2, 50, 0, false, true, true));
+    TEST_ASSERT_FALSE(can_late_move_prune(2, 50, -MATE_VALUE + 10, false, false, true));
     /* Never before the first move: base + depth^2 >= 1. */
-    TEST_ASSERT_FALSE(can_late_move_prune(0, 0, 0, false, false));
+    TEST_ASSERT_FALSE(can_late_move_prune(0, 0, 0, false, false, true));
+    /* Not improving: LMP_NOT_IMPROVING_PCT of the limit, rounded up. */
+    for (int depth = 1; depth <= LMP_MAX_DEPTH; depth++) {
+        const int limit = LMP_BASE + depth * depth;
+        const int reduced = (limit * LMP_NOT_IMPROVING_PCT + 99) / 100;
+        TEST_ASSERT_TRUE(reduced >= 1 && reduced <= limit);
+        TEST_ASSERT_FALSE(can_late_move_prune(depth, reduced - 1, 0, false, false, false));
+        TEST_ASSERT_TRUE(can_late_move_prune(depth, reduced, 0, false, false, false));
+    }
 }
 
 void test_see_pruning_guards() {
@@ -871,14 +941,22 @@ void test_killers_are_not_captures() {
 
 void test_can_reduce() {
     /* A late quiet move at depth is reduced. */
-    TEST_ASSERT_TRUE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, false, false));
+    TEST_ASSERT_TRUE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, false, false, false));
     /* Too early in the list, too shallow, not quiet, a check, in check, a killer: not reduced. */
-    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES - 1, true, false, false, false));
-    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH - 1, LMR_MIN_MOVES, true, false, false, false));
-    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, false, false, false));
-    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, true, false, false));
-    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, true, false));
-    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, false, true));
+    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES - 1, true, false, false, false, false));
+    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH - 1, LMR_MIN_MOVES, true, false, false, false, false));
+    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, false, false, false, false));
+    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, true, false, false, false));
+    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, true, false, false));
+    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, false, true, false));
+    /* A losing capture late in the list is reduced (a killer flag doesn't matter for it), unless it's
+     * too early, too shallow, a check or made in check. */
+    TEST_ASSERT_TRUE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, false, false, false, true));
+    TEST_ASSERT_TRUE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, false, false, true, true));
+    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES - 1, false, false, false, false, true));
+    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH - 1, LMR_MIN_MOVES, false, false, false, false, true));
+    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, true, false, false, true));
+    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, false, true, false, true));
 }
 
 void test_pv_is_legal() {
@@ -1035,7 +1113,7 @@ void test_tt_lookup() {
     TEST_ASSERT_FALSE(tt_lookup(hash, 0, &mv, &score, &depth, &type));
 
     /* A shallow upper bound gives no cutoff at depth 8, but the lookup still returns it. */
-    tt_save(hash, tt_alpha, 3, 0, -42, stored);
+    tt_save(hash, tt_alpha, 3, 0, -42, stored, TT_EVAL_NONE);
     move_t probe_move;
     TEST_ASSERT_EQUAL_INT(TT_NOT_FOUND, tt_probe(hash, 8, 0, -100, 100, &probe_move));
     TEST_ASSERT_TRUE(tt_lookup(hash, 0, &mv, &score, &depth, &type));
@@ -1046,7 +1124,7 @@ void test_tt_lookup() {
 
     /* Mate scores come back relative to the root: mate 5 plies from the root found at ply 2 is
      * mate 3 plies from that node, so 7 plies from a root 4 plies above it. */
-    tt_save(hash, tt_exact, 6, 2, MATE_VALUE - 5, stored);
+    tt_save(hash, tt_exact, 6, 2, MATE_VALUE - 5, stored, TT_EVAL_NONE);
     TEST_ASSERT_TRUE(tt_lookup(hash, 4, &mv, &score, &depth, &type));
     TEST_ASSERT_EQUAL_INT(MATE_VALUE - 7, score);
     TEST_ASSERT_EQUAL_INT(tt_exact, type);
@@ -1121,7 +1199,7 @@ void test_excluded_move_search() {
 void test_tunable_parameters() {
 #ifdef TIKI_TUNE
     /* A tuning build: the parameters are variables, set by name (any case) and kept in range. */
-    TEST_ASSERT_EQUAL_INT(8, tunable_count);
+    TEST_ASSERT_EQUAL_INT(17, tunable_count);
     const int saved = RFP_MARGIN;
     TEST_ASSERT_TRUE(set_tunable("rfp_margin", 10, 120));
     TEST_ASSERT_EQUAL_INT(120, RFP_MARGIN);

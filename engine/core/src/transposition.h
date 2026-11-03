@@ -16,18 +16,22 @@
 
 
 typedef enum {
-    tt_exact = 1,
+    tt_none = 0,    /* No bound, only the static eval (a node that pruned or cut off before searching). */
+    tt_exact,
     tt_alpha,
     tt_beta
 } tt_entry_type;
 
 /**
  * Lock-less entry (Hyatt's XOR scheme), safe to share between search threads. The entry is two
- * 64-bit words, 'data' and 'check' = hash ^ data, each loaded and stored atomically. A torn entry
- * (words from two different saves) fails the check and is treated as a miss.
+ * 64-bit words, 'data' and 'check' = (key | eval) ^ data, each loaded and stored atomically. The
+ * key is the hash's upper 48 bits, the low 16 the position's static eval. A torn entry (words from
+ * two different saves) fails the check on the key and is treated as a miss.
  *
- * Packed to 16 bytes, four entries per cache line. The low bits of the hash give the index
- * (the table size is a power of two), the full hash is kept in the check.
+ * Packed to 16 bytes, four entries per cache line. The low bits of the hash give the index (the
+ * table size is a power of two). The key's 48 bits overlap the index's for tables over 64K entries,
+ * so 64 - log2(entries) of them tell positions apart in a slot: 40 at 256 MB, a false match about
+ * once in 10^12 probes.
  *
  * 'data' layout:
  *   bits  0-24  move        (25 bits, see move_encoding.h)
@@ -51,6 +55,10 @@ _Static_assert(sizeof(transposition_node_t) == 16, "transposition_node_t should 
 #define TT_GENERATION_SHIFT 56
 
 _Static_assert(INF < (1 << (TT_SCORE_BITS - 1)), "scores must fit in the TT score field");
+
+#define TT_KEY_MASK (~0xffffULL)  /* The hash bits kept in 'check', the rest of it holds the eval. */
+#define TT_EVAL_NONE (-32768)     /* No static eval stored (the node was in check). */
+#define TT_EVAL_MAX 32767         /* Stored evals are clamped to +-this (the network's are far smaller). */
 
 extern transposition_node_t* t_table;
 extern size_t tt_size;
@@ -105,8 +113,21 @@ static inline_always uint8_t tt_data_generation(const uint64_t data) {
     return (uint8_t) (data >> TT_GENERATION_SHIFT);
 }
 
+/**
+ * Buckets of TT_BUCKET entries, one 64-byte cache line (the table is 64-byte aligned): a position
+ * can be in any entry of its bucket. A save replaces the position's own entry if it's there
+ * (keeping a deeper one from this search, as before), otherwise the bucket's least valuable entry:
+ * an empty one, else the shallowest, an earlier search's counting TT_AGE_WEIGHT plies less per
+ * search since. So shallow entries (qsearch, eval only) push out other shallow or stale ones
+ * rather than deep results.
+ */
+#define TT_BUCKET 4
+#define TT_AGE_WEIGHT 8
+_Static_assert(TT_BUCKET * sizeof(transposition_node_t) == 64, "a bucket is one cache line");
+
+/* The position's bucket, its first entry. */
 static inline_always transposition_node_t* tt_entry(const uint64_t position_hash) {
-    return &t_table[position_hash & (tt_size - 1)];
+    return &t_table[(position_hash & (tt_size / TT_BUCKET - 1)) * TT_BUCKET];
 }
 
 /* Starts loading the position's entry into the cache, so it's there by the time it's probed. */
@@ -116,13 +137,58 @@ static inline_always void tt_prefetch(const uint64_t position_hash) {
 
 /**
  * Loads the entry's data, true if it belongs to this position (and wasn't torn by a concurrent
- * save). 'data' is written either way, so a save can see what it would replace.
+ * save). 'data' is written either way, so a save can see what it would replace. 'eval' (if not
+ * NULL) is the stored static eval, TT_EVAL_NONE for none.
  */
+static inline_always bool tt_load_eval(const uint64_t position_hash, uint64_t* data, int* eval) {
+    transposition_node_t* bucket = tt_entry(position_hash);
+    for (int i = 0; i < TT_BUCKET; i++) {
+        const uint64_t d = atomic_load_explicit(&bucket[i].data, memory_order_relaxed);
+        const uint64_t key_eval = atomic_load_explicit(&bucket[i].check, memory_order_relaxed) ^ d;
+        if ((key_eval & TT_KEY_MASK) == (position_hash & TT_KEY_MASK)) {
+            *data = d;
+            if (eval) *eval = (int16_t) (key_eval & 0xffff);
+            return true;
+        }
+    }
+    *data = 0;
+    if (eval) *eval = TT_EVAL_NONE;
+    return false;
+}
+
 static inline_always bool tt_load(const uint64_t position_hash, uint64_t* data) {
-    transposition_node_t* entry = tt_entry(position_hash);
-    *data = atomic_load_explicit(&entry->data, memory_order_relaxed);
-    const uint64_t check = atomic_load_explicit(&entry->check, memory_order_relaxed);
-    return (check ^ *data) == position_hash;
+    return tt_load_eval(position_hash, data, NULL);
+}
+
+/* An entry read once per node: what tt_probe and tt_lookup give, plus the static eval. */
+typedef struct {
+    move_t move;
+    int score;            /* Converted back to distance from the root, as in tt_probe. */
+    int depth;
+    int eval;             /* TT_EVAL_NONE if none was stored. */
+    tt_entry_type type;
+} tt_info_t;
+
+/* True if there's an entry for this position, filling 'info'. */
+static inline_always bool tt_read(const uint64_t position_hash, const int ply, tt_info_t* info) {
+    uint64_t data;
+    if (!tt_load_eval(position_hash, &data, &info->eval)) return false;
+    info->move = tt_data_move(data);
+    info->score = tt_data_score(data);
+    if (info->score < -MATE_SCORE) info->score += ply;
+    if (info->score > MATE_SCORE) info->score -= ply;
+    info->depth = tt_data_depth(data);
+    info->type = tt_data_type(data);
+    return true;
+}
+
+/* tt_probe's answer from an entry already read: the cutoff score for this window, or TT_NOT_FOUND. */
+static inline_always int tt_cutoff(const tt_info_t* info, const int depth, const int alpha, const int beta) {
+    if (info->depth < depth) return TT_NOT_FOUND;
+    if (info->type == tt_exact) return info->score;
+    if (info->type == tt_alpha && info->score <= alpha) return alpha;
+    if (info->type == tt_beta && info->score >= beta) return beta;
+    return TT_NOT_FOUND;
 }
 
 /**
@@ -180,18 +246,40 @@ static inline_always bool tt_lookup(const uint64_t position_hash,
 }
 
 
+/* 'eval' is the position's static eval (before any TT adjustment), TT_EVAL_NONE in check. */
 static inline_always void tt_save(const uint64_t position_hash,
                                   const tt_entry_type hash_flag,
                                   const int depth,
                                   const int ply,
                                   int score,
-                                  move_t move) {
-    transposition_node_t* entry = tt_entry(position_hash);
-    uint64_t old;
-    const bool same_position = tt_load(position_hash, &old);
+                                  move_t move,
+                                  int eval) {
+    /* The position's own entry if it's in the bucket, otherwise the least valuable one. */
+    transposition_node_t* bucket = tt_entry(position_hash);
+    transposition_node_t* entry = bucket;
+    uint64_t old = 0;
+    bool same_position = false;
+    int lowest = 1 << 30;
+    for (int i = 0; i < TT_BUCKET; i++) {
+        const uint64_t d = atomic_load_explicit(&bucket[i].data, memory_order_relaxed);
+        const uint64_t c = atomic_load_explicit(&bucket[i].check, memory_order_relaxed);
+        if (((c ^ d) & TT_KEY_MASK) == (position_hash & TT_KEY_MASK) && (c | d) != 0) {
+            entry = &bucket[i];
+            old = d;
+            same_position = true;
+            break;
+        }
+        const int age = (uint8_t) (tt_generation - tt_data_generation(d));
+        const int value = (c | d) == 0 ? -(1 << 30) : tt_data_depth(d) - TT_AGE_WEIGHT * age;
+        if (value < lowest) {
+            lowest = value;
+            entry = &bucket[i];
+            old = d;
+        }
+    }
 
-    /* Keep deeper entries from the current search, entries from earlier searches are replaced. */
-    if (tt_data_generation(old) == tt_generation && tt_data_depth(old) > depth) return;
+    /* The position's own entry: keep a deeper one from the current search. */
+    if (same_position && tt_data_generation(old) == tt_generation && tt_data_depth(old) > depth) return;
 
     /* A fail-low has no best move, keep the one already stored for this position. */
     if (move == 0 && same_position) move = tt_data_move(old);
@@ -200,9 +288,11 @@ static inline_always void tt_save(const uint64_t position_hash,
     if (score < -MATE_SCORE) score -= ply;
     if (score > MATE_SCORE) score += ply;
 
+    if (eval != TT_EVAL_NONE) eval = eval > TT_EVAL_MAX ? TT_EVAL_MAX : eval < -TT_EVAL_MAX ? -TT_EVAL_MAX : eval;
     const uint64_t data = tt_pack(move, score, depth, hash_flag, tt_generation);
+    const uint64_t key_eval = (position_hash & TT_KEY_MASK) | (uint16_t) (int16_t) eval;
     atomic_store_explicit(&entry->data, data, memory_order_relaxed);
-    atomic_store_explicit(&entry->check, position_hash ^ data, memory_order_relaxed);
+    atomic_store_explicit(&entry->check, key_eval ^ data, memory_order_relaxed);
 }
 
 /**

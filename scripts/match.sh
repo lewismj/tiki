@@ -12,7 +12,8 @@
 #     TC=8+0.08            time control, seconds+increment
 #     CONCURRENCY=N        games at once, default physical cores - 1
 #     HASH=16 THREADS=1    UCI options for every engine
-#     BOOK=<file>          openings (.epd or .pgn), default tools/books/8moves_v3.pgn
+#     BOOK=<file>          openings (.epd or .pgn), default tools/books/uho/UHO_Lichess_4852_v1.epd
+#                          (unbalanced openings: fewer draws, so an SPRT decides in fewer games)
 #     GAMES=200            gauntlet: games against each engine
 #     ELO0=0 ELO1=5        SPRT bounds (normalized Elo)
 #     MAX_GAMES=20000      SPRT: stop here if it's still undecided
@@ -55,15 +56,15 @@ if [ ! -x "$fastchess" ]; then
 fi
 
 # The opening book.
-book=${BOOK:-$tools/books/8moves_v3.pgn}
+book=${BOOK:-$tools/books/uho/UHO_Lichess_4852_v1.epd}
 if [ ! -f "$book" ] && [ -z "${BOOK:-}" ]; then
-    mkdir -p "$tools/books"
+    mkdir -p "$tools/books/uho"
     echo "Downloading the opening book"
-    curl -fsSL -o "$book.zip" "https://github.com/official-stockfish/books/raw/master/8moves_v3.pgn.zip"
+    curl -fsSL -o "$book.zip" "https://github.com/official-stockfish/books/raw/master/UHO_Lichess_4852_v1.epd.zip"
     if command -v unzip > /dev/null; then
-        unzip -oq "$book.zip" -d "$tools/books"
+        unzip -oq "$book.zip" -d "$tools/books/uho"
     else
-        python3 -m zipfile -e "$book.zip" "$tools/books"
+        python3 -m zipfile -e "$book.zip" "$tools/books/uho"
     fi
     rm "$book.zip"
 fi

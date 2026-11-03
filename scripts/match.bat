@@ -12,7 +12,8 @@ rem Games and results go to matches\. Settings, from the environment (set NAME=v
 rem     TC=8+0.08            time control, seconds+increment
 rem     CONCURRENCY=N        games at once, default physical cores - 1
 rem     HASH=16 THREADS=1    UCI options for every engine
-rem     BOOK=<file>          openings (.epd or .pgn), default tools\books\8moves_v3.pgn
+rem     BOOK=<file>          openings (.epd or .pgn), default tools\books\uho\UHO_Lichess_4852_v1.epd
+rem                          (unbalanced openings: fewer draws, so an SPRT decides in fewer games)
 rem     GAMES=200            gauntlet: games against each engine
 rem     ELO0=0 ELO1=5        SPRT bounds (normalized Elo)
 rem     MAX_GAMES=20000      SPRT: stop here if it's still undecided
@@ -53,14 +54,14 @@ rem The opening book.
 if defined BOOK (
     set "book=%BOOK%"
 ) else (
-    set "book=%tools%\books\8moves_v3.pgn"
+    set "book=%tools%\books\uho\UHO_Lichess_4852_v1.epd"
 )
 if not defined BOOK if not exist "%book%" (
-    if not exist "%tools%\books" mkdir "%tools%\books"
+    if not exist "%tools%\books\uho" mkdir "%tools%\books\uho"
     echo Downloading the opening book
-    "%curl%" -fsSL -o "%tools%\books\book.zip" "https://github.com/official-stockfish/books/raw/master/8moves_v3.pgn.zip" || exit /b 1
-    "%tar%" -xf "%tools%\books\book.zip" -C "%tools%\books" || exit /b 1
-    del "%tools%\books\book.zip"
+    "%curl%" -fsSL -o "%tools%\books\uho\book.zip" "https://github.com/official-stockfish/books/raw/master/UHO_Lichess_4852_v1.epd.zip" || exit /b 1
+    "%tar%" -xf "%tools%\books\uho\book.zip" -C "%tools%\books\uho" || exit /b 1
+    del "%tools%\books\uho\book.zip"
 )
 if not exist "%book%" (
     echo No opening book at %book% 1>&2

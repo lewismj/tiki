@@ -27,7 +27,12 @@ void init_lmr_table();
 #define MAX_MOVES 1024           /* Maximum number of moves in the game.                                     */
 #define MAX_PLY 64               /* Maximum ply we can search.                                               */
 #define MAX_SEARCH_DEPTH 32      /* Iterative deepening limit when no depth is given (e.g. 'go infinite').   */
-#define NULL_MOVE_DEPTH_BOUND 4  /* Lower bound for depth to enable null move pruning.                       */
+#define NMP_MIN_DEPTH 2          /* Null move pruning from this depth, searched at depth - R (at least 0,    */
+#define NMP_R_BASE 3             /* qsearch), R = base + depth / depth_div + min((eval - beta) / eval_div,  */
+#define NMP_R_DEPTH_DIV 3        /* eval_max) (null_move_depth).                                            */
+#define NMP_R_EVAL_DIV 200
+#define NMP_R_EVAL_MAX 3
+#define NMP_VERIFY_DEPTH 14      /* From this depth a null move cutoff is verified by a normal search.      */
 #define LMR_MIN_DEPTH 3          /* Late move reduction from this depth...                                   */
 #define LMR_MIN_MOVES 3          /* ...after this many moves have been searched at the node.                 */
 #define LMR_TABLE_SIZE 64
@@ -45,11 +50,14 @@ void init_lmr_table();
 #define BAD_CAPTURE_SCORE (-20000) /* Ordering offset for losing captures (SEE < 0), below every quiet move.  */
 #define DELTA_MARGIN 200         /* Qsearch delta pruning, skip a capture if eval + victim + margin <= alpha. */
 #define RFP_MAX_DEPTH 6          /* Reverse futility pruning up to this depth...                             */
-#define RFP_MARGIN 100           /* ...when static eval - margin * depth >= beta.                            */
-#define FUTILITY_MAX_DEPTH 3     /* Futility pruning of quiet moves up to this depth...                      */
-#define FUTILITY_MARGIN 150      /* ...when static eval + margin * depth <= alpha.                           */
+#define RFP_MARGIN 100           /* ...when static eval - margin * depth >= beta...                          */
+#define RFP_IMPROVING 50         /* ...the margin this much smaller when the position is improving.         */
+#define FUTILITY_MAX_DEPTH 8     /* Futility pruning of quiet moves up to this depth...                      */
+#define FUTILITY_BASE 50         /* ...when static eval + base + margin * depth <= alpha.                    */
+#define FUTILITY_MARGIN 100
 #define LMP_MAX_DEPTH 6          /* Late move pruning of quiet moves up to this depth...                     */
-#define LMP_BASE 3               /* ...after base + depth^2 moves have been searched at the node.            */
+#define LMP_BASE 3               /* ...after base + depth^2 moves have been searched at the node...          */
+#define LMP_NOT_IMPROVING_PCT 67 /* ...this percentage of them (rounded up) when not improving.              */
 #define SEE_PRUNE_MAX_DEPTH 8    /* SEE pruning in the main search up to this depth, skipping...             */
 #define SEE_QUIET_MARGIN 60      /* ...quiet moves with SEE < -margin * depth...                             */
 #define SEE_CAPTURE_MARGIN 20    /* ...and captures with SEE < -margin * depth^2.                            */

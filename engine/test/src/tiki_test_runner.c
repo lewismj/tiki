@@ -109,6 +109,9 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_quiescence_sees_quiet_queen_promotion);
     RUN_TEST(test_check_extended_at_horizon);
     RUN_TEST(test_null_move_guards);
+    RUN_TEST(test_null_move_depth);
+    RUN_TEST(test_null_move_verification_restores_state);
+    RUN_TEST(test_improving);
     RUN_TEST(test_history_bonus_and_bound);
     RUN_TEST(test_history_stays_below_killers_and_captures);
     RUN_TEST(test_queen_promotion_ordered_with_captures);
@@ -187,6 +190,12 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_tt_mate_score_round_trip);
     RUN_TEST(test_tt_stores_best_move);
     RUN_TEST(test_tt_replacement);
+    RUN_TEST(test_tt_bucket_keeps_positions_apart);
+    RUN_TEST(test_tt_bucket_replaces_least_valuable);
+    RUN_TEST(test_tt_stores_static_eval);
+    RUN_TEST(test_tt_read_and_cutoff);
+    RUN_TEST(test_adjusted_eval);
+    RUN_TEST(test_qsearch_saves_to_tt);
     RUN_TEST(test_castle_key_all_rights);
     RUN_TEST(test_go_keeps_tt);
     RUN_TEST(test_search_stores_exact_root);

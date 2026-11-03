@@ -45,7 +45,16 @@ enum {
     LMP_BASE_DEFAULT = LMP_BASE,
     SEE_QUIET_MARGIN_DEFAULT = SEE_QUIET_MARGIN,
     SEE_CAPTURE_MARGIN_DEFAULT = SEE_CAPTURE_MARGIN,
-    SE_MARGIN_DEFAULT = SE_MARGIN
+    SE_MARGIN_DEFAULT = SE_MARGIN,
+    RFP_IMPROVING_DEFAULT = RFP_IMPROVING,
+    FUTILITY_BASE_DEFAULT = FUTILITY_BASE,
+    LMP_NOT_IMPROVING_PCT_DEFAULT = LMP_NOT_IMPROVING_PCT,
+    NMP_MIN_DEPTH_DEFAULT = NMP_MIN_DEPTH,
+    NMP_R_BASE_DEFAULT = NMP_R_BASE,
+    NMP_R_DEPTH_DIV_DEFAULT = NMP_R_DEPTH_DIV,
+    NMP_R_EVAL_DIV_DEFAULT = NMP_R_EVAL_DIV,
+    NMP_R_EVAL_MAX_DEFAULT = NMP_R_EVAL_MAX,
+    NMP_VERIFY_DEPTH_DEFAULT = NMP_VERIFY_DEPTH
 };
 
 extern int tune_rfp_margin;
@@ -56,6 +65,15 @@ extern int tune_lmp_base;
 extern int tune_see_quiet_margin;
 extern int tune_see_capture_margin;
 extern int tune_se_margin;
+extern int tune_rfp_improving;
+extern int tune_futility_base;
+extern int tune_lmp_not_improving_pct;
+extern int tune_nmp_min_depth;
+extern int tune_nmp_r_base;
+extern int tune_nmp_r_depth_div;
+extern int tune_nmp_r_eval_div;
+extern int tune_nmp_r_eval_max;
+extern int tune_nmp_verify_depth;
 
 #undef RFP_MARGIN
 #undef RFP_MAX_DEPTH
@@ -65,6 +83,15 @@ extern int tune_se_margin;
 #undef SEE_QUIET_MARGIN
 #undef SEE_CAPTURE_MARGIN
 #undef SE_MARGIN
+#undef RFP_IMPROVING
+#undef FUTILITY_BASE
+#undef LMP_NOT_IMPROVING_PCT
+#undef NMP_MIN_DEPTH
+#undef NMP_R_BASE
+#undef NMP_R_DEPTH_DIV
+#undef NMP_R_EVAL_DIV
+#undef NMP_R_EVAL_MAX
+#undef NMP_VERIFY_DEPTH
 #define RFP_MARGIN tune_rfp_margin
 #define RFP_MAX_DEPTH tune_rfp_max_depth
 #define FUTILITY_MARGIN tune_futility_margin
@@ -73,6 +100,15 @@ extern int tune_se_margin;
 #define SEE_QUIET_MARGIN tune_see_quiet_margin
 #define SEE_CAPTURE_MARGIN tune_see_capture_margin
 #define SE_MARGIN tune_se_margin
+#define RFP_IMPROVING tune_rfp_improving
+#define FUTILITY_BASE tune_futility_base
+#define LMP_NOT_IMPROVING_PCT tune_lmp_not_improving_pct
+#define NMP_MIN_DEPTH tune_nmp_min_depth
+#define NMP_R_BASE tune_nmp_r_base
+#define NMP_R_DEPTH_DIV tune_nmp_r_depth_div
+#define NMP_R_EVAL_DIV tune_nmp_r_eval_div
+#define NMP_R_EVAL_MAX tune_nmp_r_eval_max
+#define NMP_VERIFY_DEPTH tune_nmp_verify_depth
 #endif
 
 #endif

@@ -48,7 +48,7 @@ void test_tt_torn_entry_is_miss() {
     uint64_t data;
     tt_clear();
 
-    tt_save(TEST_HASH, tt_exact, 4, 0, 100, 0);
+    tt_save(TEST_HASH, tt_exact, 4, 0, 100, 0, TT_EVAL_NONE);
     TEST_ASSERT_TRUE(tt_load(TEST_HASH, &data));
 
     /* Another thread's save overwrote 'data' only, the check no longer matches. */
@@ -63,14 +63,14 @@ void test_tt_mate_score_round_trip() {
     tt_clear();
 
     /* Probe at the same ply gives back the same score. */
-    tt_save(TEST_HASH, tt_exact, 4, 3, MATE_VALUE - 7, 0);
+    tt_save(TEST_HASH, tt_exact, 4, 3, MATE_VALUE - 7, 0, TT_EVAL_NONE);
     TEST_ASSERT_EQUAL_INT(MATE_VALUE - 7, tt_probe(TEST_HASH, 4, 3, -INF, INF, &tt_move));
 
     /* Two plies deeper, the same mate is two plies further from the root. */
     TEST_ASSERT_EQUAL_INT(MATE_VALUE - 9, tt_probe(TEST_HASH, 4, 5, -INF, INF, &tt_move));
 
     tt_clear();
-    tt_save(TEST_HASH, tt_exact, 4, 3, -MATE_VALUE + 7, 0);
+    tt_save(TEST_HASH, tt_exact, 4, 3, -MATE_VALUE + 7, 0, TT_EVAL_NONE);
     TEST_ASSERT_EQUAL_INT(-MATE_VALUE + 7, tt_probe(TEST_HASH, 4, 3, -INF, INF, &tt_move));
     TEST_ASSERT_EQUAL_INT(-MATE_VALUE + 9, tt_probe(TEST_HASH, 4, 5, -INF, INF, &tt_move));
 }
@@ -80,7 +80,7 @@ void test_tt_stores_best_move() {
     const move_t mv = encode_move(e2, e4, P, 0, 0, 1, 0, 0, 0);
     tt_clear();
 
-    tt_save(TEST_HASH, tt_beta, 3, 0, 50, mv);
+    tt_save(TEST_HASH, tt_beta, 3, 0, 50, mv, TT_EVAL_NONE);
 
     /* Too shallow for a cutoff, but the move is still returned for ordering. */
     TEST_ASSERT_EQUAL_INT(TT_NOT_FOUND, tt_probe(TEST_HASH, 6, 0, -INF, INF, &tt_move));
@@ -88,7 +88,7 @@ void test_tt_stores_best_move() {
 
     /* A fail-low (no move) for the same position keeps the stored move. */
     tt_new_search();
-    tt_save(TEST_HASH, tt_alpha, 4, 0, 10, 0);
+    tt_save(TEST_HASH, tt_alpha, 4, 0, 10, 0, TT_EVAL_NONE);
     TEST_ASSERT_EQUAL_INT(20, tt_probe(TEST_HASH, 4, 0, 20, 30, &tt_move)); /* Fail-hard, returns alpha. */
     TEST_ASSERT_EQUAL_UINT32(mv, tt_move);
 
@@ -102,13 +102,13 @@ void test_tt_replacement() {
     tt_clear();
 
     /* Same search, a shallower result doesn't replace a deeper one. */
-    tt_save(TEST_HASH, tt_exact, 8, 0, 100, 0);
-    tt_save(TEST_HASH, tt_exact, 2, 0, 200, 0);
+    tt_save(TEST_HASH, tt_exact, 8, 0, 100, 0, TT_EVAL_NONE);
+    tt_save(TEST_HASH, tt_exact, 2, 0, 200, 0, TT_EVAL_NONE);
     TEST_ASSERT_EQUAL_INT(100, tt_probe(TEST_HASH, 2, 0, -INF, INF, &tt_move));
 
     /* Next search, the old entry is replaced. */
     tt_new_search();
-    tt_save(TEST_HASH, tt_exact, 2, 0, 200, 0);
+    tt_save(TEST_HASH, tt_exact, 2, 0, 200, 0, TT_EVAL_NONE);
     TEST_ASSERT_EQUAL_INT(200, tt_probe(TEST_HASH, 2, 0, -INF, INF, &tt_move));
 }
 
@@ -122,6 +122,159 @@ void test_castle_key_all_rights() {
     TEST_ASSERT_NOT_EQUAL(with_rights.hash, without_rights.hash);
 }
 
+void test_tt_stores_static_eval() {
+    uint64_t data;
+    int eval;
+    tt_clear();
+
+    /* Any eval round trips, with the entry's own fields intact, and the key check still holds. */
+    const int evals[] = { 0, 1, -1, 1234, -1234, TT_EVAL_MAX, -TT_EVAL_MAX, TT_EVAL_NONE };
+    for (size_t i = 0; i < sizeof(evals) / sizeof(evals[0]); i++) {
+        tt_clear();
+        tt_save(TEST_HASH, tt_beta, 7, 0, -55, 0, evals[i]);
+        TEST_ASSERT_TRUE(tt_load_eval(TEST_HASH, &data, &eval));
+        TEST_ASSERT_EQUAL_INT(evals[i], eval);
+        TEST_ASSERT_EQUAL_INT(-55, tt_data_score(data));
+        TEST_ASSERT_EQUAL_INT(7, tt_data_depth(data));
+        TEST_ASSERT_EQUAL_INT(tt_beta, tt_data_type(data));
+    }
+
+    /* Out of range evals are clamped, never confused with TT_EVAL_NONE. */
+    tt_clear();
+    tt_save(TEST_HASH, tt_exact, 1, 0, 0, 0, 100000);
+    TEST_ASSERT_TRUE(tt_load_eval(TEST_HASH, &data, &eval));
+    TEST_ASSERT_EQUAL_INT(TT_EVAL_MAX, eval);
+    tt_save(TEST_HASH, tt_exact, 1, 0, 0, 0, -100000);
+    TEST_ASSERT_TRUE(tt_load_eval(TEST_HASH, &data, &eval));
+    TEST_ASSERT_EQUAL_INT(-TT_EVAL_MAX, eval);
+
+    /* The key is the hash's upper 48 bits: another position differing there is a miss. */
+    TEST_ASSERT_FALSE(tt_load(TEST_HASH ^ (1ULL << 40), &data));
+}
+
+void test_tt_read_and_cutoff() {
+    tt_info_t info;
+    tt_clear();
+    TEST_ASSERT_FALSE(tt_read(TEST_HASH, 0, &info));
+
+    /* An eval only entry (tt_none) gives the eval, no move and never a cutoff. */
+    tt_save(TEST_HASH, tt_none, 0, 0, 0, 0, 87);
+    TEST_ASSERT_TRUE(tt_read(TEST_HASH, 0, &info));
+    TEST_ASSERT_EQUAL_INT(tt_none, info.type);
+    TEST_ASSERT_EQUAL_INT(87, info.eval);
+    TEST_ASSERT_EQUAL_UINT32(0, info.move);
+    TEST_ASSERT_EQUAL_INT(TT_NOT_FOUND, tt_cutoff(&info, 0, -INF, INF));
+    TEST_ASSERT_EQUAL_INT(TT_NOT_FOUND, tt_cutoff(&info, 0, 0, 1));
+
+    /* tt_cutoff agrees with tt_probe, fail-hard. */
+    const move_t mv = encode_move(e2, e4, P, 0, 0, 1, 0, 0, 0);
+    tt_save(TEST_HASH, tt_beta, 5, 0, 60, mv, 40);
+    TEST_ASSERT_TRUE(tt_read(TEST_HASH, 0, &info));
+    TEST_ASSERT_EQUAL_UINT32(mv, info.move);
+    TEST_ASSERT_EQUAL_INT(40, info.eval);
+    TEST_ASSERT_EQUAL_INT(50, tt_cutoff(&info, 5, 10, 50));
+    TEST_ASSERT_EQUAL_INT(TT_NOT_FOUND, tt_cutoff(&info, 5, 10, 70));
+    TEST_ASSERT_EQUAL_INT(TT_NOT_FOUND, tt_cutoff(&info, 6, 10, 50)); /* Too shallow. */
+
+    /* Mate scores come back relative to the root, as in tt_probe (a new table: the deeper entry
+     * above would be kept). */
+    tt_clear();
+    tt_save(TEST_HASH, tt_exact, 4, 3, MATE_VALUE - 7, 0, TT_EVAL_NONE);
+    TEST_ASSERT_TRUE(tt_read(TEST_HASH, 5, &info));
+    TEST_ASSERT_EQUAL_INT(MATE_VALUE - 9, info.score);
+    TEST_ASSERT_EQUAL_INT(TT_EVAL_NONE, info.eval);
+}
+
+void test_adjusted_eval() {
+    tt_info_t tt = { .move = 0, .score = 120, .depth = 5, .eval = 50, .type = tt_exact };
+    TEST_ASSERT_EQUAL_INT(50, adjusted_eval(50, NULL));
+    TEST_ASSERT_EQUAL_INT(120, adjusted_eval(50, &tt));     /* Exact: the score. */
+
+    tt.type = tt_beta;                                     /* Lower bound: only above the eval. */
+    TEST_ASSERT_EQUAL_INT(120, adjusted_eval(50, &tt));
+    TEST_ASSERT_EQUAL_INT(200, adjusted_eval(200, &tt));
+
+    tt.type = tt_alpha;                                    /* Upper bound: only below the eval. */
+    TEST_ASSERT_EQUAL_INT(50, adjusted_eval(50, &tt));
+    TEST_ASSERT_EQUAL_INT(120, adjusted_eval(200, &tt));
+
+    tt.type = tt_none;                                     /* No bound. */
+    TEST_ASSERT_EQUAL_INT(50, adjusted_eval(50, &tt));
+
+    tt.type = tt_exact;                                    /* Mate scores aren't an estimate. */
+    tt.score = MATE_VALUE - 3;
+    TEST_ASSERT_EQUAL_INT(50, adjusted_eval(50, &tt));
+    tt.score = -MATE_VALUE + 3;
+    TEST_ASSERT_EQUAL_INT(50, adjusted_eval(50, &tt));
+}
+
+void test_qsearch_saves_to_tt() {
+    /* A capture is available, so qsearch searches it and saves the position at depth 0. */
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+    init_search_state(&search_state);
+    reset_time_control(&limits);
+    tt_clear();
+    parse_position("position fen 4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1", &board, &search_state);
+    clear_pv_table(&search_state);
+    const int score = quiescence(-INF, INF, &board, &search_state, &limits);
+
+    tt_info_t info;
+    TEST_ASSERT_TRUE(tt_read(board.hash, 0, &info));
+    TEST_ASSERT_EQUAL_INT(0, info.depth);
+    TEST_ASSERT_EQUAL_INT(tt_exact, info.type);
+    TEST_ASSERT_EQUAL_INT(score, info.score);
+    TEST_ASSERT_TRUE(info.eval != TT_EVAL_NONE);
+    TEST_ASSERT_EQUAL_UINT32(encode_move(e4, d5, P, 0, 1, 0, 0, 0, 0), info.move);
+
+    /* The same search again, now from the TT's eval and move: the same score. */
+    clear_pv_table(&search_state);
+    TEST_ASSERT_EQUAL_INT(score, quiescence(-INF, INF, &board, &search_state, &limits));
+}
+
+/* Positions in TEST_HASH's bucket (the same low bits), told apart by their key's top byte. */
+static uint64_t bucket_hash(int k) {
+    return TEST_HASH ^ ((uint64_t) (k + 1) << 56);
+}
+
+void test_tt_bucket_keeps_positions_apart() {
+    move_t tt_move;
+    tt_clear();
+
+    /* A bucket holds TT_BUCKET positions: each keeps its own entry. */
+    for (int k = 0; k < TT_BUCKET; k++) tt_save(bucket_hash(k), tt_exact, 4 + k, 0, 10 * k, 0, TT_EVAL_NONE);
+    for (int k = 0; k < TT_BUCKET; k++) TEST_ASSERT_EQUAL_INT(10 * k, tt_probe(bucket_hash(k), 0, 0, -INF, INF, &tt_move));
+
+    /* Saving a position again updates its entry, it doesn't take a second one. */
+    tt_save(bucket_hash(2), tt_exact, 9, 0, 77, 0, TT_EVAL_NONE);
+    TEST_ASSERT_EQUAL_INT(77, tt_probe(bucket_hash(2), 0, 0, -INF, INF, &tt_move));
+    for (int k = 0; k < TT_BUCKET; k++) {
+        if (k != 2) TEST_ASSERT_EQUAL_INT(10 * k, tt_probe(bucket_hash(k), 0, 0, -INF, INF, &tt_move));
+    }
+}
+
+void test_tt_bucket_replaces_least_valuable() {
+    move_t tt_move;
+    tt_clear();
+
+    /* Depths 4, 5, 9 and 7: a new position takes the shallowest's entry (depth 4), the deep ones stay. */
+    const int depths[TT_BUCKET] = { 4, 5, 9, 7 };
+    for (int k = 0; k < TT_BUCKET; k++) tt_save(bucket_hash(k), tt_exact, depths[k], 0, 100 + k, 0, TT_EVAL_NONE);
+    tt_save(bucket_hash(TT_BUCKET), tt_exact, 0, 0, 1, 0, TT_EVAL_NONE); /* A qsearch entry. */
+    TEST_ASSERT_EQUAL_INT(1, tt_probe(bucket_hash(TT_BUCKET), 0, 0, -INF, INF, &tt_move));
+    TEST_ASSERT_EQUAL_INT(TT_NOT_FOUND, tt_probe(bucket_hash(0), 0, 0, -INF, INF, &tt_move));
+    for (int k = 1; k < TT_BUCKET; k++) TEST_ASSERT_EQUAL_INT(100 + k, tt_probe(bucket_hash(k), 0, 0, -INF, INF, &tt_move));
+
+    /* After a search, an earlier search's deep entry counts TT_AGE_WEIGHT plies less per search
+     * since: two searches later, depth 9 is worth 9 - 16 < 0, below this search's depth 0 entries. */
+    tt_new_search();
+    tt_new_search();
+    for (int k = 0; k < TT_BUCKET; k++) tt_save(bucket_hash(10 + k), tt_exact, 0, 0, 200 + k, 0, TT_EVAL_NONE);
+    for (int k = 0; k < TT_BUCKET; k++) TEST_ASSERT_EQUAL_INT(200 + k, tt_probe(bucket_hash(10 + k), 0, 0, -INF, INF, &tt_move));
+    TEST_ASSERT_EQUAL_INT(TT_NOT_FOUND, tt_probe(bucket_hash(2), 0, 0, -INF, INF, &tt_move));
+}
+
 void test_go_keeps_tt() {
     board_t board;
     search_state_t search_state;
@@ -130,7 +283,7 @@ void test_go_keeps_tt() {
     init_search_state(&search_state);
     tt_clear();
 
-    tt_save(TEST_HASH, tt_exact, 5, 0, 42, 0);
+    tt_save(TEST_HASH, tt_exact, 5, 0, 42, 0, TT_EVAL_NONE);
     parse_position("position startpos", &board, &search_state);
     parse_go("go depth 2", &board, &search_state, &limits);
 

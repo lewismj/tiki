@@ -378,10 +378,25 @@ static inline_always bool has_non_pawn_material(const board_t* board) {
            (board->pieces[n] | board->pieces[b] | board->pieces[r] | board->pieces[q]) != 0;
 }
 
+static inline_always bool is_mate_score(int score) {
+    return score >= MATE_SCORE || score <= -MATE_SCORE;
+}
+
+/**
+ * Whether the side to move's position is improving: its network eval is above the one at its
+ * previous node, two plies up, or four if that node was in check (no eval, -INF). With neither to
+ * compare with, it counts as improving (the cautious side: less pruning).
+ */
+bool is_improving(int static_eval, int eval_2_plies_up, int eval_4_plies_up) {
+    const int previous = eval_2_plies_up != -INF ? eval_2_plies_up : eval_4_plies_up;
+    return previous == -INF || static_eval > previous;
+}
+
 /**
  * Whether to try null move pruning at this node. Not at the root or in PV nodes, not in check,
  * not straight after another null move (the position after a null move is at null_move_index),
- * not with only king and pawns, and only when the static eval is already at or above beta.
+ * not within a null move verification search (below nmp_min_ply), not with only king and pawns,
+ * not when beta is a mate score, and only when the static eval is already at or above beta.
  */
 bool can_null_move(const board_t* board,
                    const search_state_t* search_state,
@@ -390,44 +405,58 @@ bool can_null_move(const board_t* board,
                    int static_eval,
                    bool in_check,
                    bool is_pv_node) {
-    if (depth < NULL_MOVE_DEPTH_BOUND || in_check || is_pv_node || search_state->ply == 0) return false;
+    if (depth < NMP_MIN_DEPTH || in_check || is_pv_node || search_state->ply == 0) return false;
     if (search_state->null_move_index != 0 && search_state->null_move_index == search_state->repetition_index) return false;
-    if (!has_non_pawn_material(board)) return false;
+    if (search_state->ply < search_state->nmp_min_ply) return false;
+    if (is_mate_score(beta) || !has_non_pawn_material(board)) return false;
     return static_eval >= beta;
 }
 
-static inline_always bool is_mate_score(int score) {
-    return score >= MATE_SCORE || score <= -MATE_SCORE;
+/**
+ * The null move search's depth: depth - R, R = NMP_R_BASE + depth / NMP_R_DEPTH_DIV + min((eval -
+ * beta) / NMP_R_EVAL_DIV, NMP_R_EVAL_MAX), at least 0 (qsearch). Larger the deeper the node and the
+ * further its eval is above beta (the more likely the cutoff).
+ */
+int null_move_depth(int depth, int static_eval, int beta) {
+    int eval_term = (static_eval - beta) / NMP_R_EVAL_DIV;
+    if (eval_term > NMP_R_EVAL_MAX) eval_term = NMP_R_EVAL_MAX;
+    const int reduced = depth - (NMP_R_BASE + depth / NMP_R_DEPTH_DIV + eval_term);
+    return reduced > 0 ? reduced : 0;
 }
 
 /**
  * Reverse futility (static null move) pruning: at low depth, a static eval this far above beta
- * is very unlikely to drop below it, so the node fails high without a search. Not in check, PV
- * nodes, at the root or near mate scores.
+ * is very unlikely to drop below it, so the node fails high without a search. The margin is
+ * RFP_IMPROVING smaller when the position is improving, a rising eval is likelier to stay above
+ * beta. Not in check, PV nodes, at the root or near mate scores.
  */
-bool can_reverse_futility_prune(int depth, int static_eval, int beta, bool in_check, bool is_pv_node, int ply) {
+bool can_reverse_futility_prune(int depth, int static_eval, int beta, bool in_check, bool is_pv_node, int ply,
+                                bool improving) {
     return ply > 0 && !in_check && !is_pv_node && depth <= RFP_MAX_DEPTH && !is_mate_score(beta) &&
-           static_eval - RFP_MARGIN * depth >= beta;
+           static_eval - (RFP_MARGIN * depth - (improving ? RFP_IMPROVING : 0)) >= beta;
 }
 
 /**
- * Futility pruning: at low depth, a static eval this far below alpha means a quiet move is very
- * unlikely to raise it, so quiet moves (after the first) are skipped. Captures, promotions and
- * checks are still searched.
+ * Futility pruning: at low depth, a static eval this far below alpha (base + margin * depth) means
+ * a quiet move is very unlikely to raise it, so quiet moves (after the first) are skipped.
+ * Captures, promotions and checks are still searched.
  */
 bool is_futile(int depth, int static_eval, int alpha, bool in_check, bool is_pv_node) {
     return !in_check && !is_pv_node && depth <= FUTILITY_MAX_DEPTH && !is_mate_score(alpha) &&
-           static_eval + FUTILITY_MARGIN * depth <= alpha;
+           static_eval + FUTILITY_BASE + FUTILITY_MARGIN * depth <= alpha;
 }
 
 /**
- * Late move pruning: at low depth, once base + depth^2 moves have been searched, the remaining
- * quiet moves (sorted last, after the killers and the best history) are very unlikely to raise
- * alpha, so they're skipped. Captures and promotions are still searched.
+ * Late move pruning: at low depth, once base + depth^2 moves have been searched (LMP_NOT_IMPROVING_PCT
+ * of them, rounded up, when the position isn't improving), the remaining quiet moves (sorted last,
+ * after the killers and the best history) are very unlikely to raise alpha, so they're skipped.
+ * Captures and promotions are still searched.
  */
-bool can_late_move_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node) {
-    return !in_check && !is_pv_node && depth <= LMP_MAX_DEPTH && !is_mate_score(alpha) &&
-           moves_searched >= LMP_BASE + depth * depth;
+bool can_late_move_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node, bool improving) {
+    if (in_check || is_pv_node || depth > LMP_MAX_DEPTH || is_mate_score(alpha)) return false;
+    int limit = LMP_BASE + depth * depth;
+    if (!improving) limit = (limit * LMP_NOT_IMPROVING_PCT + 99) / 100;
+    return moves_searched >= limit;
 }
 
 /**
@@ -446,12 +475,13 @@ int see_prune_threshold(int depth, bool is_quiet) {
 }
 
 /**
- * Whether a move is reduced: quiet moves late in the list at enough depth. Checks, moves made in
- * check and the killers are searched at full depth.
+ * Whether a move is reduced: quiet moves (not the killers) and losing captures (SEE < 0) late in
+ * the list at enough depth. Checks and moves made in check are searched at full depth.
  */
-bool can_reduce(int depth, int moves_searched, bool is_quiet, bool gives_check, bool in_check, bool is_killer) {
-    return moves_searched >= LMR_MIN_MOVES && depth >= LMR_MIN_DEPTH && is_quiet && !gives_check && !in_check &&
-           !is_killer;
+bool can_reduce(int depth, int moves_searched, bool is_quiet, bool gives_check, bool in_check, bool is_killer,
+                bool is_bad_capture) {
+    return moves_searched >= LMR_MIN_MOVES && depth >= LMR_MIN_DEPTH && !gives_check && !in_check &&
+           ((is_quiet && !is_killer) || is_bad_capture);
 }
 
 /**
@@ -562,25 +592,59 @@ static inline_always void search_pop_move(board_t* board, search_state_t* search
     nnue_pop(&search_state->nnue);
 }
 
+/**
+ * The static eval refined by the node's TT entry: its score replaces the eval when the bound says
+ * the true score is on that side of it (an exact score, a lower bound above the eval or an upper
+ * bound below it). Not mate scores, which aren't an estimate of the position.
+ */
+int adjusted_eval(int eval, const tt_info_t* tt) {
+    if (tt == NULL || tt->type == tt_none || is_mate_score(tt->score)) return eval;
+    if (tt->type == tt_exact || (tt->type == tt_beta && tt->score > eval) || (tt->type == tt_alpha && tt->score < eval))
+        return tt->score;
+    return eval;
+}
+
 /* The qsearch node itself, already counted: by quiescence, or by negamax at depth 0. */
 static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* search_state, limits_t* limits) {
     if (search_state->ply == 0) nnue_reset(&search_state->nnue);
     if (search_state->ply > MAX_PLY-1) return evaluation(board, &search_state->nnue);
 
-    /* In check there's no standing pat (the position may be lost), every evasion is searched. */
+    /* The TT, saved at depth 0 by qsearch (and depth 0 negamax nodes, which are qsearch). Outside
+     * the PV any bound that fits the window cuts off, as in negamax. */
+    const bool is_pv_node = beta - alpha > 1;
+    tt_info_t tt;
+    const bool tt_hit = tt_read(board->hash, search_state->ply, &tt);
+    if (!is_pv_node && tt_hit) {
+        const int cutoff = tt_cutoff(&tt, 0, alpha, beta);
+        if (cutoff != TT_NOT_FOUND) return cutoff;
+    }
+
+    /* In check there's no standing pat (the position may be lost), every evasion is searched.
+     * Otherwise the stand pat is the static eval, from the TT if it's there and refined by the
+     * TT score's bound (adjusted_eval); 'raw_eval' is the network's, the one saved. */
     const bool in_check = side_in_check(board);
-    const int eval = in_check ? -INF : evaluation(board, &search_state->nnue);
-    if (eval >= beta) return beta;
+    int raw_eval = TT_EVAL_NONE;
+    int eval = -INF;
+    if (!in_check) {
+        raw_eval = tt_hit && tt.eval != TT_EVAL_NONE ? tt.eval : evaluation(board, &search_state->nnue);
+        eval = adjusted_eval(raw_eval, tt_hit ? &tt : NULL);
+    }
+    if (eval >= beta) {
+        tt_save(board->hash, tt_beta, 0, search_state->ply, eval, 0, raw_eval);
+        return beta;
+    }
+    const int alpha_orig = alpha;
     if (eval > alpha) alpha = eval;
 
     move_buffer_t buffer;
     int scores[MOVE_BUFFER_SIZE];
     if (in_check) generate_moves(board, &buffer);
     else generate_captures(board, &buffer);
-    score_moves(&buffer, scores, 0, board, search_state);
+    score_moves(&buffer, scores, tt_hit ? tt.move : 0, board, search_state);
 
     /* Out of check, captures and queen promotions only. */
     bool has_legal_moves = false;
+    move_t best_move = 0;
     for (int i=0; i< buffer.index; i++) {
         move_t mv = pick_next_move(&buffer, scores, i);
 
@@ -604,7 +668,11 @@ static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* 
 
             if (score > alpha) {
                 alpha = score;
-                if (score >= beta) return beta;
+                best_move = mv;
+                if (score >= beta) {
+                    tt_save(board->hash, tt_beta, 0, search_state->ply, score, mv, raw_eval);
+                    return beta;
+                }
             }
         } else {
             --search_state->ply;
@@ -612,6 +680,8 @@ static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* 
         }
     }
     if (in_check && !has_legal_moves) return -MATE_VALUE + search_state->ply;
+    /* Fail-hard as in negamax: an exact score if something (the stand pat or a move) raised alpha. */
+    tt_save(board->hash, alpha > alpha_orig ? tt_exact : tt_alpha, 0, search_state->ply, alpha, best_move, raw_eval);
     return alpha;
 }
 
@@ -664,9 +734,13 @@ int negamax(int alpha,
     /* Probed with the extended depth, the same depth the node is saved with. */
     bool is_pv_node = beta - alpha > 1;
     const int alpha_orig = alpha;
-    move_t tt_move;
-    int cached_eval = tt_probe(board->hash, depth, search_state->ply, alpha, beta, &tt_move);
-    if (search_state->ply && !is_pv_node && !excluded_move && cached_eval != TT_NOT_FOUND) return cached_eval;
+    tt_info_t tt;
+    const bool tt_hit = tt_read(board->hash, search_state->ply, &tt);
+    move_t tt_move = tt_hit ? tt.move : 0;
+    if (search_state->ply && !is_pv_node && !excluded_move && tt_hit) {
+        const int cutoff = tt_cutoff(&tt, depth, alpha, beta);
+        if (cutoff != TT_NOT_FOUND) return cutoff;
+    }
 
     if (depth == 0) {
         return quiescence_node(alpha, beta, board, search_state, limits);
@@ -674,14 +748,31 @@ int negamax(int alpha,
 
     depth -= iir_reduction(depth, tt_move);
 
-    /* Not meaningful in check, every move is searched there anyway. */
-    const int static_eval = in_check ? -INF : evaluation(board, &search_state->nnue);
+    /* Not meaningful in check, every move is searched there anyway. The network's eval is taken
+     * from the TT when it's there ('raw_eval', what's saved), then replaced by the TT score when
+     * its bound says the true score is on that side of it (adjusted_eval). */
+    int raw_eval = TT_EVAL_NONE;
+    if (!in_check) {
+        raw_eval = tt_hit && tt.eval != TT_EVAL_NONE ? tt.eval : evaluation(board, &search_state->nnue);
+        /* A new position's eval is saved straight away, nodes pruned before their search keep it. */
+        if (!tt_hit && !excluded_move) tt_save(board->hash, tt_none, 0, search_state->ply, 0, 0, raw_eval);
+    }
+    const int static_eval = in_check ? -INF : adjusted_eval(raw_eval, tt_hit ? &tt : NULL);
 
-    if (!excluded_move && can_reverse_futility_prune(depth, static_eval, beta, in_check, is_pv_node, search_state->ply))
+    /* Improving: the network's eval against this side's previous node (is_improving). Every node
+     * two or four plies up is an ancestor, so its entry was written before this node was reached. */
+    const int ply = search_state->ply;
+    search_state->static_evals[ply] = in_check ? -INF : raw_eval;
+    const bool improving = !in_check && is_improving(raw_eval, ply >= 2 ? search_state->static_evals[ply - 2] : -INF,
+                                                     ply >= 4 ? search_state->static_evals[ply - 4] : -INF);
+
+    if (!excluded_move &&
+        can_reverse_futility_prune(depth, static_eval, beta, in_check, is_pv_node, search_state->ply, improving))
         return beta;
 
-    /* Null move pruning. */
+    /* Null move pruning, searched at null_move_depth. */
     if (!excluded_move && can_null_move(board, search_state, depth, beta, static_eval, in_check, is_pv_node)) {
+        const int null_depth = null_move_depth(depth, static_eval, beta);
         make_null_move(board);
         search_state->repetition_check[++search_state->repetition_index] = board->hash;
         /* Repetitions can't span the null move, it isn't a real move. */
@@ -689,14 +780,25 @@ int negamax(int alpha,
         search_state->null_move_index = search_state->repetition_index;
         search_state->follow_pv = false;
         ++search_state->ply;
-        int score = -negamax(-beta, -beta + 1, depth - 3, board, search_state, limits);
+        int score = -negamax(-beta, -beta + 1, null_depth, board, search_state, limits);
         --search_state->ply;
         search_state->null_move_index = null_move_index;
         --search_state->repetition_index;
         pop_null_move(board);
         /* A stopped null search returns -STOPPED_SEARCH, which would look like a cutoff. */
         if (limits->stop_search_flag) return STOPPED_SEARCH;
-        if (score >= beta) return beta;
+        if (score >= beta) {
+            /* Fail-hard: beta, never the null search's score (a mate found after passing isn't real). */
+            if (depth < NMP_VERIFY_DEPTH || search_state->nmp_min_ply != 0) return beta;
+            /* Deep, the cutoff is verified by searching this node normally at the null search's depth,
+             * with null moves off for the first three quarters of it, so a zugzwang (where passing
+             * would be best) can't cut off a large subtree. */
+            search_state->nmp_min_ply = (uint8_t) (ply + 3 * null_depth / 4);
+            const int verified = negamax(beta - 1, beta, null_depth, board, search_state, limits);
+            search_state->nmp_min_ply = 0;
+            if (limits->stop_search_flag) return STOPPED_SEARCH;
+            if (verified >= beta) return beta;
+        }
     }
 
     /**
@@ -771,7 +873,9 @@ int negamax(int alpha,
 
         /* Late move pruning, before making the move: a legal move has been searched already, so
          * whether this one is legal doesn't matter. */
-        if (is_quiet && can_late_move_prune(depth, num_moves_searched, alpha, in_check, is_pv_node)) continue;
+        if (is_quiet && can_late_move_prune(depth, num_moves_searched, alpha, in_check, is_pv_node, improving)) continue;
+        /* A losing capture (SEE < 0, ordered below the quiet moves), not the TT move: reduced like a quiet move. */
+        const bool is_bad_capture = is_capture && mv != tt_move && scores[i] < 0;
 
         /* SEE pruning, also before making the move. Promotions are always searched. */
         if (!get_promoted_piece(mv) && can_see_prune(depth, num_moves_searched, alpha, in_check, is_pv_node) &&
@@ -784,7 +888,7 @@ int negamax(int alpha,
         has_legal_moves = true;
 
         /* Only needed when futility or LMR might apply, it costs an attack test. */
-        const bool may_prune = is_quiet && num_moves_searched > 0 &&
+        const bool may_prune = (is_quiet || is_bad_capture) && num_moves_searched > 0 &&
                                (futile || (num_moves_searched >= LMR_MIN_MOVES && depth >= LMR_MIN_DEPTH && !in_check));
         const bool gives_check = may_prune && side_in_check(board);
 
@@ -812,9 +916,11 @@ int negamax(int alpha,
         /* Late move reduction. Killers are for this ply, checked before ++ply. */
         const bool is_killer = mv == search_state->killer_moves[0][search_state->ply] ||
                                mv == search_state->killer_moves[1][search_state->ply];
-        const int reduction = can_reduce(depth, num_moves_searched, is_quiet, gives_check, in_check, is_killer) ?
-                              lmr_reduction(depth, num_moves_searched, is_pv_node,
-                                            search_state->history_moves[get_piece_moved(mv)][get_target_square(mv)]) : 0;
+        /* Quiet moves adjusted by their history, losing captures by the table alone. */
+        const int reduction =
+            can_reduce(depth, num_moves_searched, is_quiet, gives_check, in_check, is_killer, is_bad_capture) ?
+            lmr_reduction(depth, num_moves_searched, is_pv_node,
+                          is_quiet ? search_state->history_moves[get_piece_moved(mv)][get_target_square(mv)] : 0) : 0;
         /* The TT move a ply deeper if it's singular, shallower if it isn't but beat beta (see above). */
         const int new_depth = depth - 1 + (mv == tt_move ? extension : 0);
 
@@ -874,7 +980,7 @@ int negamax(int alpha,
             if (score >= beta) {
                 count_cutoff(search_state, num_moves_searched, is_quiet, num_quiets_searched, is_capture, tt_move != 0,
                              mv == tt_move);
-                if (!excluded_move) tt_save(board->hash, tt_beta, depth, search_state->ply, score, mv);
+                if (!excluded_move) tt_save(board->hash, tt_beta, depth, search_state->ply, score, mv, raw_eval);
                 if (!is_capture) store_killer(search_state, mv);
                 if (is_quiet) {
                     for (int j = 0; j < num_quiets_searched; j++) penalise_history(search_state, quiets_searched[j], depth);
@@ -910,9 +1016,9 @@ int negamax(int alpha,
 
     /* Fail-hard, alpha only moves if a move scored inside the window. */
     if (alpha > alpha_orig) {
-        tt_save(board->hash, tt_exact, depth, search_state->ply, alpha, best_move);
+        tt_save(board->hash, tt_exact, depth, search_state->ply, alpha, best_move, raw_eval);
     } else {
-        tt_save(board->hash, tt_alpha, depth, search_state->ply, alpha, 0);
+        tt_save(board->hash, tt_alpha, depth, search_state->ply, alpha, 0, raw_eval);
     }
 
     return alpha;
@@ -1086,6 +1192,7 @@ static int start_helpers(board_t* board, search_state_t* search_state, limits_t*
                (search_state->repetition_index + 1) * sizeof(search_state->repetition_check[0]));
         state->repetition_index = search_state->repetition_index;
         state->null_move_index = search_state->null_move_index;
+        state->nmp_min_ply = 0;
         state->nodes = 0;
         state->pv_nodes = 0;
         state->ply = 0;
