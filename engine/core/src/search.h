@@ -89,6 +89,11 @@ bool can_see_prune(int depth, int moves_searched, int alpha, bool in_check, bool
 int see_prune_threshold(int depth, bool is_quiet);
 bool can_reduce(int depth, int moves_searched, bool is_quiet, bool gives_check, bool in_check, bool is_killer,
                 bool is_bad_capture);
+bool can_history_prune(int depth, int history, int moves_searched, int alpha, bool in_check, bool is_pv_node,
+                       bool is_killer);
+/* A quiet move's history at the node: its history plus its continuation history after the moves 1, 2
+ * and 4 plies back (search_state->path_moves, those there are). */
+int quiet_history(const search_state_t* search_state, move_t mv);
 int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history);
 int iir_reduction(int depth, move_t tt_move);
 bool can_singular_extend(int depth, int ply, int root_depth, move_t tt_move, int tt_depth, tt_entry_type tt_type,

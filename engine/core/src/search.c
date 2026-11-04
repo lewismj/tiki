@@ -8,11 +8,40 @@
 #include "transposition.h"
 #include "see.h"
 
+cont_history_t main_cont_history;
+
+/* A move's key in the continuation history (cont_history_t). */
+static inline_always int cont_key(move_t mv) {
+    return get_piece_moved(mv) * 64 + get_target_square(mv);
+}
+
+/* The move made 'back' plies before the node at 'ply' (0 if none: before the root, or a null move). */
+static inline_always move_t move_back(const search_state_t* search_state, int ply, int back) {
+    return ply >= back ? search_state->path_moves[ply - back] : 0;
+}
+
+/**
+ * A quiet move's history at this node: its history plus its continuation history after the moves
+ * 1, 2 and 4 plies back (those there are), within +-(CONT_PLIES + 1) * HISTORY_MAX. A sum, not a
+ * mean: with no continuation entries yet it's the history alone, so LMR (lmr_reduction) and history
+ * pruning see the same values they did before continuation history.
+ */
+int quiet_history(const search_state_t* search_state, move_t mv) {
+    const int key = cont_key(mv);
+    int sum = search_state->history_moves[get_piece_moved(mv)][get_target_square(mv)];
+    for (int i = 0; i < CONT_PLIES; i++) {
+        const move_t previous = move_back(search_state, search_state->ply, cont_ply_back(i));
+        if (previous) sum += (*search_state->cont_history)[i][cont_key(previous)][key];
+    }
+    return sum;
+}
+
 /**
  * Move ordering score, highest first. Each category has its own band (search_constants.h): the TT
  * move, the PV move (while following the previous iteration's PV), winning and equal captures by
  * MVV-LVA plus their capture history, queen promotions, the two killers, quiet moves (and
- * underpromotions) by history, then losing captures (also with their capture history).
+ * underpromotions) by quiet_history (scaled into the history band), then losing captures (also with
+ * their capture history).
  */
 int score_move(move_t move, move_t tt_move, board_t* board, search_state_t* search_state) {
     if (tt_move && move == tt_move) return TT_MOVE_SCORE;
@@ -50,7 +79,7 @@ int score_move(move_t move, move_t tt_move, board_t* board, search_state_t* sear
         if (promoted == Q || promoted == q) return QUEEN_PROMOTION_SCORE;
         if (search_state->killer_moves[0][search_state->ply] == move) return KILLER_1_SCORE;
         else if (search_state->killer_moves[1][search_state->ply] == move) return KILLER_2_SCORE;
-        return search_state->history_moves[get_piece_moved(move)][get_target_square(move)];
+        return quiet_history(search_state, move) / QUIET_ORDER_DIVISOR;
     }
 }
 
@@ -65,10 +94,18 @@ static inline_always int history_gravity(int h, int bonus) {
     return h > HISTORY_MAX ? HISTORY_MAX : (h < -HISTORY_MAX ? -HISTORY_MAX : h);
 }
 
-/* Adds a signed bonus to the move's history. */
+/* Adds a signed bonus to the move's history, and to its continuation history after the moves 1, 2
+ * and 4 plies back (those there are), at the node's ply. */
 static inline_always void add_history_bonus(search_state_t* search_state, move_t mv, int bonus) {
     int32_t* h = &search_state->history_moves[get_piece_moved(mv)][get_target_square(mv)];
     *h = history_gravity(*h, bonus);
+    const int key = cont_key(mv);
+    for (int i = 0; i < CONT_PLIES; i++) {
+        const move_t previous = move_back(search_state, search_state->ply, cont_ply_back(i));
+        if (!previous) continue;
+        int16_t* c = &(*search_state->cont_history)[i][cont_key(previous)][key];
+        *c = (int16_t) history_gravity(*c, bonus);
+    }
 }
 
 /* The type (0 pawn .. 5 king) of the piece a capture takes, on the board it's made from. */
@@ -485,12 +522,25 @@ bool can_reduce(int depth, int moves_searched, bool is_quiet, bool gives_check, 
 }
 
 /**
+ * History pruning: at low depth, a quiet move whose history (quiet_history: the history plus the
+ * continuation history) is below -HIST_PRUNE_MARGIN * depth has rarely been good here, so it's
+ * skipped. Not the first move, the killers, in check, PV nodes or near mate scores; checks are
+ * excluded by the caller (it's decided after the move is made).
+ */
+bool can_history_prune(int depth, int history, int moves_searched, int alpha, bool in_check, bool is_pv_node,
+                       bool is_killer) {
+    return !in_check && !is_pv_node && !is_killer && moves_searched > 0 && depth <= HIST_PRUNE_MAX_DEPTH &&
+           !is_mate_score(alpha) && history < -HIST_PRUNE_MARGIN * depth;
+}
+
+/**
  * Late move reduction for a quiet move, from the log table, one ply less in PV nodes, and adjusted
- * by the move's history: history / LMR_HISTORY_DIVISOR plies less for a move that has often been
- * good, more for one that hasn't. History averages about 900 in magnitude (bench), so a move well
- * above or below average moves a ply, the strongest (+-HISTORY_MAX) up to 7. Clamped so the reduced
- * search still has at least one ply (depth - 1 - r >= 1). Against the same search without it (both
- * with persistent history): SPRT +15.0 +- 7.4 after 3388 games, H1 accepted [0, 5].
+ * by the move's history (quiet_history, the history plus the continuation history):
+ * history / LMR_HISTORY_DIVISOR plies less for a move that has often been good, more for one that
+ * hasn't. The history alone averages about 900 in magnitude (bench), so a move well above or below
+ * average moves a ply. Clamped so the reduced search still has at least one ply (depth - 1 - r >= 1).
+ * With the history alone, against the same search without it (both with persistent history): SPRT
+ * +15.0 +- 7.4 after 3388 games, H1 accepted [0, 5].
  */
 int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history) {
     int r = lmr_table[depth < LMR_TABLE_SIZE ? depth : LMR_TABLE_SIZE - 1]
@@ -773,6 +823,7 @@ int negamax(int alpha,
     /* Null move pruning, searched at null_move_depth. */
     if (!excluded_move && can_null_move(board, search_state, depth, beta, static_eval, in_check, is_pv_node)) {
         const int null_depth = null_move_depth(depth, static_eval, beta);
+        search_state->path_moves[search_state->ply] = 0;
         make_null_move(board);
         search_state->repetition_check[++search_state->repetition_index] = board->hash;
         /* Repetitions can't span the null move, it isn't a real move. */
@@ -876,6 +927,13 @@ int negamax(int alpha,
         if (is_quiet && can_late_move_prune(depth, num_moves_searched, alpha, in_check, is_pv_node, improving)) continue;
         /* A losing capture (SEE < 0, ordered below the quiet moves), not the TT move: reduced like a quiet move. */
         const bool is_bad_capture = is_capture && mv != tt_move && scores[i] < 0;
+        /* Killers are for this ply, checked before ++ply. A quiet move's history is read at this node
+         * (history pruning and LMR). */
+        const bool is_killer = mv == search_state->killer_moves[0][search_state->ply] ||
+                               mv == search_state->killer_moves[1][search_state->ply];
+        const int history = is_quiet ? quiet_history(search_state, mv) : 0;
+        const bool history_prunable = is_quiet &&
+            can_history_prune(depth, history, num_moves_searched, alpha, in_check, is_pv_node, is_killer);
 
         /* SEE pruning, also before making the move. Promotions are always searched. */
         if (!get_promoted_piece(mv) && can_see_prune(depth, num_moves_searched, alpha, in_check, is_pv_node) &&
@@ -887,13 +945,15 @@ int negamax(int alpha,
         }
         has_legal_moves = true;
 
-        /* Only needed when futility or LMR might apply, it costs an attack test. */
+        /* Only needed when futility, history pruning or LMR might apply, it costs an attack test. */
         const bool may_prune = (is_quiet || is_bad_capture) && num_moves_searched > 0 &&
-                               (futile || (num_moves_searched >= LMR_MIN_MOVES && depth >= LMR_MIN_DEPTH && !in_check));
+                               (futile || history_prunable ||
+                                (num_moves_searched >= LMR_MIN_MOVES && depth >= LMR_MIN_DEPTH && !in_check));
         const bool gives_check = may_prune && side_in_check(board);
 
-        /* Futility pruning, quiet moves that don't give check. The first move is always searched. */
-        if (futile && num_moves_searched > 0 && is_quiet && !gives_check) {
+        /* Futility and history pruning, quiet moves that don't give check. The first move is always
+         * searched. */
+        if (((futile && num_moves_searched > 0 && is_quiet) || history_prunable) && !gives_check) {
             search_pop_move(board, search_state);
             continue;
         }
@@ -913,19 +973,16 @@ int negamax(int alpha,
         /* At the root, the nodes this move takes, for time management (tm_scale). */
         const uint64_t nodes_before_move = search_state->nodes;
 
-        /* Late move reduction. Killers are for this ply, checked before ++ply. */
-        const bool is_killer = mv == search_state->killer_moves[0][search_state->ply] ||
-                               mv == search_state->killer_moves[1][search_state->ply];
-        /* Quiet moves adjusted by their history, losing captures by the table alone. */
+        /* Late move reduction: quiet moves adjusted by their history, losing captures by the table alone. */
         const int reduction =
             can_reduce(depth, num_moves_searched, is_quiet, gives_check, in_check, is_killer, is_bad_capture) ?
-            lmr_reduction(depth, num_moves_searched, is_pv_node,
-                          is_quiet ? search_state->history_moves[get_piece_moved(mv)][get_target_square(mv)] : 0) : 0;
+            lmr_reduction(depth, num_moves_searched, is_pv_node, history) : 0;
         /* The TT move a ply deeper if it's singular, shallower if it isn't but beat beta (see above). */
         const int new_depth = depth - 1 + (mv == tt_move ? extension : 0);
 
         /* Set before every search of the child, each one changes it further down the tree. */
         const bool child_on_pv = pv_move != 0 && mv == pv_move;
+        search_state->path_moves[search_state->ply] = mv;
         ++search_state->ply;
         search_state->repetition_check[++search_state->repetition_index] = board->hash;
 
@@ -1101,7 +1158,10 @@ static search_helper_t* allocate_helpers(int count) {
 #endif
 }
 
-static void free_helpers(search_helper_t* helpers) {
+/* Frees 'count' helpers and their continuation history tables. */
+static void free_helpers(search_helper_t* helpers, int count) {
+    if (helpers == NULL) return;
+    for (int i = 0; i < count; i++) free(helpers[i].search_state.cont_history);
 #if defined(_WIN32)
     _aligned_free(helpers);
 #else
@@ -1172,11 +1232,19 @@ static int start_helpers(board_t* board, search_state_t* search_state, limits_t*
      * set starts afresh. */
     if (count > helpers_allocated) {
         search_helper_t* grown = allocate_helpers(count);
-        if (grown == NULL) {
+        /* Each helper has its own continuation history (cont_history_t, 3.5 MB). */
+        int tables = 0;
+        while (grown != NULL && tables < count) {
+            cont_history_t* table = malloc(sizeof(cont_history_t));
+            if (table == NULL) break;
+            init_search_state_with(&grown[tables].search_state, table);
+            tables++;
+        }
+        if (grown == NULL || tables < count) {
+            if (grown != NULL) free_helpers(grown, tables);
             count = helpers_allocated;
         } else {
-            for (int i = 0; i < count; i++) init_search_state(&grown[i].search_state);
-            free_helpers(helpers_kept);
+            free_helpers(helpers_kept, helpers_allocated);
             helpers_kept = grown;
             helpers_allocated = count;
         }
@@ -1202,6 +1270,7 @@ static int start_helpers(board_t* board, search_state_t* search_state, limits_t*
         state->thread_id = started + 1;
         memcpy(state->history_moves, search_state->history_moves, sizeof(state->history_moves));
         memcpy(state->capture_history, search_state->capture_history, sizeof(state->capture_history));
+        memcpy(*state->cont_history, *search_state->cont_history, sizeof(cont_history_t));
         atomic_init(&state->shared_nodes, 0);
         helper->limits = limits;
         if (pthread_create(&helper->thread, NULL, helper_search, helper) != 0) break;

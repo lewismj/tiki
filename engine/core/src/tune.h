@@ -54,7 +54,10 @@ enum {
     NMP_R_DEPTH_DIV_DEFAULT = NMP_R_DEPTH_DIV,
     NMP_R_EVAL_DIV_DEFAULT = NMP_R_EVAL_DIV,
     NMP_R_EVAL_MAX_DEFAULT = NMP_R_EVAL_MAX,
-    NMP_VERIFY_DEPTH_DEFAULT = NMP_VERIFY_DEPTH
+    NMP_VERIFY_DEPTH_DEFAULT = NMP_VERIFY_DEPTH,
+    LMR_HISTORY_DIVISOR_DEFAULT = LMR_HISTORY_DIVISOR,
+    HIST_PRUNE_MAX_DEPTH_DEFAULT = HIST_PRUNE_MAX_DEPTH,
+    HIST_PRUNE_MARGIN_DEFAULT = HIST_PRUNE_MARGIN
 };
 
 extern int tune_rfp_margin;
@@ -74,6 +77,9 @@ extern int tune_nmp_r_depth_div;
 extern int tune_nmp_r_eval_div;
 extern int tune_nmp_r_eval_max;
 extern int tune_nmp_verify_depth;
+extern int tune_lmr_history_divisor;
+extern int tune_hist_prune_max_depth;
+extern int tune_hist_prune_margin;
 
 #undef RFP_MARGIN
 #undef RFP_MAX_DEPTH
@@ -92,6 +98,9 @@ extern int tune_nmp_verify_depth;
 #undef NMP_R_EVAL_DIV
 #undef NMP_R_EVAL_MAX
 #undef NMP_VERIFY_DEPTH
+#undef LMR_HISTORY_DIVISOR
+#undef HIST_PRUNE_MAX_DEPTH
+#undef HIST_PRUNE_MARGIN
 #define RFP_MARGIN tune_rfp_margin
 #define RFP_MAX_DEPTH tune_rfp_max_depth
 #define FUTILITY_MARGIN tune_futility_margin
@@ -109,6 +118,9 @@ extern int tune_nmp_verify_depth;
 #define NMP_R_EVAL_DIV tune_nmp_r_eval_div
 #define NMP_R_EVAL_MAX tune_nmp_r_eval_max
 #define NMP_VERIFY_DEPTH tune_nmp_verify_depth
+#define LMR_HISTORY_DIVISOR tune_lmr_history_divisor
+#define HIST_PRUNE_MAX_DEPTH tune_hist_prune_max_depth
+#define HIST_PRUNE_MARGIN tune_hist_prune_margin
 #endif
 
 #endif

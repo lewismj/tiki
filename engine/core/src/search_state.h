@@ -78,6 +78,25 @@ static_assert(sizeof(search_stats_t) % sizeof(uint64_t) == 0, "search_stats_t ho
 #endif
 
 
+/**
+ * Continuation history: how good a quiet move has been as a follow-up to the move made 1, 2 and 4
+ * plies before it (the opponent's last move, our previous one, our one before that),
+ * [ply back index][that move's key][this move's key], a key being piece * 64 + target square (piece
+ * with its colour). Within +-HISTORY_MAX, updated with the history's bonus and malus. Kept for the
+ * game (cleared by 'ucinewgame', not aged between moves: it's far sparser than the history, so
+ * halving it every move would keep it near zero). 3.5 MB, so it's kept outside the search state:
+ * main_cont_history for the main search, each Lazy SMP helper allocates its own.
+ */
+#define CONT_PLIES 3
+#define CONT_KEYS (12 * 64)
+static inline_always int cont_ply_back(int i) { return i == 2 ? 4 : i + 1; } /* 1, 2, 4 */
+typedef int16_t cont_history_t[CONT_PLIES][CONT_KEYS][CONT_KEYS];
+extern cont_history_t main_cont_history;
+/* quiet_history (search.c) sums the history and CONT_PLIES continuation entries: ordered by the sum /
+ * this, which keeps quiet moves inside their band (within +-HISTORY_MAX, under the killers). */
+#define QUIET_ORDER_DIVISOR (CONT_PLIES + 1)
+static_assert((CONT_PLIES + 1) * HISTORY_MAX / QUIET_ORDER_DIVISOR <= HISTORY_MAX, "quiet moves stay in their band");
+
 typedef struct align {
     /*
      * pv_table, use to store the principal variation, we use 64.64
@@ -92,6 +111,9 @@ typedef struct align {
     uint32_t excluded_moves[MAX_PLY]; /* The TT move a singular extension search leaves out at this ply (0: none). */
     int static_evals[MAX_PLY];        /* The network's eval at each ply of the search path, -INF in check (improving). */
     uint8_t nmp_min_ply;              /* No null move below this ply (0: none), during a null move verification. */
+    uint32_t path_moves[MAX_PLY];     /* The move made at each ply of the search path (0: a null move), set before */
+                                      /* its child is searched (continuation history).                             */
+    cont_history_t* cont_history;     /* See cont_history_t. */
     uint8_t pv_length[MAX_PLY];
     uint64_t nodes;
     uint64_t pv_nodes;         /* Nodes that ordered the previous iteration's PV move first (tests). */
@@ -122,6 +144,7 @@ static inline_always void clear_search_tables(search_state_t* search_state) {
     memset(search_state->killer_moves, 0, sizeof (search_state->killer_moves));
     memset(search_state->excluded_moves, 0, sizeof (search_state->excluded_moves));
     search_state->nmp_min_ply = 0;
+    memset(search_state->path_moves, 0, sizeof (search_state->path_moves));
 }
 
 /**
@@ -136,7 +159,10 @@ static inline_always void age_history(search_state_t* search_state) {
     for (size_t i = 0; i < sizeof(search_state->capture_history) / sizeof(*c); i++) c[i] /= 2;
 }
 
-static inline_always void init_search_state(search_state_t* search_state) {
+/* A new search state (as 'ucinewgame') using 'table' for its continuation history, cleared. */
+static inline_always void init_search_state_with(search_state_t* search_state, cont_history_t* table) {
+    search_state->cont_history = table;
+    memset(*table, 0, sizeof(cont_history_t));
     search_state->nodes = 0;
     search_state->pv_nodes = 0;
     search_state->best_move_nodes = 0;
@@ -156,6 +182,11 @@ static inline_always void init_search_state(search_state_t* search_state) {
     memset(search_state->capture_history, 0, sizeof (search_state->capture_history));
     memset(search_state->repetition_check, 0ULL, sizeof(search_state->repetition_check));
     nnue_stack_init(&search_state->nnue);
+}
+
+/* A new search state (as 'ucinewgame'), with the main continuation history table. */
+static inline_always void init_search_state(search_state_t* search_state) {
+    init_search_state_with(search_state, &main_cont_history);
 }
 
 /* Before each search ('go'). The game history from 'position' is kept for the repetition checks. */

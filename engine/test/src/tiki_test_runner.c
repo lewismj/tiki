@@ -136,6 +136,9 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_pv_followed_only_on_pv_path);
     RUN_TEST(test_store_killer);
     RUN_TEST(test_killers_are_not_captures);
+    RUN_TEST(test_quiet_history_sums_continuation);
+    RUN_TEST(test_continuation_history_updates_and_isnt_aged);
+    RUN_TEST(test_history_pruning_guards);
     RUN_TEST(test_can_reduce);
     RUN_TEST(test_pv_is_legal);
     RUN_TEST(test_mate_distance_scores);

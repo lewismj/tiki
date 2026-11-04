@@ -939,6 +939,109 @@ void test_killers_are_not_captures() {
     }
 }
 
+/* The continuation history entry of 'mv' after 'previous', 'back' plies before it (1, 2 or 4). */
+static int16_t* cont_entry(search_state_t* search_state, int back, move_t previous, move_t mv) {
+    const int i = back == 4 ? 2 : back - 1;
+    return &(*search_state->cont_history)[i][get_piece_moved(previous) * 64 + get_target_square(previous)]
+                                          [get_piece_moved(mv) * 64 + get_target_square(mv)];
+}
+
+void test_quiet_history_sums_continuation() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+    setup_position("4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1", &board, &search_state, &limits, 1);
+    const move_t mv = parse_move("a1a5", &board);
+    const move_t m1 = encode_move(e8, d8, k, 0, 0, 0, 0, 0, 0);  /* 1 ply back, the opponent's */
+    const move_t m2 = encode_move(h1, h3, R, 0, 0, 0, 0, 0, 0);  /* 2 plies back, ours */
+    const move_t m4 = encode_move(e1, f1, K, 0, 0, 0, 0, 0, 0);  /* 4 plies back */
+    search_state.history_moves[R][a5] = 100;
+
+    /* At the root there are no moves back: the history alone. */
+    TEST_ASSERT_EQUAL_INT(100, quiet_history(&search_state, mv));
+
+    /* Four plies in, with the moves 1, 2 and 4 plies back: the sum of all four. */
+    search_state.ply = 4;
+    search_state.path_moves[3] = m1;
+    search_state.path_moves[2] = m2;
+    search_state.path_moves[1] = encode_move(d8, e8, k, 0, 0, 0, 0, 0, 0); /* 3 plies back, not used */
+    search_state.path_moves[0] = m4;
+    *cont_entry(&search_state, 1, m1, mv) = 20;
+    *cont_entry(&search_state, 2, m2, mv) = -30;
+    *cont_entry(&search_state, 4, m4, mv) = 7;
+    TEST_ASSERT_EQUAL_INT(100 + 20 - 30 + 7, quiet_history(&search_state, mv));
+
+    /* A null move one ply back (0) has no entry: skipped. */
+    search_state.path_moves[3] = 0;
+    TEST_ASSERT_EQUAL_INT(100 - 30 + 7, quiet_history(&search_state, mv));
+
+    /* Ordered by the sum / QUIET_ORDER_DIVISOR, within the quiet band even at the extremes. */
+    search_state.path_moves[3] = m1;
+    search_state.history_moves[R][a5] = HISTORY_MAX;
+    *cont_entry(&search_state, 1, m1, mv) = HISTORY_MAX;
+    *cont_entry(&search_state, 2, m2, mv) = HISTORY_MAX;
+    *cont_entry(&search_state, 4, m4, mv) = HISTORY_MAX;
+    TEST_ASSERT_EQUAL_INT(4 * HISTORY_MAX / QUIET_ORDER_DIVISOR, score_move(mv, 0, &board, &search_state));
+    TEST_ASSERT_TRUE(score_move(mv, 0, &board, &search_state) < KILLER_2_SCORE);
+}
+
+void test_continuation_history_updates_and_isnt_aged() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+    setup_position("4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1", &board, &search_state, &limits, 1);
+    const move_t mv = parse_move("a1a5", &board);
+    const move_t m1 = encode_move(e8, d8, k, 0, 0, 0, 0, 0, 0);
+    const move_t m2 = encode_move(h1, h3, R, 0, 0, 0, 0, 0, 0);
+    const move_t m4 = encode_move(e1, f1, K, 0, 0, 0, 0, 0, 0);
+    search_state.ply = 4;
+    search_state.path_moves[3] = m1;
+    search_state.path_moves[2] = m2;
+    search_state.path_moves[0] = m4;
+
+    /* The bonus goes to the history and to each continuation entry, the same amount from 0. */
+    update_history(&search_state, mv, 5);
+    const int bonus = search_state.history_moves[R][a5];
+    TEST_ASSERT_TRUE(bonus > 0);
+    TEST_ASSERT_EQUAL_INT(bonus, *cont_entry(&search_state, 1, m1, mv));
+    TEST_ASSERT_EQUAL_INT(bonus, *cont_entry(&search_state, 2, m2, mv));
+    TEST_ASSERT_EQUAL_INT(bonus, *cont_entry(&search_state, 4, m4, mv));
+    /* The malus takes it back down. */
+    penalise_history(&search_state, mv, 5);
+    TEST_ASSERT_TRUE(*cont_entry(&search_state, 1, m1, mv) < bonus);
+
+    /* Not after a null move: no entry is written for it. */
+    const move_t other = parse_move("a1a3", &board);
+    search_state.path_moves[3] = 0;
+    update_history(&search_state, other, 5);
+    TEST_ASSERT_EQUAL_INT(0, *cont_entry(&search_state, 1, m1, other));
+    TEST_ASSERT_TRUE(*cont_entry(&search_state, 2, m2, other) > 0);
+
+    /* Before the next search the history is halved, the continuation history isn't. */
+    *cont_entry(&search_state, 1, m1, mv) = 1000;
+    search_state.history_moves[R][a5] = 1000;
+    clear_pv_table(&search_state);
+    TEST_ASSERT_EQUAL_INT(500, search_state.history_moves[R][a5]);
+    TEST_ASSERT_EQUAL_INT(1000, *cont_entry(&search_state, 1, m1, mv));
+
+    /* A new game clears it. */
+    init_search_state(&search_state);
+    TEST_ASSERT_EQUAL_INT(0, *cont_entry(&search_state, 1, m1, mv));
+}
+
+void test_history_pruning_guards() {
+    /* Below -HIST_PRUNE_MARGIN * depth at depth <= HIST_PRUNE_MAX_DEPTH: pruned. */
+    TEST_ASSERT_TRUE(can_history_prune(2, -2 * HIST_PRUNE_MARGIN - 1, 3, 0, false, false, false));
+    TEST_ASSERT_FALSE(can_history_prune(2, -2 * HIST_PRUNE_MARGIN, 3, 0, false, false, false));
+    TEST_ASSERT_FALSE(can_history_prune(HIST_PRUNE_MAX_DEPTH + 1, -1000000, 3, 0, false, false, false));
+    /* Never the first move, in check, a PV node, a killer, or near a mate score. */
+    TEST_ASSERT_FALSE(can_history_prune(2, -1000000, 0, 0, false, false, false));
+    TEST_ASSERT_FALSE(can_history_prune(2, -1000000, 3, 0, true, false, false));
+    TEST_ASSERT_FALSE(can_history_prune(2, -1000000, 3, 0, false, true, false));
+    TEST_ASSERT_FALSE(can_history_prune(2, -1000000, 3, 0, false, false, true));
+    TEST_ASSERT_FALSE(can_history_prune(2, -1000000, 3, -MATE_VALUE + 10, false, false, false));
+}
+
 void test_can_reduce() {
     /* A late quiet move at depth is reduced. */
     TEST_ASSERT_TRUE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, false, false, false));
@@ -1199,7 +1302,7 @@ void test_excluded_move_search() {
 void test_tunable_parameters() {
 #ifdef TIKI_TUNE
     /* A tuning build: the parameters are variables, set by name (any case) and kept in range. */
-    TEST_ASSERT_EQUAL_INT(17, tunable_count);
+    TEST_ASSERT_EQUAL_INT(20, tunable_count);
     const int saved = RFP_MARGIN;
     TEST_ASSERT_TRUE(set_tunable("rfp_margin", 10, 120));
     TEST_ASSERT_EQUAL_INT(120, RFP_MARGIN);

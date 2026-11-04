@@ -22,6 +22,9 @@ int tune_nmp_r_depth_div = NMP_R_DEPTH_DIV_DEFAULT;
 int tune_nmp_r_eval_div = NMP_R_EVAL_DIV_DEFAULT;
 int tune_nmp_r_eval_max = NMP_R_EVAL_MAX_DEFAULT;
 int tune_nmp_verify_depth = NMP_VERIFY_DEPTH_DEFAULT;
+int tune_lmr_history_divisor = LMR_HISTORY_DIVISOR_DEFAULT;
+int tune_hist_prune_max_depth = HIST_PRUNE_MAX_DEPTH_DEFAULT;
+int tune_hist_prune_margin = HIST_PRUNE_MARGIN_DEFAULT;
 
 /* name, variable, min, max, c_end, r_end. c_end is about a twentieth of the range, at least 0.5
  * (OpenBench's minimum for integers); r_end is OpenBench's usual 0.002. */
@@ -43,6 +46,9 @@ const tunable_t tunables[] = {
     { "NMP_R_EVAL_DIV",     &tune_nmp_r_eval_div,    100, 400, 15.0, 0.002 },
     { "NMP_R_EVAL_MAX",     &tune_nmp_r_eval_max,      1,   6,  0.5, 0.002 },
     { "NMP_VERIFY_DEPTH",   &tune_nmp_verify_depth,    8,  24,  1.0, 0.002 },
+    { "LMR_HISTORY_DIVISOR", &tune_lmr_history_divisor, 400, 4000, 150.0, 0.002 },
+    { "HIST_PRUNE_MAX_DEPTH", &tune_hist_prune_max_depth, 1, 8,  0.5, 0.002 },
+    { "HIST_PRUNE_MARGIN",  &tune_hist_prune_margin,  500, 10000, 400.0, 0.002 },
 };
 const int tunable_count = (int) (sizeof(tunables) / sizeof(tunables[0]));
 #else
