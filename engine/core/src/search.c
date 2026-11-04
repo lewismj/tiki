@@ -21,19 +21,43 @@ static inline_always move_t move_back(const search_state_t* search_state, int pl
 }
 
 /**
+ * The continuation history rows at a node: for each of the moves 1, 2 and 4 plies back, its row
+ * (indexed by a quiet move's cont_key), or cont_zero_row when there's no such move. Found once per
+ * node (node_cont_rows) rather than once per quiet move. The rows are pointers into the table, so
+ * reads see updates made after they're found. row[0] == NULL: not found yet (score_moves).
+ */
+typedef struct {
+    const int16_t* row[CONT_PLIES];
+} cont_rows_t;
+
+static const int16_t cont_zero_row[CONT_KEYS]; /* Never written, all 0. */
+
+static inline_always cont_rows_t node_cont_rows(const search_state_t* search_state) {
+    cont_rows_t rows;
+    for (int i = 0; i < CONT_PLIES; i++) {
+        const move_t previous = move_back(search_state, search_state->ply, cont_ply_back(i));
+        rows.row[i] = previous ? (*search_state->cont_history)[i][cont_key(previous)] : cont_zero_row;
+    }
+    return rows;
+}
+
+/* quiet_history with the node's rows (node_cont_rows). */
+static inline_always int quiet_history_at(const search_state_t* search_state, const cont_rows_t* rows, move_t mv) {
+    const int key = cont_key(mv);
+    int sum = search_state->history_moves[get_piece_moved(mv)][get_target_square(mv)];
+    for (int i = 0; i < CONT_PLIES; i++) sum += rows->row[i][key];
+    return sum;
+}
+
+/**
  * A quiet move's history at this node: its history plus its continuation history after the moves
  * 1, 2 and 4 plies back (those there are), within +-(CONT_PLIES + 1) * HISTORY_MAX. A sum, not a
  * mean: with no continuation entries yet it's the history alone, so LMR (lmr_reduction) and history
  * pruning see the same values they did before continuation history.
  */
 int quiet_history(const search_state_t* search_state, move_t mv) {
-    const int key = cont_key(mv);
-    int sum = search_state->history_moves[get_piece_moved(mv)][get_target_square(mv)];
-    for (int i = 0; i < CONT_PLIES; i++) {
-        const move_t previous = move_back(search_state, search_state->ply, cont_ply_back(i));
-        if (previous) sum += (*search_state->cont_history)[i][cont_key(previous)][key];
-    }
-    return sum;
+    const cont_rows_t rows = node_cont_rows(search_state);
+    return quiet_history_at(search_state, &rows, mv);
 }
 
 /**
@@ -43,7 +67,8 @@ int quiet_history(const search_state_t* search_state, move_t mv) {
  * underpromotions) by quiet_history (scaled into the history band), then losing captures (also with
  * their capture history).
  */
-int score_move(move_t move, move_t tt_move, board_t* board, search_state_t* search_state) {
+static inline_always int score_move_with(move_t move, move_t tt_move, board_t* board, search_state_t* search_state,
+                                         cont_rows_t* rows) {
     if (tt_move && move == tt_move) return TT_MOVE_SCORE;
 
     if (search_state->score_pv && search_state->pv_table[0][search_state->ply] == move) {
@@ -79,8 +104,15 @@ int score_move(move_t move, move_t tt_move, board_t* board, search_state_t* sear
         if (promoted == Q || promoted == q) return QUEEN_PROMOTION_SCORE;
         if (search_state->killer_moves[0][search_state->ply] == move) return KILLER_1_SCORE;
         else if (search_state->killer_moves[1][search_state->ply] == move) return KILLER_2_SCORE;
-        return quiet_history(search_state, move) / QUIET_ORDER_DIVISOR;
+        /* The rows are found at the node's first quiet move (none in most qsearch nodes). */
+        if (!rows->row[0]) *rows = node_cont_rows(search_state);
+        return quiet_history_at(search_state, rows, move) / QUIET_ORDER_DIVISOR;
     }
+}
+
+int score_move(move_t move, move_t tt_move, board_t* board, search_state_t* search_state) {
+    cont_rows_t rows = { .row = { NULL } };
+    return score_move_with(move, tt_move, board, search_state, &rows);
 }
 
 
@@ -265,8 +297,9 @@ void store_killer(search_state_t* search_state, move_t mv) {
  * mustn't carry over to whichever later node has a move matching the PV at its ply.
  */
 void score_moves(const move_buffer_t* buffer, int* scores, move_t tt_move, board_t* board, search_state_t* search_state) {
+    cont_rows_t rows = { .row = { NULL } };
     for (int i = 0; i < buffer->index; i++) {
-        scores[i] = score_move(buffer->moves[i], tt_move, board, search_state);
+        scores[i] = score_move_with(buffer->moves[i], tt_move, board, search_state, &rows);
     }
     search_state->score_pv = false;
 }
@@ -916,6 +949,8 @@ int negamax(int alpha,
     move_t captures_searched[MAX_CAPTURES_PENALISED];
     int num_captures_searched = 0;
     int quiets_tried = 0; /* Quiet moves searched (not pruned), for the statistics. */
+    /* This node's continuation history rows: the moves before it don't change while its moves are searched. */
+    const cont_rows_t cont_rows = node_cont_rows(search_state);
     for (int i=0; i < buffer.index; i++) {
         move_t mv = pick_next_move(&buffer, scores, i);
         if (mv == excluded_move) continue;
@@ -931,7 +966,7 @@ int negamax(int alpha,
          * (history pruning and LMR). */
         const bool is_killer = mv == search_state->killer_moves[0][search_state->ply] ||
                                mv == search_state->killer_moves[1][search_state->ply];
-        const int history = is_quiet ? quiet_history(search_state, mv) : 0;
+        const int history = is_quiet ? quiet_history_at(search_state, &cont_rows, mv) : 0;
         const bool history_prunable = is_quiet &&
             can_history_prune(depth, history, num_moves_searched, alpha, in_check, is_pv_node, is_killer);
 
