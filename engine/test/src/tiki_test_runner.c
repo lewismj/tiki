@@ -74,6 +74,8 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_slider_attacks_match_reference);
     RUN_TEST(test_generate_captures_matches_filtered_moves);
     RUN_TEST(test_generate_captures_promotions);
+    RUN_TEST(test_staged_generation_matches_all_moves);
+    RUN_TEST(test_move_is_pseudo_legal);
     RUN_TEST(test_see);
     RUN_TEST(test_see_ge_matches_see);
     RUN_TEST(test_board_to_fen_round_trip);

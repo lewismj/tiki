@@ -858,6 +858,232 @@ int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state
 
 
 /**
+ * The move picker: negamax's moves, best first, generated in stages so that a node that cuts early
+ * doesn't generate or score the rest. The order is score_move's, by band:
+ *   1. the TT move, if it's possible here (move_is_pseudo_legal: a TT entry can be another position's);
+ *   2. winning and equal captures and queen promotions (generate_noisy), by their scores;
+ *   3. the two killers, if they're possible here and quiet (not a capture or queen promotion);
+ *   4. the other quiet moves (generate_quiets), by their history, generated only now;
+ *   5. the losing captures (SEE < 0), left over from 2.
+ * The bands don't overlap (search_constants.h), so it's the order of one sorted list, but for ties
+ * within a band. Each move is returned once: the TT move and killers are skipped where they come up
+ * again. In check and on the previous iteration's PV (or built with TIKI_SEARCH_STATS) everything is
+ * generated and scored at once instead (picker_all), as before: evasions are few, the PV move is
+ * ordered after the TT move and the statistics look at the whole list.
+ * picker_skip_quiets: late move pruning has started, the quiet moves left aren't returned (nor
+ * generated), only captures and promotions.
+ */
+typedef enum {
+    pick_tt, pick_gen_noisy, pick_good_noisy, pick_killer_1, pick_killer_2, pick_gen_quiets, pick_quiets,
+    pick_bad_noisy, picker_all, pick_done
+} pick_stage_t;
+
+typedef struct {
+    move_buffer_t* buffer;
+    int* scores;
+    board_t* board;
+    search_state_t* search_state;
+    cont_rows_t rows;        /* For the quiet moves' scores (score_move_with), found when first needed. */
+    move_t tt_move;          /* Returned by pick_tt (0 if it wasn't), skipped after.                    */
+    move_t killers[2];       /* Returned by the killer stages (0 if they weren't), skipped after.        */
+    pick_stage_t stage;
+    int noisy_next;          /* Next noisy move, [noisy_next, noisy_end) still to pick.                  */
+    int noisy_end;
+    int quiet_next;          /* Next quiet move, [quiet_next, buffer->index) still to pick.              */
+    int score;               /* The ordering score of the move just returned.                            */
+    move_t pv_move;          /* The PV move, when following the PV and it's in the list (all at once).   */
+    bool skip_quiets;
+} move_picker_t;
+
+/* The best move in [i, end) to position i (as pick_next_move, ties to the first). */
+static inline_always void pick_best(move_buffer_t* buffer, int* scores, int i, int end) {
+    int best = i;
+    int best_score = scores[i];
+    for (int j = i + 1; j < end; j++) {
+        const bool better = scores[j] > best_score;
+        best = better ? j : best;
+        best_score = better ? scores[j] : best_score;
+    }
+    if (best != i) {
+        const move_t mv = buffer->moves[best];
+        buffer->moves[best] = buffer->moves[i];
+        buffer->moves[i] = mv;
+        const int score = scores[best];
+        scores[best] = scores[i];
+        scores[i] = score;
+    }
+}
+
+/* follow_pv: whether the node is on the previous iteration's PV, as it was on entry (the null move
+ * and singular searches clear search_state->follow_pv before the moves are picked). */
+static inline_always void picker_init(move_picker_t* picker, move_buffer_t* buffer, int* scores, board_t* board,
+                                      search_state_t* search_state, move_t tt_move, bool all_at_once, bool follow_pv) {
+    picker->buffer = buffer;
+    picker->scores = scores;
+    picker->board = board;
+    picker->search_state = search_state;
+    picker->rows.row[0] = NULL;
+    picker->tt_move = tt_move;
+    picker->killers[0] = search_state->killer_moves[0][search_state->ply];
+    picker->killers[1] = search_state->killer_moves[1][search_state->ply];
+    picker->skip_quiets = false;
+    picker->score = 0;
+    picker->noisy_next = picker->noisy_end = picker->quiet_next = 0;
+    picker->pv_move = 0;
+    if (all_at_once) {
+        /* As before staging: every move, the PV move (if it's in the list) after the TT move. */
+        generate_moves(board, buffer);
+        move_t pv_move = 0;
+        if (follow_pv) {
+            pv_move = find_pv_move(buffer, search_state);
+            if (pv_move) search_state->pv_nodes++;
+        }
+        picker->pv_move = pv_move;
+        search_state->score_pv = pv_move != 0;
+        score_moves(buffer, scores, tt_move, board, search_state);
+        picker->stage = picker_all;
+    } else {
+        search_state->score_pv = false;
+        picker->stage = pick_tt;
+    }
+}
+
+/* A killer for stage 3: possible here, quiet in score_move's sense (not a capture or a queen
+ * promotion, those are scored in their own bands), not the TT move, not already returned. */
+static inline_always bool picker_killer_ok(move_picker_t* picker, move_t killer) {
+    if (!killer || killer == picker->tt_move || get_capture_flag(killer)) return false;
+    const piece promoted = get_promoted_piece(killer);
+    if (promoted == Q || promoted == q) return false;
+    if (picker->skip_quiets && !promoted) return false;
+    return move_is_pseudo_legal(picker->board, killer);
+}
+
+/* Late move pruning has started: the quiet moves left won't be searched (drop_quiet_moves). */
+static inline_always void picker_skip_quiets(move_picker_t* picker) {
+    if (picker->skip_quiets) return;
+    picker->skip_quiets = true;
+    if (picker->stage == picker_all) {
+        drop_quiet_moves(picker->buffer, picker->scores, picker->noisy_next);
+    } else if (picker->stage == pick_quiets) {
+        drop_quiet_moves(picker->buffer, picker->scores, picker->quiet_next);
+    }
+}
+
+/* The next move, 0 when there are none left (no move encodes as 0: its squares would be the same). */
+static move_t picker_next(move_picker_t* picker) {
+    move_buffer_t* buffer = picker->buffer;
+    int* scores = picker->scores;
+    for (;;) {
+        switch (picker->stage) {
+        case picker_all:
+            /* noisy_next is the cursor over the whole list here. */
+            if (picker->noisy_next >= buffer->index) return 0;
+            pick_best(buffer, scores, picker->noisy_next, buffer->index);
+            picker->score = scores[picker->noisy_next];
+            return buffer->moves[picker->noisy_next++];
+
+        case pick_tt:
+            picker->stage = pick_gen_noisy;
+            if (picker->tt_move && move_is_pseudo_legal(picker->board, picker->tt_move)) {
+                picker->score = TT_MOVE_SCORE;
+                return picker->tt_move;
+            }
+            picker->tt_move = 0;
+            break;
+
+        case pick_gen_noisy:
+            /* Scored as score_move does, without the TT move (it's skipped instead). */
+            generate_noisy(picker->board, buffer);
+            picker->noisy_end = buffer->index;
+            for (int i = 0; i < buffer->index; i++) {
+                scores[i] = score_move_with(buffer->moves[i], 0, picker->board, picker->search_state, &picker->rows);
+            }
+            picker->noisy_next = 0;
+            picker->stage = pick_good_noisy;
+            break;
+
+        case pick_good_noisy:
+            /* Down to the killers' band: what's left are the losing captures, for pick_bad_noisy. */
+            while (picker->noisy_next < picker->noisy_end) {
+                pick_best(buffer, scores, picker->noisy_next, picker->noisy_end);
+                if (scores[picker->noisy_next] <= KILLER_1_SCORE) break;
+                const move_t mv = buffer->moves[picker->noisy_next];
+                picker->score = scores[picker->noisy_next++];
+                if (mv == picker->tt_move) continue;
+                return mv;
+            }
+            picker->stage = pick_killer_1;
+            break;
+
+        case pick_killer_1:
+            picker->stage = pick_killer_2;
+            if (picker_killer_ok(picker, picker->killers[0])) {
+                picker->score = KILLER_1_SCORE;
+                return picker->killers[0];
+            }
+            picker->killers[0] = 0;
+            break;
+
+        case pick_killer_2:
+            /* The same move twice in the killers is the first one's (score_move checks it first): if the
+             * first was returned it's still in killers[0]; if it wasn't, the same move fails the same tests. */
+            picker->stage = pick_gen_quiets;
+            if (picker->killers[1] != picker->killers[0] && picker_killer_ok(picker, picker->killers[1])) {
+                picker->score = KILLER_2_SCORE;
+                return picker->killers[1];
+            }
+            picker->killers[1] = 0;
+            break;
+
+        case pick_gen_quiets:
+            /* Appended after the noisy moves (the losing captures still among them). Once late move
+             * pruning has started only promotions would be returned, so without a pawn on the 7th
+             * (2nd for black) there's nothing to generate. */
+            picker->stage = pick_quiets;
+            picker->quiet_next = picker->noisy_end;
+            buffer->index = picker->noisy_end;
+            if (picker->skip_quiets) {
+                const bitboard promoting = picker->board->side == white ?
+                    picker->board->pieces[P] & bitboard_const.rank_masks[6] :
+                    picker->board->pieces[p] & bitboard_const.rank_masks[1];
+                if (!promoting) break;
+            }
+            generate_quiets(picker->board, buffer);
+            for (int i = picker->noisy_end; i < buffer->index; i++) {
+                scores[i] = score_move_with(buffer->moves[i], 0, picker->board, picker->search_state, &picker->rows);
+            }
+            if (picker->skip_quiets) drop_quiet_moves(buffer, scores, picker->quiet_next);
+            break;
+
+        case pick_quiets:
+            while (picker->quiet_next < buffer->index) {
+                pick_best(buffer, scores, picker->quiet_next, buffer->index);
+                const move_t mv = buffer->moves[picker->quiet_next];
+                picker->score = scores[picker->quiet_next++];
+                if (mv == picker->tt_move || mv == picker->killers[0] || mv == picker->killers[1]) continue;
+                return mv;
+            }
+            picker->stage = pick_bad_noisy;
+            break;
+
+        case pick_bad_noisy:
+            while (picker->noisy_next < picker->noisy_end) {
+                pick_best(buffer, scores, picker->noisy_next, picker->noisy_end);
+                const move_t mv = buffer->moves[picker->noisy_next];
+                picker->score = scores[picker->noisy_next++];
+                if (mv == picker->tt_move) continue;
+                return mv;
+            }
+            picker->stage = pick_done;
+            break;
+
+        case pick_done:
+            return 0;
+        }
+    }
+}
+
+/**
  * After a node's search, the correction history learns from its result (update_correction_at):
  * the score's error against the corrected eval, when the result says something about the eval.
  * Not after a capture or promotion (the score is the tactic's), not mate scores, and a bound only
@@ -1035,17 +1261,19 @@ static int negamax_node(int alpha,
         }
     }
 
+    /* The moves, best first (move_picker_t): staged, or all at once in check, on the previous
+     * iteration's PV and in statistics builds. On the PV, its move is ordered first (after the TT
+     * move) and its child is on the PV too. */
     move_buffer_t buffer;
     int scores[MOVE_BUFFER_SIZE];
-    generate_moves(board, &buffer);
-    /* On the PV, its move is ordered first (after the TT move) and its child is on the PV too. */
-    move_t pv_move = 0;
-    if (follow_pv) {
-        pv_move = find_pv_move(&buffer, search_state);
-        if (pv_move) search_state->pv_nodes++;
-    }
-    search_state->score_pv = pv_move != 0;
-    score_moves(&buffer, scores, tt_move, board, search_state);
+#ifdef TIKI_SEARCH_STATS
+    const bool all_at_once = true;
+#else
+    const bool all_at_once = in_check || follow_pv;
+#endif
+    move_picker_t picker;
+    picker_init(&picker, &buffer, scores, board, search_state, tt_move, all_at_once, follow_pv);
+    const move_t pv_move = picker.pv_move;
 #ifdef TIKI_SEARCH_STATS
     stat_capture_ranks_t capture_ranks = { .count = 0 };
     if (!excluded_move) stat_capture_ranks(&capture_ranks, &buffer, scores, tt_move, board, search_state, depth, is_pv_node);
@@ -1067,8 +1295,8 @@ static int negamax_node(int alpha,
     int quiets_tried = 0; /* Quiet moves searched (not pruned), for the statistics. */
     /* This node's continuation history rows: the moves before it don't change while its moves are searched. */
     const cont_rows_t cont_rows = node_cont_rows(search_state);
-    for (int i=0; i < buffer.index; i++) {
-        move_t mv = pick_next_move(&buffer, scores, i);
+    move_t mv;
+    while ((mv = picker_next(&picker)) != 0) {
         if (mv == excluded_move) continue;
         bool is_capture = get_capture_flag(mv);
         const bool is_quiet = !is_capture && !get_promoted_piece(mv);
@@ -1077,13 +1305,13 @@ static int negamax_node(int alpha,
          * whether this one is legal doesn't matter. Once it prunes one quiet move it prunes every
          * later one (it's never in PV nodes, where alpha would move; elsewhere alpha only moves on a
          * cutoff, which returns, and the moves searched only grow), so the quiet moves left are
-         * dropped from the list: picking (a scan of what's left per move) then skips them. */
+         * skipped by the picker from here on (not even generated, if it hasn't got to them yet). */
         if (is_quiet && can_late_move_prune(depth, num_moves_searched, alpha, in_check, is_pv_node, improving)) {
-            drop_quiet_moves(&buffer, scores, i + 1);
+            picker_skip_quiets(&picker);
             continue;
         }
         /* A losing capture (SEE < 0, ordered below the quiet moves), not the TT move: reduced like a quiet move. */
-        const bool is_bad_capture = is_capture && mv != tt_move && scores[i] < 0;
+        const bool is_bad_capture = is_capture && mv != tt_move && picker.score < 0;
         /* Killers are for this ply, checked before ++ply. A quiet move's history is read at this node
          * (history pruning and LMR). */
         const bool is_killer = mv == search_state->killer_moves[0][search_state->ply] ||

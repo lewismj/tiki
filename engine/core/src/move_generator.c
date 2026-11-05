@@ -264,7 +264,7 @@ void generate_moves(board_t* board, move_buffer_t* move_buffer) {
 
 
 
-void generate_white_pawn_captures(board_t* board, move_buffer_t* move_buffer) {
+static inline_always void white_pawn_captures(board_t* board, move_buffer_t* move_buffer, bool underpromotions) {
     bitboard white_pawns = board->pieces[P];
 
     /* Promotions, to a queen only. */
@@ -278,11 +278,21 @@ void generate_white_pawn_captures(board_t* board, move_buffer_t* move_buffer) {
     while (up_left) {
         square target = get_lsb_and_pop_bit(&up_left);
         move_buffer->moves[move_buffer->index++] = encode_move(target + 9, target, P, Q, 1, 0, 0, 0, 0);
+        if (underpromotions) {
+            move_buffer->moves[move_buffer->index++] = encode_move(target + 9, target, P, R, 1, 0, 0, 0, 0);
+            move_buffer->moves[move_buffer->index++] = encode_move(target + 9, target, P, B, 1, 0, 0, 0, 0);
+            move_buffer->moves[move_buffer->index++] = encode_move(target + 9, target, P, N, 1, 0, 0, 0, 0);
+        }
     }
     bitboard up_right = (pawns_on_rank7 >> 7 & bitboard_const.not_a_file) & board->occupancy[black];
     while (up_right) {
         square target = get_lsb_and_pop_bit(&up_right);
         move_buffer->moves[move_buffer->index++] = encode_move(target + 7, target, P, Q, 1, 0, 0, 0, 0);
+        if (underpromotions) {
+            move_buffer->moves[move_buffer->index++] = encode_move(target + 7, target, P, R, 1, 0, 0, 0, 0);
+            move_buffer->moves[move_buffer->index++] = encode_move(target + 7, target, P, B, 1, 0, 0, 0, 0);
+            move_buffer->moves[move_buffer->index++] = encode_move(target + 7, target, P, N, 1, 0, 0, 0, 0);
+        }
     }
 
     /* Captures. */
@@ -307,7 +317,7 @@ void generate_white_pawn_captures(board_t* board, move_buffer_t* move_buffer) {
     }
 }
 
-void generate_black_pawn_captures(board_t* board, move_buffer_t* move_buffer) {
+static inline_always void black_pawn_captures(board_t* board, move_buffer_t* move_buffer, bool underpromotions) {
     bitboard black_pawns = board->pieces[p];
 
     /* Promotions, to a queen only. */
@@ -321,11 +331,21 @@ void generate_black_pawn_captures(board_t* board, move_buffer_t* move_buffer) {
     while (down_left) {
         square target = get_lsb_and_pop_bit(&down_left);
         move_buffer->moves[move_buffer->index++] = encode_move(target - 9, target, p, q, 1, 0, 0, 0, 0);
+        if (underpromotions) {
+            move_buffer->moves[move_buffer->index++] = encode_move(target - 9, target, p, r, 1, 0, 0, 0, 0);
+            move_buffer->moves[move_buffer->index++] = encode_move(target - 9, target, p, b, 1, 0, 0, 0, 0);
+            move_buffer->moves[move_buffer->index++] = encode_move(target - 9, target, p, n, 1, 0, 0, 0, 0);
+        }
     }
     bitboard down_right = (pawns_on_rank2 << 7 & bitboard_const.not_h_file) & board->occupancy[white];
     while (down_right) {
         square target = get_lsb_and_pop_bit(&down_right);
         move_buffer->moves[move_buffer->index++] = encode_move(target - 7, target, p, q, 1, 0, 0, 0, 0);
+        if (underpromotions) {
+            move_buffer->moves[move_buffer->index++] = encode_move(target - 7, target, p, r, 1, 0, 0, 0, 0);
+            move_buffer->moves[move_buffer->index++] = encode_move(target - 7, target, p, b, 1, 0, 0, 0, 0);
+            move_buffer->moves[move_buffer->index++] = encode_move(target - 7, target, p, n, 1, 0, 0, 0, 0);
+        }
     }
 
     /* Captures. */
@@ -358,7 +378,7 @@ void generate_captures(board_t* board, move_buffer_t* move_buffer) {
     if (board->side == white) {
         bitboard opponent = board->occupancy[black];
 
-        generate_white_pawn_captures(board, move_buffer);
+        white_pawn_captures(board, move_buffer, false);
         generate_piece_move(N, board->pieces[N], &opponent, &opponent, &all, knight_attack_wrapper, move_buffer);
         generate_piece_move(B, board->pieces[B], &opponent, &opponent, &all, bishop_attack, move_buffer);
         generate_piece_move(R, board->pieces[R], &opponent, &opponent, &all, rook_attack, move_buffer);
@@ -367,11 +387,138 @@ void generate_captures(board_t* board, move_buffer_t* move_buffer) {
     } else {
         bitboard opponent = board->occupancy[white];
 
-        generate_black_pawn_captures(board, move_buffer);
+        black_pawn_captures(board, move_buffer, false);
         generate_piece_move(n, board->pieces[n], &opponent, &opponent, &all, knight_attack_wrapper, move_buffer);
         generate_piece_move(b, board->pieces[b], &opponent, &opponent, &all, bishop_attack, move_buffer);
         generate_piece_move(r, board->pieces[r], &opponent, &opponent, &all, rook_attack, move_buffer);
         generate_piece_move(q, board->pieces[q], &opponent, &opponent, &all, queen_attack, move_buffer);
         generate_piece_move(k, board->pieces[k], &opponent, &opponent, &all, king_attack_wrapper, move_buffer);
     }
+}
+
+void generate_noisy(board_t* board, move_buffer_t* move_buffer) {
+    move_buffer->index = 0;
+    bitboard all = board->occupancy[both];
+
+    /* As generate_captures, with every promotion piece on the capturing promotions. */
+    if (board->side == white) {
+        bitboard opponent = board->occupancy[black];
+
+        white_pawn_captures(board, move_buffer, true);
+        generate_piece_move(N, board->pieces[N], &opponent, &opponent, &all, knight_attack_wrapper, move_buffer);
+        generate_piece_move(B, board->pieces[B], &opponent, &opponent, &all, bishop_attack, move_buffer);
+        generate_piece_move(R, board->pieces[R], &opponent, &opponent, &all, rook_attack, move_buffer);
+        generate_piece_move(Q, board->pieces[Q], &opponent, &opponent, &all, queen_attack, move_buffer);
+        generate_piece_move(K, board->pieces[K], &opponent, &opponent, &all, king_attack_wrapper, move_buffer);
+    } else {
+        bitboard opponent = board->occupancy[white];
+
+        black_pawn_captures(board, move_buffer, true);
+        generate_piece_move(n, board->pieces[n], &opponent, &opponent, &all, knight_attack_wrapper, move_buffer);
+        generate_piece_move(b, board->pieces[b], &opponent, &opponent, &all, bishop_attack, move_buffer);
+        generate_piece_move(r, board->pieces[r], &opponent, &opponent, &all, rook_attack, move_buffer);
+        generate_piece_move(q, board->pieces[q], &opponent, &opponent, &all, queen_attack, move_buffer);
+        generate_piece_move(k, board->pieces[k], &opponent, &opponent, &all, king_attack_wrapper, move_buffer);
+    }
+}
+
+void generate_quiets(board_t* board, move_buffer_t* move_buffer) {
+    bitboard all = board->occupancy[both];
+    bitboard empty = ~all;
+    bitboard none = 0ULL;
+
+    if (board->side == white) {
+        const bitboard pawns = board->pieces[P];
+        /* Underpromotions without a capture (to a queen it's noisy). */
+        bitboard up = ((pawns & bitboard_const.rank_masks[6]) >> 8) & empty;
+        while (up) {
+            square target = get_lsb_and_pop_bit(&up);
+            move_buffer->moves[move_buffer->index++] = encode_move(target + 8, target, P, R, 0, 0, 0, 0, 0);
+            move_buffer->moves[move_buffer->index++] = encode_move(target + 8, target, P, B, 0, 0, 0, 0, 0);
+            move_buffer->moves[move_buffer->index++] = encode_move(target + 8, target, P, N, 0, 0, 0, 0, 0);
+        }
+        /* Single and double pushes. */
+        up = ((pawns & ~bitboard_const.rank_masks[6]) >> 8) & empty;
+        bitboard double_push = ((up & bitboard_const.rank_masks[2]) >> 8) & empty;
+        while (up) {
+            square target = get_lsb_and_pop_bit(&up);
+            move_buffer->moves[move_buffer->index++] = encode_move(target + 8, target, P, 0, 0, 0, 0, 0, 0);
+        }
+        while (double_push) {
+            square target = get_lsb_and_pop_bit(&double_push);
+            move_buffer->moves[move_buffer->index++] = encode_move(target + 16, target, P, 0, 0, 1, 0, 0, 0);
+        }
+        generate_white_castling_moves(board, move_buffer);
+        generate_piece_move(N, board->pieces[N], &empty, &none, &all, knight_attack_wrapper, move_buffer);
+        generate_piece_move(B, board->pieces[B], &empty, &none, &all, bishop_attack, move_buffer);
+        generate_piece_move(R, board->pieces[R], &empty, &none, &all, rook_attack, move_buffer);
+        generate_piece_move(Q, board->pieces[Q], &empty, &none, &all, queen_attack, move_buffer);
+        generate_piece_move(K, board->pieces[K], &empty, &none, &all, king_attack_wrapper, move_buffer);
+    } else {
+        const bitboard pawns = board->pieces[p];
+        bitboard down = ((pawns & bitboard_const.rank_masks[1]) << 8) & empty;
+        while (down) {
+            square target = get_lsb_and_pop_bit(&down);
+            move_buffer->moves[move_buffer->index++] = encode_move(target - 8, target, p, r, 0, 0, 0, 0, 0);
+            move_buffer->moves[move_buffer->index++] = encode_move(target - 8, target, p, b, 0, 0, 0, 0, 0);
+            move_buffer->moves[move_buffer->index++] = encode_move(target - 8, target, p, n, 0, 0, 0, 0, 0);
+        }
+        down = ((pawns & ~bitboard_const.rank_masks[1]) << 8) & empty;
+        bitboard double_push = ((down & bitboard_const.rank_masks[5]) << 8) & empty;
+        while (down) {
+            square target = get_lsb_and_pop_bit(&down);
+            move_buffer->moves[move_buffer->index++] = encode_move(target - 8, target, p, 0, 0, 0, 0, 0, 0);
+        }
+        while (double_push) {
+            square target = get_lsb_and_pop_bit(&double_push);
+            move_buffer->moves[move_buffer->index++] = encode_move(target - 16, target, p, 0, 0, 1, 0, 0, 0);
+        }
+        generate_black_castling_moves(board, move_buffer);
+        generate_piece_move(n, board->pieces[n], &empty, &none, &all, knight_attack_wrapper, move_buffer);
+        generate_piece_move(b, board->pieces[b], &empty, &none, &all, bishop_attack, move_buffer);
+        generate_piece_move(r, board->pieces[r], &empty, &none, &all, rook_attack, move_buffer);
+        generate_piece_move(q, board->pieces[q], &empty, &none, &all, queen_attack, move_buffer);
+        generate_piece_move(k, board->pieces[k], &empty, &none, &all, king_attack_wrapper, move_buffer);
+    }
+}
+
+bool move_is_pseudo_legal(board_t* board, move_t move) {
+    if (move == 0) return false;
+    const piece moved = get_piece_moved(move);
+    const square source = get_source_square(move);
+    const square target = get_target_square(move);
+    /* A piece (the encoding has room for 12-15, which aren't), the side to move's, on its source square. */
+    if (moved > k) return false;
+    if ((board->side == white) != (moved <= K)) return false;
+    if (!is_bit_set(&board->pieces[moved], source)) return false;
+
+    move_buffer_t candidates;
+    candidates.index = 0;
+    if (moved == P) {
+        generate_white_pawn_moves(board, &candidates);
+    } else if (moved == p) {
+        generate_black_pawn_moves(board, &candidates);
+    } else if ((moved == K || moved == k) && (get_king_side_castle_flag(move) || get_queen_side_castle_flag(move))) {
+        if (moved == K) generate_white_castling_moves(board, &candidates);
+        else generate_black_castling_moves(board, &candidates);
+    } else {
+        /* A piece move: to a square it attacks that isn't its own side's, encoded as generate_piece_move does. */
+        const bitboard all = board->occupancy[both];
+        const bitboard own = board->occupancy[board->side];
+        const bitboard opponent = board->occupancy[board->side ^ 1];
+        bitboard attacks;
+        switch (moved % 6) {
+            case N: attacks = knight_attack(source); break;
+            case B: attacks = bishop_attack(source, all); break;
+            case R: attacks = rook_attack(source, all); break;
+            case Q: attacks = queen_attack(source, all); break;
+            default: attacks = king_attack(source); break;
+        }
+        if (!(attacks & ~own & (1ULL << target))) return false;
+        return move == encode_move(source, target, moved, 0, is_bit_set(&opponent, target), 0, 0, 0, 0);
+    }
+    for (int i = 0; i < candidates.index; i++) {
+        if (candidates.moves[i] == move) return true;
+    }
+    return false;
 }
