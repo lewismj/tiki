@@ -94,7 +94,7 @@ bool can_history_prune(int depth, int history, int moves_searched, int alpha, bo
 /* A quiet move's history at the node: its history plus its continuation history after the moves 1, 2
  * and 4 plies back (search_state->path_moves, those there are). */
 int quiet_history(const search_state_t* search_state, move_t mv);
-int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history);
+int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history, bool cut_node, bool improving);
 int iir_reduction(int depth, move_t tt_move);
 bool can_singular_extend(int depth, int ply, int root_depth, move_t tt_move, int tt_depth, tt_entry_type tt_type,
                          int tt_score);

@@ -5,6 +5,7 @@
 #include <stddef.h>
 
 #include "search_constants.h"
+#include "limits.h"
 
 /**
  * Search parameters for SPSA tuning (OpenBench). Normally they're the constants in
@@ -57,7 +58,14 @@ enum {
     NMP_VERIFY_DEPTH_DEFAULT = NMP_VERIFY_DEPTH,
     LMR_HISTORY_DIVISOR_DEFAULT = LMR_HISTORY_DIVISOR,
     HIST_PRUNE_MAX_DEPTH_DEFAULT = HIST_PRUNE_MAX_DEPTH,
-    HIST_PRUNE_MARGIN_DEFAULT = HIST_PRUNE_MARGIN
+    HIST_PRUNE_MARGIN_DEFAULT = HIST_PRUNE_MARGIN,
+    LMR_CUT_NODE_DEFAULT = LMR_CUT_NODE,
+    LMR_NOT_IMPROVING_DEFAULT = LMR_NOT_IMPROVING,
+    TM_MOVES_LEFT_DEFAULT = TM_MOVES_LEFT,
+    TM_SOFT_PERCENT_DEFAULT = TM_SOFT_PERCENT,
+    TM_HARD_PERCENT_DEFAULT = TM_HARD_PERCENT,
+    TM_UNSTABLE_PERCENT_DEFAULT = TM_UNSTABLE_PERCENT,
+    TM_NODES_PERCENT_DEFAULT = TM_NODES_PERCENT
 };
 
 extern int tune_rfp_margin;
@@ -80,6 +88,13 @@ extern int tune_nmp_verify_depth;
 extern int tune_lmr_history_divisor;
 extern int tune_hist_prune_max_depth;
 extern int tune_hist_prune_margin;
+extern int tune_lmr_cut_node;
+extern int tune_lmr_not_improving;
+extern int tune_tm_moves_left;
+extern int tune_tm_soft_percent;
+extern int tune_tm_hard_percent;
+extern int tune_tm_unstable_percent;
+extern int tune_tm_nodes_percent;
 
 #undef RFP_MARGIN
 #undef RFP_MAX_DEPTH
@@ -101,6 +116,13 @@ extern int tune_hist_prune_margin;
 #undef LMR_HISTORY_DIVISOR
 #undef HIST_PRUNE_MAX_DEPTH
 #undef HIST_PRUNE_MARGIN
+#undef LMR_CUT_NODE
+#undef LMR_NOT_IMPROVING
+#undef TM_MOVES_LEFT
+#undef TM_SOFT_PERCENT
+#undef TM_HARD_PERCENT
+#undef TM_UNSTABLE_PERCENT
+#undef TM_NODES_PERCENT
 #define RFP_MARGIN tune_rfp_margin
 #define RFP_MAX_DEPTH tune_rfp_max_depth
 #define FUTILITY_MARGIN tune_futility_margin
@@ -121,6 +143,13 @@ extern int tune_hist_prune_margin;
 #define LMR_HISTORY_DIVISOR tune_lmr_history_divisor
 #define HIST_PRUNE_MAX_DEPTH tune_hist_prune_max_depth
 #define HIST_PRUNE_MARGIN tune_hist_prune_margin
+#define LMR_CUT_NODE tune_lmr_cut_node
+#define LMR_NOT_IMPROVING tune_lmr_not_improving
+#define TM_MOVES_LEFT tune_tm_moves_left
+#define TM_SOFT_PERCENT tune_tm_soft_percent
+#define TM_HARD_PERCENT tune_tm_hard_percent
+#define TM_UNSTABLE_PERCENT tune_tm_unstable_percent
+#define TM_NODES_PERCENT tune_tm_nodes_percent
 #endif
 
 #endif

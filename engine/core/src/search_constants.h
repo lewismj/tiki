@@ -38,8 +38,10 @@ void init_lmr_table();
 #define LMR_TABLE_SIZE 64
 #define LMR_HISTORY_DIVISOR 1000 /* A quiet move is reduced quiet_history / this plies less (more if        */
                                  /* negative).                                                               */
+#define LMR_CUT_NODE 1           /* Plies more reduction at an expected cut node (lmr_reduction).            */
+#define LMR_NOT_IMPROVING 1      /* Plies more reduction when the position isn't improving.                  */
 #define HIST_PRUNE_MAX_DEPTH 4   /* History pruning of quiet moves up to this depth, when quiet_history...   */
-#define HIST_PRUNE_MARGIN 1000   /* ...< -margin * depth (can_history_prune).                                */
+#define HIST_PRUNE_MARGIN 300    /* ...< -margin * depth (can_history_prune).                                */
 #define IIR_MIN_DEPTH 4          /* Internal iterative reduction (no TT move) from this depth.               */
 #define ASPIRATION_WINDOW 25     /* Initial half-width of the root window around the previous score...       */
 #define ASPIRATION_MAX_DELTA 1000 /* ...doubled on each fail, full window once it's wider than this.         */

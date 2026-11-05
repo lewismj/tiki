@@ -559,6 +559,10 @@ bool can_reduce(int depth, int moves_searched, bool is_quiet, bool gives_check, 
  * continuation history) is below -HIST_PRUNE_MARGIN * depth has rarely been good here, so it's
  * skipped. Not the first move, the killers, in check, PV nodes or near mate scores; checks are
  * excluded by the caller (it's decided after the move is made).
+ * Measured over game sequences (depth 10, history kept between moves), quiet moves searched at
+ * depth <= 4 in non-PV nodes: history is mostly positive there (median +3200 at depth 1, -100 at
+ * depth 4), so -1000 * depth pruned only 0.5% of them. Below -300 * depth: 5.5% of them, which
+ * cut 1.1% of the time against 5.9% for all.
  */
 bool can_history_prune(int depth, int history, int moves_searched, int alpha, bool in_check, bool is_pv_node,
                        bool is_killer) {
@@ -574,11 +578,16 @@ bool can_history_prune(int depth, int history, int moves_searched, int alpha, bo
  * average moves a ply. Clamped so the reduced search still has at least one ply (depth - 1 - r >= 1).
  * With the history alone, against the same search without it (both with persistent history): SPRT
  * +15.0 +- 7.4 after 3388 games, H1 accepted [0, 5].
+ * LMR_CUT_NODE plies more at an expected cut node (cut_node, see negamax_node): a late move there
+ * is expected to fail low, the cutoff should come from an earlier move. LMR_NOT_IMPROVING plies
+ * more when the position isn't improving (is_improving), a late move is then less likely to help.
  */
-int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history) {
+int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history, bool cut_node, bool improving) {
     int r = lmr_table[depth < LMR_TABLE_SIZE ? depth : LMR_TABLE_SIZE - 1]
                      [moves_searched < LMR_TABLE_SIZE ? moves_searched : LMR_TABLE_SIZE - 1];
     if (is_pv_node) r--;
+    if (cut_node) r += LMR_CUT_NODE;
+    if (!improving) r += LMR_NOT_IMPROVING;
     r -= history / LMR_HISTORY_DIVISOR;
     if (r > depth - 2) r = depth - 2;
     return r > 0 ? r : 0;
@@ -774,12 +783,20 @@ int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state
 }
 
 
-int negamax(int alpha,
-            int beta,
-            int depth,
-            board_t* board,
-            search_state_t* search_state,
-            limits_t* limits) {
+/**
+ * The search of a node (negamax is the root's). cut_node: the node is expected to fail high (a
+ * cut node), set by the parent as Stockfish does, see where it searches its moves. Never in a PV
+ * node: a PV node's children with the full window are PV nodes, the null-window ones alternate,
+ * a reduced late move's child is a cut node (it should fail high, so the move fails low here),
+ * and the null move's child and its verification aren't. Used by LMR (lmr_reduction).
+ */
+static int negamax_node(int alpha,
+                        int beta,
+                        int depth,
+                        bool cut_node,
+                        board_t* board,
+                        search_state_t* search_state,
+                        limits_t* limits) {
 
     /* Every node, including those that return early (TT, draw, pruning). Checked straight after
      * counting, so the check runs once per 2048 counted nodes. */
@@ -864,7 +881,7 @@ int negamax(int alpha,
         search_state->null_move_index = search_state->repetition_index;
         search_state->follow_pv = false;
         ++search_state->ply;
-        int score = -negamax(-beta, -beta + 1, null_depth, board, search_state, limits);
+        int score = -negamax_node(-beta, -beta + 1, null_depth, false, board, search_state, limits);
         --search_state->ply;
         search_state->null_move_index = null_move_index;
         --search_state->repetition_index;
@@ -878,7 +895,7 @@ int negamax(int alpha,
              * with null moves off for the first three quarters of it, so a zugzwang (where passing
              * would be best) can't cut off a large subtree. */
             search_state->nmp_min_ply = (uint8_t) (ply + 3 * null_depth / 4);
-            const int verified = negamax(beta - 1, beta, null_depth, board, search_state, limits);
+            const int verified = negamax_node(beta - 1, beta, null_depth, false, board, search_state, limits);
             search_state->nmp_min_ply = 0;
             if (limits->stop_search_flag) return STOPPED_SEARCH;
             if (verified >= beta) return beta;
@@ -905,7 +922,7 @@ int negamax(int alpha,
             search_state->excluded_moves[search_state->ply] = tt_move;
             search_state->follow_pv = false;
             const uint64_t nodes_before = search_state->nodes;
-            const int score = negamax(s_beta - 1, s_beta, (depth - 1) / 2, board, search_state, limits);
+            const int score = negamax_node(s_beta - 1, s_beta, (depth - 1) / 2, cut_node, board, search_state, limits);
             search_state->excluded_moves[search_state->ply] = 0;
             /* The search without the TT move used this ply's PV row, the node starts its own. */
             search_state->pv_length[search_state->ply] = search_state->ply;
@@ -1011,7 +1028,7 @@ int negamax(int alpha,
         /* Late move reduction: quiet moves adjusted by their history, losing captures by the table alone. */
         const int reduction =
             can_reduce(depth, num_moves_searched, is_quiet, gives_check, in_check, is_killer, is_bad_capture) ?
-            lmr_reduction(depth, num_moves_searched, is_pv_node, history) : 0;
+            lmr_reduction(depth, num_moves_searched, is_pv_node, history, cut_node, improving) : 0;
         /* The TT move a ply deeper if it's singular, shallower if it isn't but beat beta (see above). */
         const int new_depth = depth - 1 + (mv == tt_move ? extension : 0);
 
@@ -1022,25 +1039,29 @@ int negamax(int alpha,
         search_state->repetition_check[++search_state->repetition_index] = board->hash;
 
         search_state->follow_pv = child_on_pv;
+        /* The child's node type (negamax_node): the first move's child is a PV node in a PV node,
+         * otherwise the opposite of this node, as are the null-window searches at full depth. A
+         * reduced search's child is a cut node. Full-window searches are PV nodes. */
         if (num_moves_searched == 0 ) {
             if (mv == tt_move && !excluded_move) COUNT_STAT(search_state, tt_move_first);
-            score = -negamax(-beta, -alpha, new_depth, board, search_state, limits);
+            score = -negamax_node(-beta, -alpha, new_depth, !is_pv_node && !cut_node, board, search_state, limits);
         } else {
             /* Principal variation search, null window (reduced for late moves). A reduced move that
              * beats alpha is searched again at full depth with the null window, then with the full
              * window if it's still inside it. */
-            score = -negamax(-alpha - 1, -alpha, new_depth - reduction, board, search_state, limits);
+            score = -negamax_node(-alpha - 1, -alpha, new_depth - reduction, reduction > 0 || !cut_node, board,
+                                  search_state, limits);
             const bool reduced_beat_alpha = reduction > 0 && score > alpha;
             if (reduction > 0) COUNT_STAT(search_state, lmr_searches);
             if (score > alpha && reduction > 0) {
                 COUNT_STAT(search_state, lmr_fail_highs);
                 search_state->follow_pv = child_on_pv;
-                score = -negamax(-alpha - 1, -alpha, new_depth, board, search_state, limits);
+                score = -negamax_node(-alpha - 1, -alpha, new_depth, !cut_node, board, search_state, limits);
                 if (score > alpha) COUNT_STAT(search_state, lmr_research_holds);
             }
             if (score > alpha && score < beta) {
                 search_state->follow_pv = child_on_pv;
-                score = -negamax(-beta, -alpha, new_depth, board, search_state, limits);
+                score = -negamax_node(-beta, -alpha, new_depth, false, board, search_state, limits);
             }
             if (reduction > 0 && !excluded_move && !limits->stop_search_flag) {
                 stat_lmr(search_state, depth, is_pv_node, num_moves_searched + 1, reduction, reduced_beat_alpha, score,
@@ -1114,6 +1135,11 @@ int negamax(int alpha,
     }
 
     return alpha;
+}
+
+/* The root's search (a PV node, so not a cut node), also the tests'. */
+int negamax(int alpha, int beta, int depth, board_t* board, search_state_t* search_state, limits_t* limits) {
+    return negamax_node(alpha, beta, depth, false, board, search_state, limits);
 }
 
 /* Used when no iteration completed (stopped very early), 0 if there are no legal moves. */
@@ -1322,16 +1348,17 @@ static void stop_helpers(limits_t* limits, search_helper_t* helpers, int count) 
 }
 
 /* By how many depths in a row the best move has stayed the same (capped at the last entry): more
- * time when it just changed, less when it has held. */
-static const double tm_stability_scale[TM_STABILITY_MAX + 1] = { 2.5, 1.2, 0.9, 0.8, 0.75 };
+ * time when it just changed (TM_UNSTABLE_PERCENT, tunable, 2.5 by default), less when it has held. */
+static const double tm_stability_scale[TM_STABILITY_MAX + 1] = { 0.0 /* TM_UNSTABLE_PERCENT */, 1.2, 0.9, 0.8, 0.75 };
 
 double tm_scale(int stability, uint64_t best_move_nodes, uint64_t root_nodes) {
     if (stability < 0) stability = 0;
     if (stability > TM_STABILITY_MAX) stability = TM_STABILITY_MAX;
+    const double stability_scale = stability == 0 ? TM_UNSTABLE_PERCENT / 100.0 : tm_stability_scale[stability];
     /* The best move's share of the root's nodes: near 1 it's clearly best, low when others came close. */
     const double fraction = root_nodes ? (double) best_move_nodes / (double) root_nodes : 1.0;
-    const double nodes_scale = (1.5 - (fraction > 1.0 ? 1.0 : fraction)) * 1.35;
-    return tm_stability_scale[stability] * nodes_scale;
+    const double nodes_scale = (1.5 - (fraction > 1.0 ? 1.0 : fraction)) * (TM_NODES_PERCENT / 100.0);
+    return stability_scale * nodes_scale;
 }
 
 move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* limits) {

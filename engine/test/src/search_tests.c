@@ -749,37 +749,53 @@ void test_quiescence_searches_promotion_with_negative_history() {
 
 void test_lmr_reduction() {
     /* No reduction for the first moves or shallow depths. */
-    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(1, 10, false, 0));
-    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(3, 1, false, 0));
+    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(1, 10, false, 0, false, true));
+    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(3, 1, false, 0, false, true));
 
     /* Grows with depth and with the move number, never decreasing. */
     for (int depth = 2; depth < 40; depth++) {
         for (int moves = 1; moves < 60; moves++) {
-            int r = lmr_reduction(depth, moves, false, 0);
-            TEST_ASSERT_TRUE(r >= lmr_reduction(depth - 1, moves, false, 0));
-            TEST_ASSERT_TRUE(r >= lmr_reduction(depth, moves - 1, false, 0));
+            int r = lmr_reduction(depth, moves, false, 0, false, true);
+            TEST_ASSERT_TRUE(r >= lmr_reduction(depth - 1, moves, false, 0, false, true));
+            TEST_ASSERT_TRUE(r >= lmr_reduction(depth, moves - 1, false, 0, false, true));
             /* At least one ply is left to search. */
             TEST_ASSERT_TRUE(depth - 1 - r >= 1);
             /* PV nodes are reduced less, by one ply. */
-            int pv = lmr_reduction(depth, moves, true, 0);
+            int pv = lmr_reduction(depth, moves, true, 0, false, true);
             TEST_ASSERT_TRUE(pv == r || pv == r - 1);
         }
     }
 
     /* A deep late move is reduced by more than the old flat 1. */
-    TEST_ASSERT_TRUE(lmr_reduction(12, 20, false, 0) >= 2);
+    TEST_ASSERT_TRUE(lmr_reduction(12, 20, false, 0, false, true) >= 2);
 
     /* Moves past the end of the table use the last column. */
-    TEST_ASSERT_EQUAL_INT(lmr_reduction(20, LMR_TABLE_SIZE - 1, false, 0), lmr_reduction(20, 200, false, 0));
+    TEST_ASSERT_EQUAL_INT(lmr_reduction(20, LMR_TABLE_SIZE - 1, false, 0, false, true), lmr_reduction(20, 200, false, 0, false, true));
 
     /* History: a ply less per LMR_HISTORY_DIVISOR of a good score, a ply more per one of a bad score. */
-    const int r = lmr_reduction(12, 20, false, 0);
-    TEST_ASSERT_EQUAL_INT(r, lmr_reduction(12, 20, false, LMR_HISTORY_DIVISOR - 1));
-    TEST_ASSERT_EQUAL_INT(r - 1, lmr_reduction(12, 20, false, LMR_HISTORY_DIVISOR));
-    TEST_ASSERT_EQUAL_INT(r + 1, lmr_reduction(12, 20, false, -LMR_HISTORY_DIVISOR));
+    const int r = lmr_reduction(12, 20, false, 0, false, true);
+    TEST_ASSERT_EQUAL_INT(r, lmr_reduction(12, 20, false, LMR_HISTORY_DIVISOR - 1, false, true));
+    TEST_ASSERT_EQUAL_INT(r - 1, lmr_reduction(12, 20, false, LMR_HISTORY_DIVISOR, false, true));
+    TEST_ASSERT_EQUAL_INT(r + 1, lmr_reduction(12, 20, false, -LMR_HISTORY_DIVISOR, false, true));
     /* Still within [0, depth - 2] at the history bounds. */
-    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(12, 20, false, HISTORY_MAX));
-    TEST_ASSERT_EQUAL_INT(10, lmr_reduction(12, 20, false, -HISTORY_MAX));
+    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(12, 20, false, HISTORY_MAX, false, true));
+    TEST_ASSERT_EQUAL_INT(10, lmr_reduction(12, 20, false, -HISTORY_MAX, false, true));
+}
+
+void test_lmr_cut_node_and_improving() {
+    const int r = lmr_reduction(12, 20, false, 0, false, true);
+    /* LMR_CUT_NODE plies more at a cut node, LMR_NOT_IMPROVING more when not improving, both added. */
+    TEST_ASSERT_EQUAL_INT(r + LMR_CUT_NODE, lmr_reduction(12, 20, false, 0, true, true));
+    TEST_ASSERT_EQUAL_INT(r + LMR_NOT_IMPROVING, lmr_reduction(12, 20, false, 0, false, false));
+    TEST_ASSERT_EQUAL_INT(r + LMR_CUT_NODE + LMR_NOT_IMPROVING, lmr_reduction(12, 20, false, 0, true, false));
+    /* Still clamped: at least one ply is left to search, and never negative. */
+    for (int depth = 2; depth < 40; depth++) {
+        for (int moves = 1; moves < 60; moves++) {
+            const int most = lmr_reduction(depth, moves, false, -HISTORY_MAX, true, false);
+            TEST_ASSERT_TRUE(depth - 1 - most >= 1);
+            TEST_ASSERT_TRUE(lmr_reduction(depth, moves, true, HISTORY_MAX, false, true) >= 0);
+        }
+    }
 }
 
 void test_iir_reduction() {
@@ -1302,7 +1318,7 @@ void test_excluded_move_search() {
 void test_tunable_parameters() {
 #ifdef TIKI_TUNE
     /* A tuning build: the parameters are variables, set by name (any case) and kept in range. */
-    TEST_ASSERT_EQUAL_INT(20, tunable_count);
+    TEST_ASSERT_EQUAL_INT(27, tunable_count);
     const int saved = RFP_MARGIN;
     TEST_ASSERT_TRUE(set_tunable("rfp_margin", 10, 120));
     TEST_ASSERT_EQUAL_INT(120, RFP_MARGIN);

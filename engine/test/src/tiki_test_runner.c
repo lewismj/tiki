@@ -149,6 +149,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_smp_helpers_grow_and_shrink);
     RUN_TEST(test_node_limit_stops_search);
     RUN_TEST(test_lmr_reduction);
+    RUN_TEST(test_lmr_cut_node_and_improving);
     RUN_TEST(test_tt_lookup);
     RUN_TEST(test_singular_extension_conditions);
     RUN_TEST(test_singular_result);
