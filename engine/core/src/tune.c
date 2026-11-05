@@ -36,6 +36,22 @@ int tune_corr_pawn_weight = CORR_PAWN_WEIGHT_DEFAULT;
 int tune_corr_nonpawn_weight = CORR_NONPAWN_WEIGHT_DEFAULT;
 int tune_corr_max = CORR_MAX_DEFAULT;
 int tune_corr_rate = CORR_RATE_DEFAULT;
+int tune_se_min_depth = SE_MIN_DEPTH_DEFAULT;
+int tune_se_tt_depth_margin = SE_TT_DEPTH_MARGIN_DEFAULT;
+int tune_se_reduction = SE_REDUCTION_DEFAULT;
+int tune_lmr_killer_max = LMR_KILLER_MAX_DEFAULT;
+int tune_lmr_base = LMR_BASE_DEFAULT;
+int tune_lmr_divisor = LMR_DIVISOR_DEFAULT;
+int tune_lmr_min_depth = LMR_MIN_DEPTH_DEFAULT;
+int tune_lmr_min_moves = LMR_MIN_MOVES_DEFAULT;
+int tune_hist_bonus_scale = HIST_BONUS_SCALE_DEFAULT;
+int tune_hist_bonus_max = HIST_BONUS_MAX_DEFAULT;
+int tune_lmp_max_depth = LMP_MAX_DEPTH_DEFAULT;
+int tune_see_prune_max_depth = SEE_PRUNE_MAX_DEPTH_DEFAULT;
+int tune_iir_min_depth = IIR_MIN_DEPTH_DEFAULT;
+int tune_aspiration_window = ASPIRATION_WINDOW_DEFAULT;
+int tune_delta_margin = DELTA_MARGIN_DEFAULT;
+int tune_capture_history_divisor = CAPTURE_HISTORY_DIVISOR_DEFAULT;
 
 /* name, variable, min, max, c_end, r_end. c_end is about a twentieth of the range, at least 0.5
  * (OpenBench's minimum for integers); r_end is OpenBench's usual 0.002. */
@@ -74,6 +90,22 @@ const tunable_t tunables[] = {
     { "CORR_NONPAWN_WEIGHT", &tune_corr_nonpawn_weight, 0, 200, 10.0, 0.002 },
     { "CORR_MAX",           &tune_corr_max,           16, 200,  9.0, 0.002 },
     { "CORR_RATE",          &tune_corr_rate,          16, 128,  6.0, 0.002 },
+    { "SE_MIN_DEPTH",        &tune_se_min_depth,    4,   10,    0.5, 0.002 },
+    { "SE_TT_DEPTH_MARGIN",  &tune_se_tt_depth_margin,    1,    6,    0.5, 0.002 },
+    { "SE_REDUCTION",        &tune_se_reduction,    0,    3,    0.5, 0.002 },
+    { "LMR_KILLER_MAX",      &tune_lmr_killer_max,    0,    3,    0.5, 0.002 },
+    { "LMR_BASE",            &tune_lmr_base,    0,  150,    7.5, 0.002 },
+    { "LMR_DIVISOR",         &tune_lmr_divisor,  150,  400,   12.5, 0.002 },
+    { "LMR_MIN_DEPTH",       &tune_lmr_min_depth,    3,    6,    0.5, 0.002 },
+    { "LMR_MIN_MOVES",       &tune_lmr_min_moves,    1,    6,    0.5, 0.002 },
+    { "HIST_BONUS_SCALE",    &tune_hist_bonus_scale,    4,   40,    1.8, 0.002 },
+    { "HIST_BONUS_MAX",      &tune_hist_bonus_max,  400, 4000,  180.0, 0.002 },
+    { "LMP_MAX_DEPTH",       &tune_lmp_max_depth,    3,   10,    0.5, 0.002 },
+    { "SEE_PRUNE_MAX_DEPTH", &tune_see_prune_max_depth,    4,   12,    0.5, 0.002 },
+    { "IIR_MIN_DEPTH",       &tune_iir_min_depth,    2,    8,    0.5, 0.002 },
+    { "ASPIRATION_WINDOW",   &tune_aspiration_window,    8,   80,    3.6, 0.002 },
+    { "DELTA_MARGIN",        &tune_delta_margin,   50,  400,   17.5, 0.002 },
+    { "CAPTURE_HISTORY_DIVISOR", &tune_capture_history_divisor,    8,   64,    2.8, 0.002 },
 };
 const int tunable_count = (int) (sizeof(tunables) / sizeof(tunables[0]));
 #else
@@ -93,6 +125,7 @@ bool set_tunable(const char* name, size_t length, int value) {
         const tunable_t* t = &tunables[i];
         if (strlen(t->name) == length && strncasecmp(name, t->name, length) == 0) {
             *t->value = value < t->min ? t->min : (value > t->max ? t->max : value);
+            init_lmr_table();   /* LMR_BASE and LMR_DIVISOR shape it. */
             return true;
         }
     }

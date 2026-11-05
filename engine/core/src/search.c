@@ -315,7 +315,8 @@ static void stat_capture_cut(const stat_capture_ranks_t* ranks, search_state_t* 
 #endif
 
 static inline_always int history_bonus(int depth) {
-    return depth < 10 ? 16 * depth * depth : 1600;
+    const int bonus = HIST_BONUS_SCALE * depth * depth;
+    return bonus < HIST_BONUS_MAX ? bonus : HIST_BONUS_MAX;
 }
 
 /* Quiet move raised alpha, bonus min(16 * depth^2, 1600). */
@@ -1257,7 +1258,7 @@ static int negamax_node(int alpha,
             count_singular(search_state, search_state->nodes - nodes_before, result);
             if (result == singular_multi_cut) return beta;
             if (result == singular_extend) extension = 1;
-            else if (result == singular_reduce) extension = -1;
+            else if (result == singular_reduce) extension = -SE_REDUCTION;
         }
     }
 
@@ -1358,10 +1359,16 @@ static int negamax_node(int alpha,
         /* At the root, the nodes this move takes, for time management (tm_scale). */
         const uint64_t nodes_before_move = search_state->nodes;
 
-        /* Late move reduction: quiet moves adjusted by their history, losing captures by the table alone. */
-        const int reduction =
+        /* Late move reduction: quiet moves adjusted by their history, losing captures by the table alone.
+         * The killers by at most LMR_KILLER_MAX (by default 0, never reduced). */
+        int reduction =
             can_reduce(depth, num_moves_searched, is_quiet, gives_check, in_check, is_killer, is_bad_capture) ?
             lmr_reduction(depth, num_moves_searched, is_pv_node, history, cut_node, improving) : 0;
+        if (LMR_KILLER_MAX > 0 && is_killer &&
+            can_reduce(depth, num_moves_searched, is_quiet, gives_check, in_check, false, is_bad_capture)) {
+            const int r = lmr_reduction(depth, num_moves_searched, is_pv_node, history, cut_node, improving);
+            reduction = r < LMR_KILLER_MAX ? r : LMR_KILLER_MAX;
+        }
         /* The TT move a ply deeper if it's singular, shallower if it isn't but beat beta (see above). */
         const int new_depth = depth - 1 + (mv == tt_move ? extension : 0);
 

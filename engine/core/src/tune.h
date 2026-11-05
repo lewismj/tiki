@@ -69,7 +69,23 @@ enum {
     CORR_PAWN_WEIGHT_DEFAULT = CORR_PAWN_WEIGHT,
     CORR_NONPAWN_WEIGHT_DEFAULT = CORR_NONPAWN_WEIGHT,
     CORR_MAX_DEFAULT = CORR_MAX,
-    CORR_RATE_DEFAULT = CORR_RATE
+    CORR_RATE_DEFAULT = CORR_RATE,
+    SE_MIN_DEPTH_DEFAULT = SE_MIN_DEPTH,
+    SE_TT_DEPTH_MARGIN_DEFAULT = SE_TT_DEPTH_MARGIN,
+    SE_REDUCTION_DEFAULT = SE_REDUCTION,
+    LMR_KILLER_MAX_DEFAULT = LMR_KILLER_MAX,
+    LMR_BASE_DEFAULT = LMR_BASE,
+    LMR_DIVISOR_DEFAULT = LMR_DIVISOR,
+    LMR_MIN_DEPTH_DEFAULT = LMR_MIN_DEPTH,
+    LMR_MIN_MOVES_DEFAULT = LMR_MIN_MOVES,
+    HIST_BONUS_SCALE_DEFAULT = HIST_BONUS_SCALE,
+    HIST_BONUS_MAX_DEFAULT = HIST_BONUS_MAX,
+    LMP_MAX_DEPTH_DEFAULT = LMP_MAX_DEPTH,
+    SEE_PRUNE_MAX_DEPTH_DEFAULT = SEE_PRUNE_MAX_DEPTH,
+    IIR_MIN_DEPTH_DEFAULT = IIR_MIN_DEPTH,
+    ASPIRATION_WINDOW_DEFAULT = ASPIRATION_WINDOW,
+    DELTA_MARGIN_DEFAULT = DELTA_MARGIN,
+    CAPTURE_HISTORY_DIVISOR_DEFAULT = CAPTURE_HISTORY_DIVISOR
 };
 
 extern int tune_rfp_margin;
@@ -103,6 +119,22 @@ extern int tune_corr_pawn_weight;
 extern int tune_corr_nonpawn_weight;
 extern int tune_corr_max;
 extern int tune_corr_rate;
+extern int tune_se_min_depth;
+extern int tune_se_tt_depth_margin;
+extern int tune_se_reduction;
+extern int tune_lmr_killer_max;
+extern int tune_lmr_base;
+extern int tune_lmr_divisor;
+extern int tune_lmr_min_depth;
+extern int tune_lmr_min_moves;
+extern int tune_hist_bonus_scale;
+extern int tune_hist_bonus_max;
+extern int tune_lmp_max_depth;
+extern int tune_see_prune_max_depth;
+extern int tune_iir_min_depth;
+extern int tune_aspiration_window;
+extern int tune_delta_margin;
+extern int tune_capture_history_divisor;
 
 #undef RFP_MARGIN
 #undef RFP_MAX_DEPTH
@@ -135,6 +167,22 @@ extern int tune_corr_rate;
 #undef CORR_NONPAWN_WEIGHT
 #undef CORR_MAX
 #undef CORR_RATE
+#undef SE_MIN_DEPTH
+#undef SE_TT_DEPTH_MARGIN
+#undef SE_REDUCTION
+#undef LMR_KILLER_MAX
+#undef LMR_BASE
+#undef LMR_DIVISOR
+#undef LMR_MIN_DEPTH
+#undef LMR_MIN_MOVES
+#undef HIST_BONUS_SCALE
+#undef HIST_BONUS_MAX
+#undef LMP_MAX_DEPTH
+#undef SEE_PRUNE_MAX_DEPTH
+#undef IIR_MIN_DEPTH
+#undef ASPIRATION_WINDOW
+#undef DELTA_MARGIN
+#undef CAPTURE_HISTORY_DIVISOR
 #define RFP_MARGIN tune_rfp_margin
 #define RFP_MAX_DEPTH tune_rfp_max_depth
 #define FUTILITY_MARGIN tune_futility_margin
@@ -166,6 +214,22 @@ extern int tune_corr_rate;
 #define CORR_NONPAWN_WEIGHT tune_corr_nonpawn_weight
 #define CORR_MAX tune_corr_max
 #define CORR_RATE tune_corr_rate
+#define SE_MIN_DEPTH tune_se_min_depth
+#define SE_TT_DEPTH_MARGIN tune_se_tt_depth_margin
+#define SE_REDUCTION tune_se_reduction
+#define LMR_KILLER_MAX tune_lmr_killer_max
+#define LMR_BASE tune_lmr_base
+#define LMR_DIVISOR tune_lmr_divisor
+#define LMR_MIN_DEPTH tune_lmr_min_depth
+#define LMR_MIN_MOVES tune_lmr_min_moves
+#define HIST_BONUS_SCALE tune_hist_bonus_scale
+#define HIST_BONUS_MAX tune_hist_bonus_max
+#define LMP_MAX_DEPTH tune_lmp_max_depth
+#define SEE_PRUNE_MAX_DEPTH tune_see_prune_max_depth
+#define IIR_MIN_DEPTH tune_iir_min_depth
+#define ASPIRATION_WINDOW tune_aspiration_window
+#define DELTA_MARGIN tune_delta_margin
+#define CAPTURE_HISTORY_DIVISOR tune_capture_history_divisor
 #endif
 
 #endif

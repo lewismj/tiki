@@ -1318,7 +1318,7 @@ void test_excluded_move_search() {
 void test_tunable_parameters() {
 #ifdef TIKI_TUNE
     /* A tuning build: the parameters are variables, set by name (any case) and kept in range. */
-    TEST_ASSERT_EQUAL_INT(31, tunable_count);
+    TEST_ASSERT_EQUAL_INT(47, tunable_count);
     const int saved = RFP_MARGIN;
     TEST_ASSERT_TRUE(set_tunable("rfp_margin", 10, 120));
     TEST_ASSERT_EQUAL_INT(120, RFP_MARGIN);

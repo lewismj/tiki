@@ -36,6 +36,11 @@ void init_lmr_table();
 #define LMR_MIN_DEPTH 3          /* Late move reduction from this depth...                                   */
 #define LMR_MIN_MOVES 3          /* ...after this many moves have been searched at the node.                 */
 #define LMR_TABLE_SIZE 64
+#define LMR_BASE 75              /* lmr_table: (base + ln(depth) * ln(moves) * 100 / divisor) / 100 plies,   */
+#define LMR_DIVISOR 225          /* i.e. 0.75 + ln(depth) * ln(moves) / 2.25 (init_lmr_table).               */
+#define LMR_KILLER_MAX 0         /* The killers are reduced by at most this (0: never reduced).              */
+#define HIST_BONUS_SCALE 16      /* History bonus (and malus) of a move: min(scale * depth^2, max)           */
+#define HIST_BONUS_MAX 1600      /* (history_bonus).                                                         */
 #define LMR_HISTORY_DIVISOR 1000 /* A quiet move is reduced quiet_history / this plies less (more if        */
                                  /* negative).                                                               */
 /* Correction history (search_state.h, corr_history_t; search.c, eval_correction). */
@@ -77,6 +82,8 @@ void init_lmr_table();
 #define SEE_CAPTURE_MARGIN 20    /* ...and captures with SEE < -margin * depth^2.                            */
 #define SE_MIN_DEPTH 6           /* Singular extensions from this depth, with a TT entry at least...         */
 #define SE_TT_DEPTH_MARGIN 3     /* ...this much shallower than the node, if every other move scores below...*/
+#define SE_REDUCTION 1           /* A TT move that isn't singular but beat beta is searched this much        */
+                                 /* shallower (singular_reduce).                                             */
 #define SE_MARGIN 2              /* ...the TT score - margin * depth (cp) in a search of half the depth.      */
 
 /* Move ordering (score_move), highest first. Each category is an offset, the bands mustn't overlap. */
@@ -92,14 +99,17 @@ void init_lmr_table();
 #define MVV_LVA_MAX 605
 
 #define CAPTURE_HISTORY_SPAN (CAPTURE_HISTORY_MAX / CAPTURE_HISTORY_DIVISOR)
-static_assert(CAPTURE_SCORE + MVV_LVA_MAX + CAPTURE_HISTORY_SPAN < PV_MOVE_SCORE && PV_MOVE_SCORE < TT_MOVE_SCORE,
+/* The asserts hold for every divisor a tuning run can set (tune.c, at least this). */
+#define CAPTURE_HISTORY_DIVISOR_MIN 8
+#define CAPTURE_HISTORY_SPAN_MAX (CAPTURE_HISTORY_MAX / CAPTURE_HISTORY_DIVISOR_MIN)
+static_assert(CAPTURE_SCORE + MVV_LVA_MAX + CAPTURE_HISTORY_SPAN_MAX < PV_MOVE_SCORE && PV_MOVE_SCORE < TT_MOVE_SCORE,
               "captures under the PV move");
-static_assert(KILLER_1_SCORE < CAPTURE_SCORE + MVV_LVA_MIN - CAPTURE_HISTORY_SPAN && KILLER_2_SCORE < KILLER_1_SCORE,
+static_assert(KILLER_1_SCORE < CAPTURE_SCORE + MVV_LVA_MIN - CAPTURE_HISTORY_SPAN_MAX && KILLER_2_SCORE < KILLER_1_SCORE,
               "killers under captures");
 static_assert(KILLER_1_SCORE < QUEEN_PROMOTION_SCORE && QUEEN_PROMOTION_SCORE < PV_MOVE_SCORE,
               "queen promotions over the killers");
 static_assert(HISTORY_MAX < KILLER_2_SCORE, "quiet moves under the killers");
-static_assert(BAD_CAPTURE_SCORE + MVV_LVA_MAX + CAPTURE_HISTORY_SPAN < -HISTORY_MAX,
+static_assert(BAD_CAPTURE_SCORE + MVV_LVA_MAX + CAPTURE_HISTORY_SPAN_MAX < -HISTORY_MAX,
               "losing captures under every quiet move");
 
 /* Built with TIKI_TUNE, the tunable constants above become variables set by UCI options (tune.h). */
