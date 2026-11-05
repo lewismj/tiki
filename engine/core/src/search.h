@@ -31,6 +31,10 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
  */
 double tm_scale(int stability, uint64_t best_move_nodes, uint64_t root_nodes);
 
+/* The static eval refined by the position's TT entry (NULL for none): the TT score when its bound
+ * says the true score is on that side of the eval, otherwise the eval. Mate scores are ignored. */
+int adjusted_eval(int eval, const tt_info_t* tt);
+
 /* Prints 'bestmove', 'bestmove 0000' for no move. */
 void print_bestmove(move_t mv);
 
@@ -73,15 +77,28 @@ bool is_draw(board_t* board, search_state_t* search_state);
 bool is_insufficient_material(const board_t* board);
 
 /* Pruning and reduction decisions, see search.c. */
+bool is_improving(int static_eval, int eval_2_plies_up, int eval_4_plies_up);
 bool can_null_move(const board_t* board, const search_state_t* search_state, int depth, int beta, int static_eval,
                    bool in_check, bool is_pv_node);
-bool can_reverse_futility_prune(int depth, int static_eval, int beta, bool in_check, bool is_pv_node, int ply);
+int null_move_depth(int depth, int static_eval, int beta);
+bool can_reverse_futility_prune(int depth, int static_eval, int beta, bool in_check, bool is_pv_node, int ply,
+                                bool improving);
 bool is_futile(int depth, int static_eval, int alpha, bool in_check, bool is_pv_node);
-bool can_late_move_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node);
+bool can_late_move_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node, bool improving);
 bool can_see_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node);
 int see_prune_threshold(int depth, bool is_quiet);
-bool can_reduce(int depth, int moves_searched, bool is_quiet, bool gives_check, bool in_check, bool is_killer);
-int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history);
+bool can_reduce(int depth, int moves_searched, bool is_quiet, bool gives_check, bool in_check, bool is_killer,
+                bool is_bad_capture);
+bool can_history_prune(int depth, int history, int moves_searched, int alpha, bool in_check, bool is_pv_node,
+                       bool is_killer);
+/* A quiet move's history at the node: its history plus its continuation history after the moves 1, 2
+ * and 4 plies back (search_state->path_moves, those there are). */
+int quiet_history(const search_state_t* search_state, move_t mv);
+int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history, bool cut_node, bool improving);
+/* Correction history (corr_history_t): the correction to the position's static eval, within
+ * +-CORR_MAX, and an update moving it towards 'error' (score - corrected eval) at this depth. */
+int eval_correction(const board_t* board, const search_state_t* search_state);
+void update_correction(search_state_t* search_state, const board_t* board, int depth, int error);
 int iir_reduction(int depth, move_t tt_move);
 bool can_singular_extend(int depth, int ply, int root_depth, move_t tt_move, int tt_depth, tt_entry_type tt_type,
                          int tt_score);

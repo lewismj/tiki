@@ -2,7 +2,7 @@
 #define TIKI_VERSION_H
 
 #define ENGINE_NAME     "tiki"
-#define ENGINE_VERSION  "0.0.5"
+#define ENGINE_VERSION  "0.0.6"
 #define ENGINE_AUTHOR   "Michael Lewis"
 
 #endif

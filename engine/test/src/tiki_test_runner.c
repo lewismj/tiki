@@ -64,6 +64,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_make_move_hash3);
     RUN_TEST(test_undo_restores_state1);
     RUN_TEST(test_incremental_hash_matches_full);
+    RUN_TEST(test_incremental_corr_keys_match_full);
     RUN_TEST(test_pop_on_empty_stack_is_clamped);
     RUN_TEST(test_parse_fen_fields);
     RUN_TEST(test_parse_move_promotions);
@@ -73,6 +74,8 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_slider_attacks_match_reference);
     RUN_TEST(test_generate_captures_matches_filtered_moves);
     RUN_TEST(test_generate_captures_promotions);
+    RUN_TEST(test_staged_generation_matches_all_moves);
+    RUN_TEST(test_move_is_pseudo_legal);
     RUN_TEST(test_see);
     RUN_TEST(test_see_ge_matches_see);
     RUN_TEST(test_board_to_fen_round_trip);
@@ -109,6 +112,9 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_quiescence_sees_quiet_queen_promotion);
     RUN_TEST(test_check_extended_at_horizon);
     RUN_TEST(test_null_move_guards);
+    RUN_TEST(test_null_move_depth);
+    RUN_TEST(test_null_move_verification_restores_state);
+    RUN_TEST(test_improving);
     RUN_TEST(test_history_bonus_and_bound);
     RUN_TEST(test_history_stays_below_killers_and_captures);
     RUN_TEST(test_queen_promotion_ordered_with_captures);
@@ -133,6 +139,9 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_pv_followed_only_on_pv_path);
     RUN_TEST(test_store_killer);
     RUN_TEST(test_killers_are_not_captures);
+    RUN_TEST(test_quiet_history_sums_continuation);
+    RUN_TEST(test_continuation_history_updates_and_isnt_aged);
+    RUN_TEST(test_history_pruning_guards);
     RUN_TEST(test_can_reduce);
     RUN_TEST(test_pv_is_legal);
     RUN_TEST(test_mate_distance_scores);
@@ -143,6 +152,9 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_smp_helpers_grow_and_shrink);
     RUN_TEST(test_node_limit_stops_search);
     RUN_TEST(test_lmr_reduction);
+    RUN_TEST(test_lmr_cut_node_and_improving);
+    RUN_TEST(test_correction_history_learns_without_overshoot);
+    RUN_TEST(test_correction_history_keys);
     RUN_TEST(test_tt_lookup);
     RUN_TEST(test_singular_extension_conditions);
     RUN_TEST(test_singular_result);
@@ -187,6 +199,12 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_tt_mate_score_round_trip);
     RUN_TEST(test_tt_stores_best_move);
     RUN_TEST(test_tt_replacement);
+    RUN_TEST(test_tt_bucket_keeps_positions_apart);
+    RUN_TEST(test_tt_bucket_replaces_least_valuable);
+    RUN_TEST(test_tt_stores_static_eval);
+    RUN_TEST(test_tt_read_and_cutoff);
+    RUN_TEST(test_adjusted_eval);
+    RUN_TEST(test_qsearch_saves_to_tt);
     RUN_TEST(test_castle_key_all_rights);
     RUN_TEST(test_go_keeps_tt);
     RUN_TEST(test_search_stores_exact_root);

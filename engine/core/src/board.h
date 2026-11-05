@@ -26,6 +26,7 @@ typedef struct  {
     int en_passant;
     int fifty_move;
     uint64_t hash;
+    uint64_t corr_keys[3];
 } undo_meta_t;
 
 #define MAX_STACK 1024
@@ -42,6 +43,10 @@ typedef struct {
     colour side;
     int fifty_move;
     uint64_t hash;
+    /* The correction history's keys (search.c, corr_history_t): the Zobrist piece keys of the pawns
+     * (both colours), of white's other pieces and of black's other pieces, each XORed together.
+     * Kept up to date with the hash (toggle_piece_keys). */
+    uint64_t corr_keys[3];
     /* Used for applying/undo moves to a board. */
     undo_meta_t stack[MAX_STACK];
     int stack_ptr;
@@ -111,12 +116,45 @@ static inline_always uint64_t compute_hash(const board_t* board) {
     return hash;
 }
 
+/* Which correction key a piece is part of: 0 the pawns, 1 white's other pieces, 2 black's. */
+static const int corr_key_of[12] = { 0, 1, 1, 1, 1, 1, 0, 2, 2, 2, 2, 2 };
+
 /**
- * Recomputes the Zobrist hash of the board state.
+ * Computes the correction history's keys (board_t.corr_keys) from scratch, the reference
+ * make_move's incremental updates must match.
+ */
+static inline_always void compute_corr_keys(const board_t* board, uint64_t keys[3]) {
+    keys[0] = keys[1] = keys[2] = 0ULL;
+    for (int p = 0; p < 12; p++) {
+        bitboard b = board->pieces[p];
+        while (b != 0ULL) {
+            square s = get_lsb_and_pop_bit(&b);
+            keys[corr_key_of[p]] ^= get_piece_key(s, p);
+        }
+    }
+}
+
+/**
+ * Recomputes the Zobrist hash of the board state, and the correction history's keys.
  * @param board the board state.
  */
 static inline_always void recalculate_hash(board_t* board) {
     board->hash = compute_hash(board);
+    compute_corr_keys(board, board->corr_keys);
+}
+
+/* A piece put on or taken off a square: its key in the hash and in its correction key. */
+static inline_always void toggle_piece_keys(board_t* board, square s, int p) {
+    const uint64_t key = get_piece_key(s, p);
+    board->hash ^= key;
+    board->corr_keys[corr_key_of[p]] ^= key;
+}
+
+/* Debug builds: the incremental correction keys match a full recompute. */
+static inline_always bool corr_keys_match(const board_t* board) {
+    uint64_t keys[3];
+    compute_corr_keys(board, keys);
+    return keys[0] == board->corr_keys[0] && keys[1] == board->corr_keys[1] && keys[2] == board->corr_keys[2];
 }
 
 
@@ -267,6 +305,7 @@ static inline_always void pop_move(board_t* board) {
     board->en_passant = undo_element->en_passant;
     board->fifty_move = undo_element->fifty_move;
     board->hash = undo_element->hash;
+    memcpy(board->corr_keys, undo_element->corr_keys, sizeof(board->corr_keys));
     board->occupancy[both] = board->occupancy[white] | board->occupancy[black];
     board->side ^= 1;
 }
@@ -281,6 +320,7 @@ static inline_always bool make_move(board_t* board, move_t move) {
     board->stack[board->stack_ptr].en_passant = board->en_passant;
     board->stack[board->stack_ptr].fifty_move = board->fifty_move;
     board->stack[board->stack_ptr].hash = board->hash;
+    memcpy(board->stack[board->stack_ptr].corr_keys, board->corr_keys, sizeof(board->corr_keys));
 
     /* Retrieve move properties. */
     square source = get_source_square(move);
@@ -295,8 +335,8 @@ static inline_always bool make_move(board_t* board, move_t move) {
     pop_bit(&board->occupancy[board->side], source);
     set_bit(&board->pieces[move_piece], target);
     set_bit(&board->occupancy[board->side], target);
-    board->hash ^= get_piece_key(source, move_piece);
-    board->hash ^= get_piece_key(target, move_piece);
+    toggle_piece_keys(board, source, move_piece);
+    toggle_piece_keys(board, target, move_piece);
 
     /* Update half/fifty move counter, if necessary. */
     if ( move_piece == P || move_piece == p || capture_flag) {
@@ -324,7 +364,7 @@ static inline_always bool make_move(board_t* board, move_t move) {
             board->stack[board->stack_ptr].captured_piece = captured_piece;
             pop_bit(&board->pieces[captured_piece], target);
             pop_bit(&board->occupancy[opponent], target);
-            board->hash ^= get_piece_key(target, captured_piece);
+            toggle_piece_keys(board, target, captured_piece);
             break;
         }
     }
@@ -344,12 +384,12 @@ static inline_always bool make_move(board_t* board, move_t move) {
             square sq = target + 8;
             pop_bit(&board->pieces[p], sq);
             pop_bit(&board->occupancy[opponent], sq);
-            board->hash ^= get_piece_key(sq, p);
+            toggle_piece_keys(board, sq, p);
         } else {
             square sq = target - 8;
             pop_bit(&board->pieces[P], sq);
             pop_bit(&board->occupancy[opponent], sq);
-            board->hash ^= get_piece_key(sq, P);
+            toggle_piece_keys(board, sq, P);
         }
     } /* en passant. */
     else if (king_side_castle_flag) {
@@ -361,8 +401,8 @@ static inline_always bool make_move(board_t* board, move_t move) {
         pop_bit(&board->occupancy[board->side], from);
         set_bit(&board->pieces[rook], to);
         set_bit(&board->occupancy[board->side], to);
-        board->hash ^= get_piece_key(from, rook);
-        board->hash ^= get_piece_key(to, rook);
+        toggle_piece_keys(board, from, rook);
+        toggle_piece_keys(board, to, rook);
     } else if (queen_side_castle_flag) {
         /* Queen side castling. */
         int rook = board->side == white ? R: r;
@@ -372,18 +412,18 @@ static inline_always bool make_move(board_t* board, move_t move) {
         pop_bit(&board->occupancy[board->side], from);
         set_bit(&board->pieces[rook], to);
         set_bit(&board->occupancy[board->side], to);
-        board->hash ^= get_piece_key(from, rook);
-        board->hash ^= get_piece_key(to, rook);
+        toggle_piece_keys(board, from, rook);
+        toggle_piece_keys(board, to, rook);
     } else if (promoted) {
         /* Here promoted is piece, but if promoted=0, indicated no promotion. */
         int pawn = board->side == white ? P : p;
         pop_bit(&board->pieces[pawn], target);
         pop_bit(&board->occupancy[board->side], target);
-        board->hash ^= get_piece_key(target, pawn);
+        toggle_piece_keys(board, target, pawn);
 
         set_bit(&board->pieces[promoted], target);
         set_bit(&board->occupancy[board->side], target);
-        board->hash ^= get_piece_key(target, promoted);
+        toggle_piece_keys(board, target, promoted);
     }
 
     /* The castle key is for the combination of rights, so remove the old one before adding the new. */
@@ -401,6 +441,7 @@ static inline_always bool make_move(board_t* board, move_t move) {
 
     /* Debug builds check the incremental hash against a full recompute. */
     assert(board->hash == compute_hash(board));
+    assert(corr_keys_match(board));
     return opponent == white ?
            !is_square_attacked_by_white(board, king_sq) : !is_square_attacked_by_black(board, king_sq);
 }
@@ -439,6 +480,7 @@ static inline_always void copy_position(board_t* src, board_t* dest) {
     dest->side = src->side;
     dest->fifty_move = src->fifty_move;
     dest->hash = src->hash;
+    memcpy(dest->corr_keys, src->corr_keys, sizeof(src->corr_keys));
 
     dest->stack_ptr = 0;
     memset(dest->stack,0, sizeof(src->stack));

@@ -54,6 +54,7 @@ void reset_board(board_t* board) {
     board->fifty_move = 0;
     board->stack_ptr = 0;
     board->hash = 0ULL;
+    memset(board->corr_keys, 0, sizeof(board->corr_keys));
 }
 
 void parse_fen(const char* fen, board_t* board) {

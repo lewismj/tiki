@@ -336,3 +336,143 @@ void test_board_to_fen_round_trip() {
         TEST_ASSERT_EQUAL_STRING(input, fen);
     }
 }
+
+/* generate_noisy's moves: captures (any promotion) and queen promotions without a capture. */
+static bool is_noisy_move(move_t mv) {
+    if (get_capture_flag(mv)) return true;
+    const piece promoted = get_promoted_piece(mv);
+    return promoted == Q || promoted == q;
+}
+
+/* Walks the tree, at each node checks that generate_noisy then generate_quiets give generate_moves'
+ * moves, each once, the noisy ones first. */
+static int staged_mismatches(board_t* board, int depth) {
+    move_buffer_t all, staged;
+    generate_moves(board, &all);
+    generate_noisy(board, &staged);
+    const int noisy = staged.index;
+    generate_quiets(board, &staged);
+
+    int mismatches = 0;
+    for (int i = 0; i < staged.index; i++) {
+        if (is_noisy_move(staged.moves[i]) != (i < noisy)) mismatches++;
+    }
+    if (staged.index != all.index) {
+        mismatches++;
+    } else {
+        qsort(all.moves, all.index, sizeof(move_t), compare_moves);
+        qsort(staged.moves, staged.index, sizeof(move_t), compare_moves);
+        if (memcmp(all.moves, staged.moves, all.index * sizeof(move_t)) != 0) mismatches++;
+    }
+
+    if (depth > 1) {
+        generate_moves(board, &all);
+        for (int i = 0; i < all.index; i++) {
+            if (make_move(board, all.moves[i])) mismatches += staged_mismatches(board, depth - 1);
+            pop_move(board);
+        }
+    }
+    return mismatches;
+}
+
+static const char* const staged_positions[] = {
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/Pp2P3/2N2Q1p/1PPBBPPP/R3K2R b KQkq a3 0 1",
+        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+        "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
+        "n1n5/PPPk4/8/8/8/8/4Kppp/5N1N b - - 0 1",
+        "n1n5/PPPk4/8/8/8/8/4Kppp/5N1N w - - 0 1",
+        "rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3",
+};
+#define STAGED_POSITION_COUNT ((int) (sizeof(staged_positions) / sizeof(staged_positions[0])))
+
+void test_staged_generation_matches_all_moves() {
+    for (int i = 0; i < STAGED_POSITION_COUNT; i++) {
+        board_t board;
+        parse_fen(staged_positions[i], &board);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, staged_mismatches(&board, 3), staged_positions[i]);
+    }
+    for (int i = 0; i < TEST_POSITION_COUNT; i++) {
+        board_t board;
+        parse_fen(test_positions[i], &board);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, staged_mismatches(&board, 1), test_positions[i]);
+    }
+}
+
+/* A pool of distinct moves, from many positions, to test move_is_pseudo_legal against. */
+#define POOL_MAX 20000
+static move_t pool[POOL_MAX];
+static int pool_size;
+
+static void add_to_pool(const move_buffer_t* buffer) {
+    for (int i = 0; i < buffer->index && pool_size < POOL_MAX; i++) pool[pool_size++] = buffer->moves[i];
+}
+
+/* Collects every move generated in the positions and those one move on. */
+static void collect_moves(board_t* board, int depth) {
+    move_buffer_t all;
+    generate_moves(board, &all);
+    add_to_pool(&all);
+    if (depth > 1) {
+        for (int i = 0; i < all.index; i++) {
+            if (make_move(board, all.moves[i])) collect_moves(board, depth - 1);
+            pop_move(board);
+        }
+    }
+}
+
+/* At the position and those one move on: every pool move is pseudo-legal exactly when generate_moves
+ * gives it. */
+static int pseudo_legal_mismatches(board_t* board, int depth) {
+    move_buffer_t all;
+    generate_moves(board, &all);
+    qsort(all.moves, all.index, sizeof(move_t), compare_moves);
+    int mismatches = move_is_pseudo_legal(board, 0) ? 1 : 0;
+    for (int i = 0; i < pool_size; i++) {
+        const bool generated = bsearch(&pool[i], all.moves, all.index, sizeof(move_t), compare_moves) != NULL;
+        if (move_is_pseudo_legal(board, pool[i]) != generated) mismatches++;
+    }
+    if (depth > 1) {
+        move_buffer_t moves;
+        generate_moves(board, &moves);
+        for (int i = 0; i < moves.index; i++) {
+            if (make_move(board, moves.moves[i])) mismatches += pseudo_legal_mismatches(board, depth - 1);
+            pop_move(board);
+        }
+    }
+    return mismatches;
+}
+
+void test_move_is_pseudo_legal() {
+    pool_size = 0;
+    for (int i = 0; i < STAGED_POSITION_COUNT; i++) {
+        board_t board;
+        parse_fen(staged_positions[i], &board);
+        collect_moves(&board, 2);
+    }
+    for (int i = 0; i < TEST_POSITION_COUNT; i++) {
+        board_t board;
+        parse_fen(test_positions[i], &board);
+        collect_moves(&board, 1);
+    }
+    /* Distinct moves only. */
+    qsort(pool, pool_size, sizeof(move_t), compare_moves);
+    int distinct = 0;
+    for (int i = 0; i < pool_size; i++) {
+        if (distinct == 0 || pool[distinct - 1] != pool[i]) pool[distinct++] = pool[i];
+    }
+    pool_size = distinct;
+    TEST_ASSERT_TRUE(pool_size > 1000);
+
+    for (int i = 0; i < STAGED_POSITION_COUNT; i++) {
+        board_t board;
+        parse_fen(staged_positions[i], &board);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, pseudo_legal_mismatches(&board, 2), staged_positions[i]);
+    }
+    for (int i = 0; i < TEST_POSITION_COUNT; i++) {
+        board_t board;
+        parse_fen(test_positions[i], &board);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, pseudo_legal_mismatches(&board, 1), test_positions[i]);
+    }
+}

@@ -40,6 +40,23 @@ void generate_moves(board_t* board, move_buffer_t* move_buffer);
 void generate_captures(board_t* board, move_buffer_t* move_buffer);
 
 /**
+ * Staged move generation (search.c, the move picker): generate_noisy gives every capture (including
+ * en passant and capturing promotions to any piece) and the queen promotions without a capture, the
+ * buffer reset first; generate_quiets appends the rest (underpromotions without a capture, pawn
+ * pushes, castling and piece moves to empty squares). Together they're exactly generate_moves'
+ * moves, each once, with the same encodings.
+ */
+void generate_noisy(board_t* board, move_buffer_t* move_buffer);
+void generate_quiets(board_t* board, move_buffer_t* move_buffer);
+
+/**
+ * Whether 'move' is one of generate_moves' moves in this position (pseudo-legal: it may leave the
+ * king in check), for a TT move or a killer searched before the moves are generated (a TT entry
+ * can be another position's, a killer another node's).
+ */
+bool move_is_pseudo_legal(board_t* board, move_t move);
+
+/**
  * Update the move buffer with all the moves (if possible) of a specified piece type.
  * Used for bishop, rook, queen.
  *

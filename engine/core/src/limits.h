@@ -29,6 +29,8 @@
 #define TM_HARD_PERCENT 250
 #define TM_SCALE_MIN_DEPTH 5     /* The soft limit is scaled from this depth (the first are near instant). */
 #define TM_STABILITY_MAX 4       /* Depths of an unchanged best move counted towards the scale.           */
+#define TM_UNSTABLE_PERCENT 250  /* tm_scale's stability factor (%) when the best move just changed.        */
+#define TM_NODES_PERCENT 135     /* tm_scale's node factor: (1.5 - best move's share of nodes) * this / 100. */
 
 
 typedef struct align {
