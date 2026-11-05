@@ -65,7 +65,11 @@ enum {
     TM_SOFT_PERCENT_DEFAULT = TM_SOFT_PERCENT,
     TM_HARD_PERCENT_DEFAULT = TM_HARD_PERCENT,
     TM_UNSTABLE_PERCENT_DEFAULT = TM_UNSTABLE_PERCENT,
-    TM_NODES_PERCENT_DEFAULT = TM_NODES_PERCENT
+    TM_NODES_PERCENT_DEFAULT = TM_NODES_PERCENT,
+    CORR_PAWN_WEIGHT_DEFAULT = CORR_PAWN_WEIGHT,
+    CORR_NONPAWN_WEIGHT_DEFAULT = CORR_NONPAWN_WEIGHT,
+    CORR_MAX_DEFAULT = CORR_MAX,
+    CORR_RATE_DEFAULT = CORR_RATE
 };
 
 extern int tune_rfp_margin;
@@ -95,6 +99,10 @@ extern int tune_tm_soft_percent;
 extern int tune_tm_hard_percent;
 extern int tune_tm_unstable_percent;
 extern int tune_tm_nodes_percent;
+extern int tune_corr_pawn_weight;
+extern int tune_corr_nonpawn_weight;
+extern int tune_corr_max;
+extern int tune_corr_rate;
 
 #undef RFP_MARGIN
 #undef RFP_MAX_DEPTH
@@ -123,6 +131,10 @@ extern int tune_tm_nodes_percent;
 #undef TM_HARD_PERCENT
 #undef TM_UNSTABLE_PERCENT
 #undef TM_NODES_PERCENT
+#undef CORR_PAWN_WEIGHT
+#undef CORR_NONPAWN_WEIGHT
+#undef CORR_MAX
+#undef CORR_RATE
 #define RFP_MARGIN tune_rfp_margin
 #define RFP_MAX_DEPTH tune_rfp_max_depth
 #define FUTILITY_MARGIN tune_futility_margin
@@ -150,6 +162,10 @@ extern int tune_tm_nodes_percent;
 #define TM_HARD_PERCENT tune_tm_hard_percent
 #define TM_UNSTABLE_PERCENT tune_tm_unstable_percent
 #define TM_NODES_PERCENT tune_tm_nodes_percent
+#define CORR_PAWN_WEIGHT tune_corr_pawn_weight
+#define CORR_NONPAWN_WEIGHT tune_corr_nonpawn_weight
+#define CORR_MAX tune_corr_max
+#define CORR_RATE tune_corr_rate
 #endif
 
 #endif

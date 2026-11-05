@@ -9,6 +9,65 @@
 #include "see.h"
 
 cont_history_t main_cont_history;
+corr_history_t main_corr_history;
+
+/* The correction history indices of a position (corr_history_t), from the board's correction keys
+ * (board_t.corr_keys, kept up to date by make_move): its pawn structure, then white's and black's
+ * other pieces. Zobrist keys per piece and square, so colours and piece types all differ. */
+static inline_always void corr_indices(const board_t* board, int indices[CORR_TABLES]) {
+    for (int i = 0; i < CORR_TABLES; i++) indices[i] = (int) (board->corr_keys[i] >> (64 - CORR_BITS));
+}
+
+/* The correction from the position's entries (side to move): (pawn entry * CORR_PAWN_WEIGHT + the
+ * other two * CORR_NONPAWN_WEIGHT) / 100, in cp, within +-CORR_MAX. */
+static inline_always int correction_at(const search_state_t* search_state, int side, const int indices[CORR_TABLES]) {
+    const int16_t (*t)[CORR_SIZE] = (*search_state->corr_history)[side];
+    const int sum = t[0][indices[0]] * CORR_PAWN_WEIGHT + (t[1][indices[1]] + t[2][indices[2]]) * CORR_NONPAWN_WEIGHT;
+    const int correction = sum / (100 * CORR_GRAIN);
+    return correction > CORR_MAX ? CORR_MAX : (correction < -CORR_MAX ? -CORR_MAX : correction);
+}
+
+int eval_correction(const board_t* board, const search_state_t* search_state) {
+    int indices[CORR_TABLES];
+    corr_indices(board, indices);
+    return correction_at(search_state, board->side, indices);
+}
+
+/**
+ * Moves the position's entries towards 'error', the search's score less the corrected eval (so the
+ * correction learns what's still missing): each entry by the same step, with gravity so it stays
+ * within +-CORR_ENTRY_MAX. The step is scaled by the weights so that the correction itself moves by
+ * 2 * error * min(depth, CORR_DEPTH_MAX) / CORR_RATE, whatever the weights: at most half the error
+ * with the defaults, never more than all of it (CORR_RATE >= 2 * CORR_DEPTH_MAX), so it can't
+ * overshoot and oscillate.
+ */
+static inline_always void update_correction_at(search_state_t* search_state, int side, const int indices[CORR_TABLES],
+                                               int depth, int error) {
+    if (error > CORR_ERROR_MAX) error = CORR_ERROR_MAX;
+    if (error < -CORR_ERROR_MAX) error = -CORR_ERROR_MAX;
+    const int weight = depth < CORR_DEPTH_MAX ? depth : CORR_DEPTH_MAX;
+    int total_weight = CORR_PAWN_WEIGHT + 2 * CORR_NONPAWN_WEIGHT;
+    if (total_weight < 1) total_weight = 1;
+    int bonus = error * CORR_GRAIN * weight * 200 / (CORR_RATE * total_weight);
+    /* A step past an entry's bound means nothing (very small weights in a tuning run): capped, which
+     * also keeps *entry * magnitude below int's range. With the defaults it's at most half of it. */
+    if (bonus > CORR_ENTRY_MAX) bonus = CORR_ENTRY_MAX;
+    if (bonus < -CORR_ENTRY_MAX) bonus = -CORR_ENTRY_MAX;
+    const int magnitude = bonus < 0 ? -bonus : bonus;
+    for (int i = 0; i < CORR_TABLES; i++) {
+        int16_t* entry = &(*search_state->corr_history)[side][i][indices[i]];
+        int v = *entry + bonus - *entry * magnitude / CORR_ENTRY_MAX;
+        if (v > CORR_ENTRY_MAX) v = CORR_ENTRY_MAX;
+        if (v < -CORR_ENTRY_MAX) v = -CORR_ENTRY_MAX;
+        *entry = (int16_t) v;
+    }
+}
+
+void update_correction(search_state_t* search_state, const board_t* board, int depth, int error) {
+    int indices[CORR_TABLES];
+    corr_indices(board, indices);
+    update_correction_at(search_state, board->side, indices, depth, error);
+}
 
 /* A move's key in the continuation history (cont_history_t). */
 static inline_always int cont_key(move_t mv) {
@@ -309,6 +368,20 @@ void score_moves(const move_buffer_t* buffer, int* scores, move_t tt_move, board
  * Most nodes cut off after one or two moves, so sorting the whole list up front is wasted work.
  * The scan is branchless (the comparison mispredicts often), ties keep the earlier move.
  */
+/* Removes the quiet moves (not captures, not promotions) from 'from' on, keeping the order of the
+ * others (late move pruning, which skips them all once it starts). */
+static inline_always void drop_quiet_moves(move_buffer_t* buffer, int* scores, int from) {
+    int kept = from;
+    for (int j = from; j < buffer->index; j++) {
+        const move_t mv = buffer->moves[j];
+        if (!get_capture_flag(mv) && !get_promoted_piece(mv)) continue;
+        buffer->moves[kept] = mv;
+        scores[kept] = scores[j];
+        kept++;
+    }
+    buffer->index = kept;
+}
+
 move_t pick_next_move(move_buffer_t* buffer, int* scores, int i) {
     int best = i;
     int best_score = scores[i];
@@ -713,13 +786,14 @@ static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* 
 
     /* In check there's no standing pat (the position may be lost), every evasion is searched.
      * Otherwise the stand pat is the static eval, from the TT if it's there and refined by the
-     * TT score's bound (adjusted_eval); 'raw_eval' is the network's, the one saved. */
+     * TT score's bound (adjusted_eval); 'raw_eval' is the network's, the one saved. The correction
+     * history (eval_correction) corrects it first, qsearch doesn't update it. */
     const bool in_check = side_in_check(board);
     int raw_eval = TT_EVAL_NONE;
     int eval = -INF;
     if (!in_check) {
         raw_eval = tt_hit && tt.eval != TT_EVAL_NONE ? tt.eval : evaluation(board, &search_state->nnue);
-        eval = adjusted_eval(raw_eval, tt_hit ? &tt : NULL);
+        eval = adjusted_eval(raw_eval + eval_correction(board, search_state), tt_hit ? &tt : NULL);
     }
     if (eval >= beta) {
         tt_save(board->hash, tt_beta, 0, search_state->ply, eval, 0, raw_eval);
@@ -784,6 +858,23 @@ int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state
 
 
 /**
+ * After a node's search, the correction history learns from its result (update_correction_at):
+ * the score's error against the corrected eval, when the result says something about the eval.
+ * Not after a capture or promotion (the score is the tactic's), not mate scores, and a bound only
+ * on the side that shows an error: a fail high above the eval, a fail low below it. The caller
+ * leaves out nodes in check (no eval) and singular extension searches (not the node's result).
+ */
+static inline_always void learn_correction(search_state_t* search_state, int side, const int indices[CORR_TABLES],
+                                           int depth, int score, int corrected_eval, tt_entry_type bound,
+                                           move_t best_move) {
+    if (is_mate_score(score)) return;
+    if (best_move && (get_capture_flag(best_move) || get_promoted_piece(best_move))) return;
+    if (bound == tt_beta && score <= corrected_eval) return;
+    if (bound == tt_alpha && score >= corrected_eval) return;
+    update_correction_at(search_state, side, indices, depth, score - corrected_eval);
+}
+
+/**
  * The search of a node (negamax is the root's). cut_node: the node is expected to fail high (a
  * cut node), set by the parent as Stockfish does, see where it searches its moves. Never in a PV
  * node: a PV node's children with the full window are PV nodes, the null-window ones alternate,
@@ -822,10 +913,13 @@ static int negamax_node(int alpha,
     if (search_state->ply >= MAX_PLY - 1) return evaluation(board, &search_state->nnue);
 
     /* Extend checks before the depth 0 test, so a check at the horizon is searched rather than
-     * standing pat in qsearch (which would miss mates). */
+     * going straight to qsearch. Only below ply 2 * root depth, as the singular extensions: a long
+     * series of checks otherwise extends the line ply after ply (in endgames 44% of the nodes were
+     * past the nominal depth). Beyond it a check at the horizon goes to qsearch, which searches
+     * every evasion in check (it doesn't stand pat), so a mate there is still found. */
     bool in_check = side_in_check(board);
 
-    if (in_check) ++depth;
+    if (in_check && search_state->ply < 2 * search_state->root_depth) ++depth;
 
     /* A singular extension search of this node without the TT move (see below). Its result isn't
      * the node's: it doesn't cut off from the TT, save to it, or prune the whole node. */
@@ -849,15 +943,20 @@ static int negamax_node(int alpha,
     depth -= iir_reduction(depth, tt_move);
 
     /* Not meaningful in check, every move is searched there anyway. The network's eval is taken
-     * from the TT when it's there ('raw_eval', what's saved), then replaced by the TT score when
-     * its bound says the true score is on that side of it (adjusted_eval). */
+     * from the TT when it's there ('raw_eval', what's saved), corrected by the correction history
+     * ('corrected_eval', learnt from below), then replaced by the TT score when its bound says the
+     * true score is on that side of it (adjusted_eval). */
     int raw_eval = TT_EVAL_NONE;
+    int corrected_eval = -INF;
+    int corr_idx[CORR_TABLES];
     if (!in_check) {
         raw_eval = tt_hit && tt.eval != TT_EVAL_NONE ? tt.eval : evaluation(board, &search_state->nnue);
         /* A new position's eval is saved straight away, nodes pruned before their search keep it. */
         if (!tt_hit && !excluded_move) tt_save(board->hash, tt_none, 0, search_state->ply, 0, 0, raw_eval);
+        corr_indices(board, corr_idx);
+        corrected_eval = raw_eval + correction_at(search_state, board->side, corr_idx);
     }
-    const int static_eval = in_check ? -INF : adjusted_eval(raw_eval, tt_hit ? &tt : NULL);
+    const int static_eval = in_check ? -INF : adjusted_eval(corrected_eval, tt_hit ? &tt : NULL);
 
     /* Improving: the network's eval against this side's previous node (is_improving). Every node
      * two or four plies up is an ancestor, so its entry was written before this node was reached. */
@@ -975,8 +1074,14 @@ static int negamax_node(int alpha,
         const bool is_quiet = !is_capture && !get_promoted_piece(mv);
 
         /* Late move pruning, before making the move: a legal move has been searched already, so
-         * whether this one is legal doesn't matter. */
-        if (is_quiet && can_late_move_prune(depth, num_moves_searched, alpha, in_check, is_pv_node, improving)) continue;
+         * whether this one is legal doesn't matter. Once it prunes one quiet move it prunes every
+         * later one (it's never in PV nodes, where alpha would move; elsewhere alpha only moves on a
+         * cutoff, which returns, and the moves searched only grow), so the quiet moves left are
+         * dropped from the list: picking (a scan of what's left per move) then skips them. */
+        if (is_quiet && can_late_move_prune(depth, num_moves_searched, alpha, in_check, is_pv_node, improving)) {
+            drop_quiet_moves(&buffer, scores, i + 1);
+            continue;
+        }
         /* A losing capture (SEE < 0, ordered below the quiet moves), not the TT move: reduced like a quiet move. */
         const bool is_bad_capture = is_capture && mv != tt_move && scores[i] < 0;
         /* Killers are for this ply, checked before ++ply. A quiet move's history is read at this node
@@ -1093,7 +1198,11 @@ static int negamax_node(int alpha,
             if (score >= beta) {
                 count_cutoff(search_state, num_moves_searched, is_quiet, num_quiets_searched, is_capture, tt_move != 0,
                              mv == tt_move);
-                if (!excluded_move) tt_save(board->hash, tt_beta, depth, search_state->ply, score, mv, raw_eval);
+                if (!excluded_move) {
+                    tt_save(board->hash, tt_beta, depth, search_state->ply, score, mv, raw_eval);
+                    if (!in_check) learn_correction(search_state, board->side, corr_idx, depth, score, corrected_eval,
+                                                    tt_beta, mv);
+                }
                 if (!is_capture) store_killer(search_state, mv);
                 if (is_quiet) {
                     for (int j = 0; j < num_quiets_searched; j++) penalise_history(search_state, quiets_searched[j], depth);
@@ -1130,15 +1239,20 @@ static int negamax_node(int alpha,
     /* Fail-hard, alpha only moves if a move scored inside the window. */
     if (alpha > alpha_orig) {
         tt_save(board->hash, tt_exact, depth, search_state->ply, alpha, best_move, raw_eval);
+        if (!in_check) learn_correction(search_state, board->side, corr_idx, depth, alpha, corrected_eval, tt_exact,
+                                        best_move);
     } else {
         tt_save(board->hash, tt_alpha, depth, search_state->ply, alpha, 0, raw_eval);
+        if (!in_check) learn_correction(search_state, board->side, corr_idx, depth, alpha, corrected_eval, tt_alpha, 0);
     }
 
     return alpha;
 }
 
-/* The root's search (a PV node, so not a cut node), also the tests'. */
+/* The root's search (a PV node, so not a cut node), also the tests'. Its depth is the root depth
+ * (singular and check extensions are bounded by it), as aspiration_search sets it. */
 int negamax(int alpha, int beta, int depth, board_t* board, search_state_t* search_state, limits_t* limits) {
+    search_state->root_depth = (uint8_t) depth;
     return negamax_node(alpha, beta, depth, false, board, search_state, limits);
 }
 
@@ -1222,7 +1336,10 @@ static search_helper_t* allocate_helpers(int count) {
 /* Frees 'count' helpers and their continuation history tables. */
 static void free_helpers(search_helper_t* helpers, int count) {
     if (helpers == NULL) return;
-    for (int i = 0; i < count; i++) free(helpers[i].search_state.cont_history);
+    for (int i = 0; i < count; i++) {
+        free(helpers[i].search_state.cont_history);
+        free(helpers[i].search_state.corr_history);
+    }
 #if defined(_WIN32)
     _aligned_free(helpers);
 #else
@@ -1293,12 +1410,18 @@ static int start_helpers(board_t* board, search_state_t* search_state, limits_t*
      * set starts afresh. */
     if (count > helpers_allocated) {
         search_helper_t* grown = allocate_helpers(count);
-        /* Each helper has its own continuation history (cont_history_t, 3.5 MB). */
+        /* Each helper has its own continuation and correction history (cont_history_t, 3.5 MB,
+         * corr_history_t, 192 KB). */
         int tables = 0;
         while (grown != NULL && tables < count) {
             cont_history_t* table = malloc(sizeof(cont_history_t));
-            if (table == NULL) break;
-            init_search_state_with(&grown[tables].search_state, table);
+            corr_history_t* corrections = malloc(sizeof(corr_history_t));
+            if (table == NULL || corrections == NULL) {
+                free(table);
+                free(corrections);
+                break;
+            }
+            init_search_state_with(&grown[tables].search_state, table, corrections);
             tables++;
         }
         if (grown == NULL || tables < count) {
@@ -1332,6 +1455,7 @@ static int start_helpers(board_t* board, search_state_t* search_state, limits_t*
         memcpy(state->history_moves, search_state->history_moves, sizeof(state->history_moves));
         memcpy(state->capture_history, search_state->capture_history, sizeof(state->capture_history));
         memcpy(*state->cont_history, *search_state->cont_history, sizeof(cont_history_t));
+        memcpy(*state->corr_history, *search_state->corr_history, sizeof(corr_history_t));
         atomic_init(&state->shared_nodes, 0);
         helper->limits = limits;
         if (pthread_create(&helper->thread, NULL, helper_search, helper) != 0) break;

@@ -184,6 +184,66 @@ void test_incremental_hash_matches_full() {
     }
 }
 
+/* As hash_mismatches, for the correction history's keys (board_t.corr_keys), with a null move at every
+ * node as well (it leaves them unchanged). */
+static int corr_key_mismatches(board_t* board, int depth) {
+    if (depth == 0) return 0;
+
+    int mismatches = 0;
+    uint64_t keys[3];
+    memcpy(keys, board->corr_keys, sizeof(keys));
+    move_buffer_t buffer;
+    buffer.index = 0;
+    generate_moves(board, &buffer);
+    for (int i = 0; i < buffer.index; i++) {
+        bool legal = make_move(board, buffer.moves[i]);
+        if (!corr_keys_match(board)) mismatches++;
+        if (legal) mismatches += corr_key_mismatches(board, depth - 1);
+        pop_move(board);
+        if (memcmp(keys, board->corr_keys, sizeof(keys)) != 0) mismatches++;
+    }
+    make_null_move(board);
+    if (memcmp(keys, board->corr_keys, sizeof(keys)) != 0 || !corr_keys_match(board)) mismatches++;
+    pop_null_move(board);
+    if (memcmp(keys, board->corr_keys, sizeof(keys)) != 0) mismatches++;
+    return mismatches;
+}
+
+void test_incremental_corr_keys_match_full() {
+    /* Castling (and rights lost by rook capture), en passant, promotions with capture. */
+    static const struct { const char* fen; int depth; } positions[] = {
+            { "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", 4 },
+            { "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1", 3 },
+            { "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1", 4 },
+            { "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1", 3 },
+            { "n1n5/PPPk4/8/8/8/8/4Kppp/5N1N b - - 0 1", 3 },
+            { "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1", 3 },
+            { "rnbqkbnr/ppp1p1pp/8/3pPp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 3", 3 },
+    };
+    for (size_t i = 0; i < sizeof(positions) / sizeof(positions[0]); i++) {
+        board_t board;
+        parse_fen(positions[i].fen, &board);
+        TEST_ASSERT_TRUE_MESSAGE(corr_keys_match(&board), positions[i].fen);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, corr_key_mismatches(&board, positions[i].depth), positions[i].fen);
+    }
+    for (int i = 0; i < TEST_POSITION_COUNT; i++) {
+        board_t board;
+        parse_fen(test_positions[i], &board);
+        TEST_ASSERT_TRUE_MESSAGE(corr_keys_match(&board), test_positions[i]);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, corr_key_mismatches(&board, 2), test_positions[i]);
+    }
+
+    /* The keys tell colours and piece types apart: the pawns swapped, a bishop for the knight. */
+    board_t a, swapped, bishop;
+    parse_fen("4k3/8/8/3p4/3P4/8/2N5/4K3 w - - 0 1", &a);
+    parse_fen("4k3/8/8/3P4/3p4/8/2N5/4K3 w - - 0 1", &swapped);
+    parse_fen("4k3/8/8/3p4/3P4/8/2B5/4K3 w - - 0 1", &bishop);
+    TEST_ASSERT_TRUE(a.corr_keys[0] != swapped.corr_keys[0]);
+    TEST_ASSERT_TRUE(a.corr_keys[1] == swapped.corr_keys[1] && a.corr_keys[2] == swapped.corr_keys[2]);
+    TEST_ASSERT_TRUE(a.corr_keys[1] != bishop.corr_keys[1]);
+    TEST_ASSERT_TRUE(a.corr_keys[0] == bishop.corr_keys[0] && a.corr_keys[2] == bishop.corr_keys[2]);
+}
+
 void test_pop_on_empty_stack_is_clamped() {
     board_t board, original;
     parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);

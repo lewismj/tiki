@@ -56,6 +56,8 @@ void test_store_killer();
 void test_pv_followed_only_on_pv_path();
 void test_lmr_reduction();
 void test_lmr_cut_node_and_improving();
+void test_correction_history_learns_without_overshoot();
+void test_correction_history_keys();
 void test_tt_lookup();
 void test_singular_extension_conditions();
 void test_singular_result();

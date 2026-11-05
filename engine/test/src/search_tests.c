@@ -1318,7 +1318,7 @@ void test_excluded_move_search() {
 void test_tunable_parameters() {
 #ifdef TIKI_TUNE
     /* A tuning build: the parameters are variables, set by name (any case) and kept in range. */
-    TEST_ASSERT_EQUAL_INT(27, tunable_count);
+    TEST_ASSERT_EQUAL_INT(31, tunable_count);
     const int saved = RFP_MARGIN;
     TEST_ASSERT_TRUE(set_tunable("rfp_margin", 10, 120));
     TEST_ASSERT_EQUAL_INT(120, RFP_MARGIN);
@@ -1337,4 +1337,63 @@ void test_tunable_parameters() {
     TEST_ASSERT_EQUAL_INT(0, tunable_count);
     TEST_ASSERT_FALSE(set_tunable("RFP_MARGIN", 10, 120));
 #endif
+}
+
+void test_correction_history_learns_without_overshoot() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+    setup_position("4k3/pp6/8/3p4/3P4/8/PP6/4K3 w - - 0 1", &board, &search_state, &limits, 1);
+    TEST_ASSERT_EQUAL_INT(0, eval_correction(&board, &search_state));
+
+    /* The search keeps finding the position 40 cp better than its corrected eval: each update moves
+     * the correction towards 40, never past it, and it gets there. */
+    const int target = 40;
+    int previous = 0;
+    for (int i = 0; i < 40; i++) {
+        update_correction(&search_state, &board, CORR_DEPTH_MAX, target - eval_correction(&board, &search_state));
+        const int c = eval_correction(&board, &search_state);
+        TEST_ASSERT_TRUE(c >= previous);
+        TEST_ASSERT_TRUE(c <= target);
+        previous = c;
+    }
+    TEST_ASSERT_TRUE(previous >= target - 2);
+
+    /* Shallow results move it less than deep ones. */
+    setup_position("4k3/pp6/8/3p4/3P4/8/PP6/4K3 w - - 0 1", &board, &search_state, &limits, 1);
+    update_correction(&search_state, &board, 1, 100);
+    const int shallow = eval_correction(&board, &search_state);
+    setup_position("4k3/pp6/8/3p4/3P4/8/PP6/4K3 w - - 0 1", &board, &search_state, &limits, 1);
+    update_correction(&search_state, &board, CORR_DEPTH_MAX, 100);
+    TEST_ASSERT_TRUE(shallow > 0);
+    TEST_ASSERT_TRUE(eval_correction(&board, &search_state) > shallow);
+    /* At most half the error with the defaults. */
+    TEST_ASSERT_TRUE(eval_correction(&board, &search_state) <= 50);
+
+    /* However large the errors, within +-CORR_MAX. */
+    for (int i = 0; i < 200; i++) update_correction(&search_state, &board, CORR_DEPTH_MAX, 10000);
+    TEST_ASSERT_EQUAL_INT(CORR_MAX, eval_correction(&board, &search_state));
+    for (int i = 0; i < 400; i++) update_correction(&search_state, &board, CORR_DEPTH_MAX, -10000);
+    TEST_ASSERT_EQUAL_INT(-CORR_MAX, eval_correction(&board, &search_state));
+}
+
+void test_correction_history_keys() {
+    board_t board, swapped, other_side, other_piece;
+    search_state_t search_state;
+    limits_t limits;
+    setup_position("4k3/8/8/3p4/3P4/8/2N5/4K3 w - - 0 1", &board, &search_state, &limits, 1);
+    /* The same squares with the pawns' colours swapped, the other side to move, a bishop for the knight. */
+    parse_fen("4k3/8/8/3P4/3p4/8/2N5/4K3 w - - 0 1", &swapped);
+    parse_fen("4k3/8/8/3p4/3P4/8/2N5/4K3 b - - 0 1", &other_side);
+    parse_fen("4k3/8/8/3p4/3P4/8/2B5/4K3 w - - 0 1", &other_piece);
+    update_correction(&search_state, &board, CORR_DEPTH_MAX, 60);
+    TEST_ASSERT_TRUE(eval_correction(&board, &search_state) > 0);
+
+    /* Swapped pawns: neither the pawn entry nor the pieces' (white's and black's are unchanged, the
+     * pawn structure isn't), only the two piece entries are shared, so less than the full correction. */
+    TEST_ASSERT_TRUE(eval_correction(&swapped, &search_state) < eval_correction(&board, &search_state));
+    /* The other side to move has its own tables. */
+    TEST_ASSERT_EQUAL_INT(0, eval_correction(&other_side, &search_state));
+    /* A bishop instead of the knight: white's piece entry differs, the pawns and black's are shared. */
+    TEST_ASSERT_TRUE(eval_correction(&other_piece, &search_state) < eval_correction(&board, &search_state));
 }

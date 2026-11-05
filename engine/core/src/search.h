@@ -95,6 +95,10 @@ bool can_history_prune(int depth, int history, int moves_searched, int alpha, bo
  * and 4 plies back (search_state->path_moves, those there are). */
 int quiet_history(const search_state_t* search_state, move_t mv);
 int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history, bool cut_node, bool improving);
+/* Correction history (corr_history_t): the correction to the position's static eval, within
+ * +-CORR_MAX, and an update moving it towards 'error' (score - corrected eval) at this depth. */
+int eval_correction(const board_t* board, const search_state_t* search_state);
+void update_correction(search_state_t* search_state, const board_t* board, int depth, int error);
 int iir_reduction(int depth, move_t tt_move);
 bool can_singular_extend(int depth, int ply, int root_depth, move_t tt_move, int tt_depth, tt_entry_type tt_type,
                          int tt_score);

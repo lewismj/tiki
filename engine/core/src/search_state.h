@@ -97,6 +97,20 @@ extern cont_history_t main_cont_history;
 #define QUIET_ORDER_DIVISOR (CONT_PLIES + 1)
 static_assert((CONT_PLIES + 1) * HISTORY_MAX / QUIET_ORDER_DIVISOR <= HISTORY_MAX, "quiet moves stay in their band");
 
+/**
+ * Correction history: how far the search's scores have come out from the static eval in positions
+ * sharing a feature, used to correct the eval (search.c, eval_correction). Per side to move, three
+ * tables: the pawn structure (each colour's pawns), white's other pieces and black's other pieces
+ * (each piece type's squares), indexed by a hash of those squares. Entries in 1/CORR_GRAIN cp.
+ * Kept for the game (cleared by 'ucinewgame'). 192 KB, kept outside the search state like the
+ * continuation history: main_corr_history for the main search, each Lazy SMP helper its own.
+ */
+#define CORR_BITS 14
+#define CORR_SIZE (1 << CORR_BITS)
+#define CORR_TABLES 3
+typedef int16_t corr_history_t[2][CORR_TABLES][CORR_SIZE];
+extern corr_history_t main_corr_history;
+
 typedef struct align {
     /*
      * pv_table, use to store the principal variation, we use 64.64
@@ -114,6 +128,7 @@ typedef struct align {
     uint32_t path_moves[MAX_PLY];     /* The move made at each ply of the search path (0: a null move), set before */
                                       /* its child is searched (continuation history).                             */
     cont_history_t* cont_history;     /* See cont_history_t. */
+    corr_history_t* corr_history;     /* See corr_history_t. */
     uint8_t pv_length[MAX_PLY];
     uint64_t nodes;
     uint64_t pv_nodes;         /* Nodes that ordered the previous iteration's PV move first (tests). */
@@ -159,10 +174,14 @@ static inline_always void age_history(search_state_t* search_state) {
     for (size_t i = 0; i < sizeof(search_state->capture_history) / sizeof(*c); i++) c[i] /= 2;
 }
 
-/* A new search state (as 'ucinewgame') using 'table' for its continuation history, cleared. */
-static inline_always void init_search_state_with(search_state_t* search_state, cont_history_t* table) {
+/* A new search state (as 'ucinewgame') using 'table' for its continuation history and
+ * 'corrections' for its correction history, both cleared. */
+static inline_always void init_search_state_with(search_state_t* search_state, cont_history_t* table,
+                                                 corr_history_t* corrections) {
     search_state->cont_history = table;
     memset(*table, 0, sizeof(cont_history_t));
+    search_state->corr_history = corrections;
+    memset(*corrections, 0, sizeof(corr_history_t));
     search_state->nodes = 0;
     search_state->pv_nodes = 0;
     search_state->best_move_nodes = 0;
@@ -184,9 +203,9 @@ static inline_always void init_search_state_with(search_state_t* search_state, c
     nnue_stack_init(&search_state->nnue);
 }
 
-/* A new search state (as 'ucinewgame'), with the main continuation history table. */
+/* A new search state (as 'ucinewgame'), with the main continuation and correction history tables. */
 static inline_always void init_search_state(search_state_t* search_state) {
-    init_search_state_with(search_state, &main_cont_history);
+    init_search_state_with(search_state, &main_cont_history, &main_corr_history);
 }
 
 /* Before each search ('go'). The game history from 'position' is kept for the repetition checks. */

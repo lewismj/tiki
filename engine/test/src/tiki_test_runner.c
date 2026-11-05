@@ -64,6 +64,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_make_move_hash3);
     RUN_TEST(test_undo_restores_state1);
     RUN_TEST(test_incremental_hash_matches_full);
+    RUN_TEST(test_incremental_corr_keys_match_full);
     RUN_TEST(test_pop_on_empty_stack_is_clamped);
     RUN_TEST(test_parse_fen_fields);
     RUN_TEST(test_parse_move_promotions);
@@ -150,6 +151,8 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_node_limit_stops_search);
     RUN_TEST(test_lmr_reduction);
     RUN_TEST(test_lmr_cut_node_and_improving);
+    RUN_TEST(test_correction_history_learns_without_overshoot);
+    RUN_TEST(test_correction_history_keys);
     RUN_TEST(test_tt_lookup);
     RUN_TEST(test_singular_extension_conditions);
     RUN_TEST(test_singular_result);

@@ -38,6 +38,15 @@ void init_lmr_table();
 #define LMR_TABLE_SIZE 64
 #define LMR_HISTORY_DIVISOR 1000 /* A quiet move is reduced quiet_history / this plies less (more if        */
                                  /* negative).                                                               */
+/* Correction history (search_state.h, corr_history_t; search.c, eval_correction). */
+#define CORR_GRAIN 32            /* Entries in 1/this cp...                                                  */
+#define CORR_ENTRY_MAX (128 * CORR_GRAIN) /* ...each within +-128 cp (gravity, as the history).               */
+#define CORR_PAWN_WEIGHT 100     /* The correction: (pawn entry * this + the two other entries * the next)   */
+#define CORR_NONPAWN_WEIGHT 50   /* / 100, in cp...                                                          */
+#define CORR_MAX 64              /* ...within +-this (cp).                                                   */
+#define CORR_ERROR_MAX 256       /* An update's error (score - corrected eval) within +-this (cp)...         */
+#define CORR_DEPTH_MAX 8         /* ...weighted by min(depth, this)...                                       */
+#define CORR_RATE 32             /* ...the correction moving by 2 * error * weight / this per update.        */
 #define LMR_CUT_NODE 1           /* Plies more reduction at an expected cut node (lmr_reduction).            */
 #define LMR_NOT_IMPROVING 1      /* Plies more reduction when the position isn't improving.                  */
 #define HIST_PRUNE_MAX_DEPTH 4   /* History pruning of quiet moves up to this depth, when quiet_history...   */

@@ -32,6 +32,10 @@ int tune_tm_soft_percent = TM_SOFT_PERCENT_DEFAULT;
 int tune_tm_hard_percent = TM_HARD_PERCENT_DEFAULT;
 int tune_tm_unstable_percent = TM_UNSTABLE_PERCENT_DEFAULT;
 int tune_tm_nodes_percent = TM_NODES_PERCENT_DEFAULT;
+int tune_corr_pawn_weight = CORR_PAWN_WEIGHT_DEFAULT;
+int tune_corr_nonpawn_weight = CORR_NONPAWN_WEIGHT_DEFAULT;
+int tune_corr_max = CORR_MAX_DEFAULT;
+int tune_corr_rate = CORR_RATE_DEFAULT;
 
 /* name, variable, min, max, c_end, r_end. c_end is about a twentieth of the range, at least 0.5
  * (OpenBench's minimum for integers); r_end is OpenBench's usual 0.002. */
@@ -65,6 +69,11 @@ const tunable_t tunables[] = {
     { "TM_HARD_PERCENT",    &tune_tm_hard_percent,   150, 500, 15.0, 0.002 },
     { "TM_UNSTABLE_PERCENT", &tune_tm_unstable_percent, 130, 400, 13.0, 0.002 },
     { "TM_NODES_PERCENT",   &tune_tm_nodes_percent,   80, 200,  6.0, 0.002 },
+    /* Correction history (search_constants.h). */
+    { "CORR_PAWN_WEIGHT",   &tune_corr_pawn_weight,    0, 200, 10.0, 0.002 },
+    { "CORR_NONPAWN_WEIGHT", &tune_corr_nonpawn_weight, 0, 200, 10.0, 0.002 },
+    { "CORR_MAX",           &tune_corr_max,           16, 200,  9.0, 0.002 },
+    { "CORR_RATE",          &tune_corr_rate,          16, 128,  6.0, 0.002 },
 };
 const int tunable_count = (int) (sizeof(tunables) / sizeof(tunables[0]));
 #else
