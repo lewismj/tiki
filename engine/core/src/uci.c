@@ -424,6 +424,8 @@ void parse_setoption(const char* command) {
         const int pieces = syzygy_init(path);
         if (pieces > 0) printf("info string Syzygy tablebases up to %d pieces\n", pieces);
         else if (path_length > 0 && strcmp(path, "<empty>") != 0) printf("info string No Syzygy tablebases in '%s'\n", path);
+    } else if (is_option(name, length, "SyzygyProbeLimit") && value) {
+        syzygy_set_probe_limit(atoi(value));
     } else if (is_option(name, length, "SyzygyProbeDepth") && value) {
         int depth = atoi(value);
         if (depth < 1) depth = 1;
@@ -450,6 +452,8 @@ bool handle_uci_command(const char* command, board_t* board, search_state_t* sea
             printf("option name SyzygyPath type string default <empty>\n");
             printf("option name SyzygyProbeDepth type spin default %d min 1 max %d\n", SYZYGY_PROBE_DEPTH_DEFAULT,
                    SYZYGY_PROBE_DEPTH_MAX);
+            printf("option name SyzygyProbeLimit type spin default %d min 0 max %d\n", SYZYGY_PROBE_LIMIT_DEFAULT,
+                   SYZYGY_PROBE_LIMIT_MAX);
             print_tunable_options(); /* Only in a TIKI_TUNE build. */
             printf("uciok\n");
             break;

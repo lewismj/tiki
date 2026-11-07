@@ -70,6 +70,7 @@ Any UCI GUI or tester can run `tiki` (`tiki.exe`) directly.
 | `EvalFile` | built in | another network (`.nnue`) |
 | `SyzygyPath` | `<empty>` | Syzygy tablebase directories, separated by `;` on Windows and `:` elsewhere |
 | `SyzygyProbeDepth` | 1 | the depth from which the search probes positions with as many pieces as the largest tables |
+| `SyzygyProbeLimit` | 7 | probe positions with at most this many pieces (5 for tables on slow storage, such as a USB drive) |
 
 | Command | |
 |---|---|

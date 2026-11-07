@@ -223,6 +223,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_input_wait_for_stop);
     RUN_TEST(test_uci_loop_keeps_commands_during_search);
     RUN_TEST(test_uci_loop_go_infinite_stop);
+    RUN_TEST(test_uci_loop_go_infinite_end_of_input);
     RUN_TEST(test_soft_time_limit);
     RUN_TEST(test_stopped_search_returns_legal_move);
     RUN_TEST(test_syzygy_bitboard_mirror);
@@ -231,6 +232,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_syzygy_en_passant);
     RUN_TEST(test_syzygy_root_keeps_the_result);
     RUN_TEST(test_syzygy_root_restriction_only_at_the_root);
+    RUN_TEST(test_syzygy_probe_limit);
     RUN_TEST(test_syzygy_search_plays_the_win);
     RUN_TEST(test_syzygy_search_scores_tablebase_wins);
     RUN_TEST(perft_tests);

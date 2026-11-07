@@ -8,6 +8,14 @@
 int syzygy_probe_depth = SYZYGY_PROBE_DEPTH_DEFAULT;
 int syzygy_search_pieces = 0;
 
+/* 'SyzygyProbeLimit': no position with more pieces is probed. */
+static int probe_limit = SYZYGY_PROBE_LIMIT_DEFAULT;
+
+/* The most pieces probed: the largest tables, or fewer with SyzygyProbeLimit. */
+static int probed_pieces(void) {
+    return (int) TB_LARGEST < probe_limit ? (int) TB_LARGEST : probe_limit;
+}
+
 /* The root's moves the search may play (syzygy_rank_root), when 'root_restricted'. */
 static move_t root_moves[MOVE_BUFFER_SIZE];
 static int root_move_count = 0;
@@ -22,7 +30,7 @@ int syzygy_init(const char* path) {
     syzygy_end_search();
     /* Fathom unloads the previous tables first, and loads none for "" or "<empty>". */
     if (!tb_init(path == NULL ? "" : path)) TB_LARGEST = 0;
-    syzygy_search_pieces = (int) TB_LARGEST;
+    syzygy_search_pieces = probed_pieces();
     return (int) TB_LARGEST;
 }
 
@@ -54,7 +62,7 @@ static tb_position_t tb_position(const board_t* board) {
 }
 
 bool syzygy_probe_wdl(const board_t* board, int* wdl) {
-    if (pop_count(board->occupancy[both]) > (int) TB_LARGEST) return false;
+    if (pop_count(board->occupancy[both]) > probed_pieces()) return false;
     const tb_position_t pos = tb_position(board);
     const unsigned result = tb_probe_wdl(pos.white, pos.black, pos.kings, pos.queens, pos.rooks, pos.bishops,
                                          pos.knights, pos.pawns, (unsigned) board->fifty_move,
@@ -86,7 +94,7 @@ static bool same_move(TbMove tb, move_t mv) {
 
 bool syzygy_rank_root(board_t* board) {
     syzygy_end_search();
-    if (TB_LARGEST == 0 || board->castle_flag != 0 || pop_count(board->occupancy[both]) > (int) TB_LARGEST)
+    if (probed_pieces() == 0 || board->castle_flag != 0 || pop_count(board->occupancy[both]) > probed_pieces())
         return false;
 
     const tb_position_t pos = tb_position(board);
@@ -133,7 +141,7 @@ bool syzygy_rank_root(board_t* board) {
     root_wdl = best_score > TB_VALUE_PAWN ? 1 : best_score < -TB_VALUE_PAWN ? -1 : 0;
     /* With DTZ, every move left keeps the result, so the search probes nothing and finds the way by
      * itself. With WDL only, it keeps probing when winning, as nothing else steers it to the win. */
-    syzygy_search_pieces = dtz || root_wdl <= 0 ? 0 : (int) TB_LARGEST;
+    syzygy_search_pieces = dtz || root_wdl <= 0 ? 0 : probed_pieces();
     return true;
 }
 
@@ -154,5 +162,10 @@ void syzygy_end_search(void) {
     root_restricted = false;
     root_in_tables = false;
     root_move_count = 0;
-    syzygy_search_pieces = (int) TB_LARGEST;
+    syzygy_search_pieces = probed_pieces();
+}
+
+void syzygy_set_probe_limit(int pieces) {
+    probe_limit = pieces < 0 ? 0 : pieces > SYZYGY_PROBE_LIMIT_MAX ? SYZYGY_PROBE_LIMIT_MAX : pieces;
+    syzygy_search_pieces = probed_pieces();
 }

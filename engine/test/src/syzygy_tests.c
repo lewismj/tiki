@@ -147,6 +147,34 @@ void test_syzygy_root_restriction_only_at_the_root() {
     syzygy_init("");
 }
 
+void test_syzygy_probe_limit() {
+    if (!load_tables()) TEST_IGNORE_MESSAGE("TIKI_SYZYGY_PATH not set");
+    board_t board;
+    search_state_t search_state;
+    int wdl;
+    /* KRPvKR, 5 pieces (a draw). */
+    setup("8/8/4k3/8/4P3/8/1r6/4K2R w - - 0 1", &board, &search_state);
+
+    syzygy_set_probe_limit(4);
+    TEST_ASSERT_FALSE(syzygy_probe_wdl(&board, &wdl));
+    TEST_ASSERT_FALSE(syzygy_rank_root(&board));
+    TEST_ASSERT_EQUAL_INT(4, syzygy_search_pieces);
+
+    syzygy_set_probe_limit(5);
+    TEST_ASSERT_TRUE(syzygy_probe_wdl(&board, &wdl));
+    TEST_ASSERT_EQUAL_INT(0, wdl);
+    TEST_ASSERT_TRUE(syzygy_rank_root(&board));
+    syzygy_end_search();
+
+    syzygy_set_probe_limit(0);
+    TEST_ASSERT_EQUAL_INT(0, syzygy_search_pieces);
+    TEST_ASSERT_FALSE(syzygy_probe_wdl(&board, &wdl));
+
+    syzygy_set_probe_limit(SYZYGY_PROBE_LIMIT_DEFAULT);
+    TEST_ASSERT_EQUAL_INT(syzygy_largest(), syzygy_search_pieces);
+    syzygy_init("");
+}
+
 void test_syzygy_search_plays_the_win() {
     if (!load_tables()) TEST_IGNORE_MESSAGE("TIKI_SYZYGY_PATH not set");
     board_t board;

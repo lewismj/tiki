@@ -67,8 +67,17 @@ static void* input_thread(void* arg) {
     }
 
     pthread_mutex_lock(&lock);
-    /* End of input is treated as 'quit', a running search still completes ('go infinite' ends). */
-    if (feof(input) || ferror(input)) push("quit");
+    /* End of input is treated as 'quit'. A running search is stopped as by a typed 'quit': nothing
+     * else would end 'go infinite', which would search on to the depth limit with no one to read it
+     * (a GUI that crashed or closed the pipe). A search queued behind a 'go' sees the quit when it
+     * starts (input_search_started). */
+    if (feof(input) || ferror(input)) {
+        if (search_limits != NULL && !go_queued()) {
+            handle_search_input(search_limits, "quit");
+            pthread_cond_broadcast(&changed);
+        }
+        push("quit");
+    }
     closed = true;
     pthread_cond_broadcast(&changed);
     pthread_mutex_unlock(&lock);

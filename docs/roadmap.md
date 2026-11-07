@@ -9,8 +9,9 @@ together.
   its values SPRT'd against `main`.
 - **Network:** a network trained on Syzygy-relabelled data (35 months, 2023-12 to 2026-10) with the factoriser,
   SPRT'd against the current one.
-- **Syzygy tablebases:** implemented ([engine.md](engine.md#syzygy-tablebases)); an SPRT with tables against
-  without them is next.
+- **Syzygy tablebases:** done ([engine.md](engine.md#syzygy-tablebases)). Accepted as no worse: −2.4 ± 15.5
+  Elo after 580 games at 8+0.08 with `SyzygyProbeLimit 5`, and in every game that reached the tables the side
+  with them scored at least the tablebase result.
 
 ## Next
 

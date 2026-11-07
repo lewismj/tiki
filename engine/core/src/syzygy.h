@@ -22,6 +22,8 @@
 
 #define SYZYGY_PROBE_DEPTH_DEFAULT 1
 #define SYZYGY_PROBE_DEPTH_MAX 100
+#define SYZYGY_PROBE_LIMIT_DEFAULT 7    /* No limit: every table found. */
+#define SYZYGY_PROBE_LIMIT_MAX 7
 
 /**
  * Loads the tables in 'path' (directories separated by ';' on Windows, ':' elsewhere), replacing
@@ -32,6 +34,14 @@ int syzygy_init(const char* path);
 
 /* The most pieces the loaded tables cover, 0 without tables. */
 int syzygy_largest(void);
+
+/**
+ * 'SyzygyProbeLimit': positions with more pieces aren't probed, at the root or in the search (0
+ * probes nothing). For tables on slow storage: the 3-5 piece tables are about 1 GB and stay in
+ * memory once read, while a first read from the 6-piece ones (69 GB for WDL) can stall a search
+ * long enough to lose on time in fast games (seen over USB at 8+0.08).
+ */
+void syzygy_set_probe_limit(int pieces);
 
 /* 'SyzygyProbeDepth': positions with as many pieces as the largest tables are probed from this
  * depth, those with fewer at any depth. */

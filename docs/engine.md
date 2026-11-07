@@ -87,6 +87,9 @@ With `SyzygyPath` set, tiki probes Syzygy tables through [Fathom](https://github
   scores just below a mate, less the ply, a loss the opposite and a draw 0. The result is stored in the TT
   like a mate score, and shown as ±200 pawns (`cp 20000` less the plies to the tablebase position).
 - Wins and losses that the fifty-move rule turns into draws ("cursed" and "blessed") count as draws.
+- **Slow storage:** a probe that reads a table page for the first time waits for the drive. With the 6-piece
+  tables (69 GB of WDL) on a USB drive and 7 games at once at 8+0.08, those waits lost games on time.
+  `SyzygyProbeLimit 5` probes only the 3-5 piece tables (about 1 GB), which stay in memory once read.
 
 ## Time management
 
