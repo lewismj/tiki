@@ -12,6 +12,7 @@
 #include "board_tests.h"
 #include "search_tests.h"
 #include "nnue_tests.h"
+#include "syzygy_tests.h"
 #include "test_network.h"
 
 #include "../../core/src/attack_mask.h"
@@ -221,6 +222,14 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_uci_loop_go_infinite_stop);
     RUN_TEST(test_soft_time_limit);
     RUN_TEST(test_stopped_search_returns_legal_move);
+    RUN_TEST(test_syzygy_bitboard_mirror);
+    RUN_TEST(test_syzygy_without_tables);
+    RUN_TEST(test_syzygy_probe_wdl);
+    RUN_TEST(test_syzygy_en_passant);
+    RUN_TEST(test_syzygy_root_keeps_the_result);
+    RUN_TEST(test_syzygy_root_restriction_only_at_the_root);
+    RUN_TEST(test_syzygy_search_plays_the_win);
+    RUN_TEST(test_syzygy_search_scores_tablebase_wins);
     RUN_TEST(perft_tests);
     if (!skip_full_perft) {
         printf("All perft.\n");

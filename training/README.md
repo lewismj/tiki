@@ -23,6 +23,12 @@ HalfKAv2_hm (22528) -> 512 per side -> SCReLU -> concat (1024) -> 1, one of 8 ou
   in speed. Networks are saved as format version 2. Version 1 networks (one output layer, from before
   output buckets) still load, in the engine and the trainer, as that layer in every bucket, so they
   evaluate exactly as they did, but their checkpoints (`.pt`) can't be resumed.
+- **Factoriser (`--factoriser`, training only).** Each feature's row is trained as the sum of its own
+  row and a row shared by that piece on that square in all 32 king buckets (704 shared rows). The
+  shared rows learn from every position, so rarely seen king buckets start from what the common ones
+  learnt and only learn their difference. On export the shared rows are added into every bucket's
+  rows, so the network file and the engine are the same as without it. On 30M positions of 2026-09
+  (3 epochs) it lowered the validation loss from 0.02709 to 0.02634, about 6% slower to train.
 - **Quantisation.** Accumulator × 255 (QA) as int16, output weights × 64 (QB) as int16, output
   bias × QA × QB as int32. Output weights are clipped to 127 / QB, so their int16 values fit in
   ±127 and the engine's AVX2 output layer can use `_mm256_madd_epi16` (networks with larger ones
@@ -168,6 +174,24 @@ For each data set it fits the scale `s` in `result ~ sigmoid(score / s)` (the tr
 and shows the average result by score band side by side. Sets whose `s` differ by more than 10-20%
 shouldn't be mixed without rescaling. Lichess's Stockfish scores fit at about 424; lc0 data converted
 with lc0's own formula fit at 139.
+
+#### Rescaling scores (`rescale.py`)
+
+The same Lichess score means a different win chance in different months: most months of 2024-08 to
+2026-07 fit `s` = 331-338, 2024-03 to 2024-07 fit 305-316, and 2026-08 to 2026-10 fit 395-429.
+`rescale.py` fits each file's `s` (as `score_scale.py` does) and writes a copy with every score multiplied
+by `--scale-to` / `s`, so all the months agree:
+
+```bash
+python3 rescale.py --fit-only /mnt/f/lichess2/data-2000-s100-tb          # each month's s and factor
+python3 rescale.py --scale-to 335 /mnt/f/lichess2/data-2000-s100-tb /mnt/f/lichess2/data-2000-s100-tb-s335
+```
+
+`--scale-to` defaults to 400, the trainer's `sigmoid(score / 400)`. But that changes the network's eval
+scale (by about 19% for Lichess), which the search's margins are tuned to. Rescaling to the scale most of
+the data already has (335) evens out the months and keeps the eval scale. Only the scores change. Each
+output goes via a `.part` file, existing outputs are skipped (`--force` rewrites them), and the table shows
+`s` fitted again on each output, which should be the `--scale-to` value.
 - **Downloads:** with `--download-dir`, each tar is downloaded first (with a progress bar, resuming
   a partial `.part` file) and kept, so it can be converted again later with other options.
 - **Re-running:** tars already converted are skipped, so you can run the same command again.
@@ -213,6 +237,8 @@ Set `TIKI_APP` to the `tiki` binary to include the engine cross-check in the tes
 | `--lr-drop` | 10 | `step`: multiply the learning rate by 0.1 every N epochs |
 | `--lr-min` | 1e-5 | `cosine`: the learning rate of the last epoch |
 | `--wdl` | 0.3 | weight of the game result against the search score |
+| `--hidden` | 512 | accumulator width per side (the engine's `NNUE_HIDDEN`) |
+| `--factoriser` | off | train shared rows across the king buckets as well (see Network); a checkpoint resumes only with the setting it was trained with |
 | `--validation` | 0.02 | fraction held out for the validation loss, as whole games |
 | `--batch-size` | 16384 | |
 | `--workers` | 4 | processes converting `.txt` data to `.bin` |
@@ -396,7 +422,7 @@ TIKI_APP=../build/engine/app/tiki python3 -m unittest discover -s tests
 | Test | Checks |
 |---|---|
 | `test_features.py` | known indices (the same values the C tests use), range, uniqueness, and colour-flip and mirror symmetry |
-| `test_model.py` | colour symmetry of the float model; converting white-relative scores to the side to move; the file round trip; the integer eval matching the float model on the quantised weights; a small training run reducing the loss |
+| `test_model.py` | colour symmetry of the float model; converting white-relative scores to the side to move; the file round trip; the integer eval matching the float model on the quantised weights; a small training run reducing the loss; the factoriser: starting as the plain net, each feature adding its shared row, evaluating and exporting exactly as the folded plain net, clipping the sums, training the shared rows, and resuming only with the same setting |
 | `test_cross_check.py` | exports a network and checks that `tiki nnue-eval` gives exactly `quantised_eval()`; skipped unless `TIKI_APP` is set |
 | `test_data.py` | the batch features computed from binary records match `parse_line` and `collate`, including on positions from random games; converting text to binary (blank lines, CRLF, a missing final newline, any number of workers) and loading the result; rejecting files that aren't binary data or are truncated |
 | `test_lichess.py` | converts a small `.pgn.zst` built in the test: only analysed games are parsed; the quiet-position, mate-score, opening, Elo, score and sample filters; the output reads back in the trainer, and the binary output is the text output encoded. Skipped without `python-chess` or `zstandard` |
@@ -404,6 +430,7 @@ TIKI_APP=../build/engine/app/tiki python3 -m unittest discover -s tests
 | `test_stream.py` | training and validation cover every record of every file once, and validation stays the same when files are added; a pass yields every training record once, mixed across files, and the next pass reorders them; epochs of a fixed number of batches, and the validation limit; a small `train_streaming.py` run that trains and exports |
 | `test_lc0.py` | lc0 records built as lc0 encodes them decode to the real position's features, for either side to move; the policy move table against lc0's published one; the quiet-position filter (captures, en passant, promotions, check) and the other filters; rejecting records that aren't positions or V6; scores on the trainer's scale; downloading, resuming, and a server that ignores the resume request |
 | `test_score_scale.py` | fitting the scale recovers a known one; sampling across files in proportion to their sizes |
+| `test_rescale.py` | rounding and clamping; files on different scales all fit 400 afterwards with only their scores changed; `.part` files left out; existing outputs skipped, the source never overwritten; `--fit-only` writes nothing |
 
 ### Next steps
 

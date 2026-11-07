@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from tiki_nnue.data import collate, parse_line
 from tiki_nnue.export import dequantise, export, quantise, quantised_eval, read_network, write_network
 from tiki_nnue.features import OUTPUT_BUCKETS, output_bucket
-from tiki_nnue.model import HIDDEN, SCALE, TikiNNUE, loss_fn
+from tiki_nnue.model import FT_CLIP, HIDDEN, SCALE, TikiNNUE, loss_fn
 
 FENS = [
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -162,6 +162,110 @@ class ModelTests(unittest.TestCase):
                 self.assertEqual(b"TIKINNUE", file.read(8))
             # header + ft weights + ft bias + out weights (int16) + out biases (int32), per bucket
             self.assertEqual(20 + 2 * (22528 * HIDDEN + HIDDEN + 8 * 2 * HIDDEN) + 8 * 4, os.path.getsize(path))
+
+
+class FactoriserTests(unittest.TestCase):
+
+    def setUp(self):
+        torch.manual_seed(3)
+        self.model = TikiNNUE(factoriser=True)
+        with torch.no_grad():
+            self.model.factor.weight.normal_(0.0, 0.1)
+        self.model.clip_weights()
+
+    def folded(self):
+        """An unfactorised model with the factorised one's weights as the engine sees them."""
+        plain = TikiNNUE()
+        with torch.no_grad():
+            plain.ft.weight.copy_(self.model.feature_weights())
+            plain.ft_bias.copy_(self.model.ft_bias)
+            plain.out.weight.copy_(self.model.out.weight)
+            plain.out.bias.copy_(self.model.out.bias)
+        return plain
+
+    def test_starts_as_unfactorised(self):
+        """The shared rows start at zero, so a new factorised net evaluates as the plain one."""
+        torch.manual_seed(4)
+        plain = TikiNNUE()
+        torch.manual_seed(4)
+        factorised = TikiNNUE(factoriser=True)
+        self.assertEqual(0.0, factorised.factor.weight.abs().max().item())
+        for a, b in zip(evaluate(plain, FENS), evaluate(factorised, FENS)):
+            self.assertAlmostEqual(a, b, places=4)
+
+    def test_each_feature_adds_its_shared_row(self):
+        """Feature f's row is its own plus shared row f % 704, in every king bucket."""
+        weights = self.model.feature_weights()
+        for feature in (0, 703, 704, 5 * 704 + 321, 22527):
+            expected = self.model.ft.weight[feature] + self.model.factor.weight[feature % 704]
+            torch.testing.assert_close(weights[feature], expected)
+
+    def test_forward_matches_folded_weights(self):
+        """Evaluating with the shared rows is the same as evaluating with them added into each bucket."""
+        for a, b in zip(evaluate(self.model, FENS + FLIPPED), evaluate(self.folded(), FENS + FLIPPED)):
+            self.assertAlmostEqual(a, b, places=3)
+
+    def test_export_folds_the_shared_rows(self):
+        """The exported net is an ordinary one, the same as exporting the folded model, and evaluates
+        like the float model."""
+        network = quantise(self.model)
+        folded = quantise(self.folded())
+        for key in ("ft_weights", "ft_bias", "out_weights", "out_bias"):
+            np.testing.assert_array_equal(folded[key], network[key])
+        for fen, expected in zip(FENS, evaluate(dequantise(network), FENS)):
+            self.assertLess(abs(quantised_eval(network, fen) - expected), 2, fen)
+
+    def test_clip_limits_the_sums(self):
+        """Clipping keeps own + shared within FT_CLIP (what's quantised), and leaves rows already
+        in range alone."""
+        with torch.no_grad():
+            self.model.ft.weight.normal_(0.0, 1.0)
+            self.model.factor.weight.normal_(0.0, 1.5)
+            self.model.ft.weight[7].fill_(0.25)
+            self.model.factor.weight[7].fill_(0.5)
+        self.model.clip_weights()
+        weights = self.model.feature_weights()
+        self.assertLessEqual(weights.abs().max().item(), FT_CLIP + 1e-6)
+        self.assertLessEqual(self.model.factor.weight.abs().max().item(), FT_CLIP + 1e-6)
+        torch.testing.assert_close(weights[7], torch.full((HIDDEN,), 0.75))
+        quantise(self.model)        # In range for int16 and the accumulator.
+
+    def test_training_trains_the_shared_rows(self):
+        lines = [f"{fen} | {score} | {result}" for fen, score, result in
+                 zip(FENS, (30, -250, 400, 80, -600), (0.5, 0.0, 1.0, 0.5, 0.0))]
+        batch = collate([parse_line(line) for line in lines])
+        optimiser = torch.optim.Adam(self.model.parameters(), lr=1e-2)
+        shared = self.model.factor.weight.detach().clone()
+
+        def loss():
+            return loss_fn(self.model(*batch[:5]), batch[5], batch[6], wdl=0.3)
+
+        start = loss().item()
+        for _ in range(200):
+            optimiser.zero_grad()
+            value = loss()
+            value.backward()
+            optimiser.step()
+            self.model.clip_weights()
+        self.assertLess(loss().item(), start * 0.2)
+        self.assertGreater((self.model.factor.weight - shared).abs().max().item(), 0.01)
+
+    def test_resume_needs_the_same_setting(self):
+        """A checkpoint resumes only with the --factoriser setting it was trained with."""
+        from train import add_model_arguments, load_model
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        add_model_arguments(parser)
+        parser.error = lambda message: (_ for _ in ()).throw(ValueError(message))
+        factorised = self.model.state_dict()
+        plain = TikiNNUE().state_dict()
+        load_model(TikiNNUE(factoriser=True), factorised, parser.parse_args(["--factoriser"]), parser)
+        load_model(TikiNNUE(), plain, parser.parse_args([]), parser)
+        with self.assertRaisesRegex(ValueError, "with --factoriser"):
+            load_model(TikiNNUE(), factorised, parser.parse_args([]), parser)
+        with self.assertRaisesRegex(ValueError, "without --factoriser"):
+            load_model(TikiNNUE(factoriser=True), plain, parser.parse_args(["--factoriser"]), parser)
 
 
 if __name__ == "__main__":

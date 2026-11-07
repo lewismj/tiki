@@ -7,6 +7,7 @@
 #include "evaluation.h"
 #include "transposition.h"
 #include "see.h"
+#include "syzygy.h"
 
 cont_history_t main_cont_history;
 corr_history_t main_corr_history;
@@ -522,8 +523,9 @@ static inline_always bool has_non_pawn_material(const board_t* board) {
            (board->pieces[n] | board->pieces[b] | board->pieces[r] | board->pieces[q]) != 0;
 }
 
+/* A mate or tablebase score: decisive, not an estimate to prune or learn from. */
 static inline_always bool is_mate_score(int score) {
-    return score >= MATE_SCORE || score <= -MATE_SCORE;
+    return score >= TB_WIN_MIN || score <= -TB_WIN_MIN;
 }
 
 /**
@@ -1167,6 +1169,25 @@ static int negamax_node(int alpha,
         return quiescence_node(alpha, beta, board, search_state, limits);
     }
 
+    /* Tablebases (syzygy.h): after a capture or pawn move, with few enough pieces. Positions with as
+     * many pieces as the largest tables only from SyzygyProbeDepth. The result is saved as a TT bound
+     * (a win a lower bound, a loss an upper bound: a faster mate may exist, a draw exact) and
+     * returned, fail-hard: the node isn't searched for a faster mate. */
+    if (search_state->ply > 0 && !excluded_move && syzygy_search_pieces > 0 && board->fifty_move == 0 &&
+        board->castle_flag == 0) {
+        const int pieces = pop_count(board->occupancy[both]);
+        int wdl;
+        if (pieces <= syzygy_search_pieces && (pieces < syzygy_search_pieces || depth >= syzygy_probe_depth) &&
+            syzygy_probe_wdl(board, &wdl)) {
+            const int ply = search_state->ply;
+            const int tb_score = wdl > 0 ? TB_WIN_SCORE - ply : wdl < 0 ? -TB_WIN_SCORE + ply : 0;
+            const tt_entry_type tb_type = wdl > 0 ? tt_beta : wdl < 0 ? tt_alpha : tt_exact;
+            const int tb_depth = depth + 6 < MAX_PLY - 1 ? depth + 6 : MAX_PLY - 1;
+            tt_save(board->hash, tb_type, tb_depth, ply, tb_score, 0, tt_hit ? tt.eval : TT_EVAL_NONE);
+            return tb_score >= beta ? beta : tb_score <= alpha ? alpha : tb_score;
+        }
+    }
+
     depth -= iir_reduction(depth, tt_move);
 
     /* Not meaningful in check, every move is searched there anyway. The network's eval is taken
@@ -1299,6 +1320,8 @@ static int negamax_node(int alpha,
     move_t mv;
     while ((mv = picker_next(&picker)) != 0) {
         if (mv == excluded_move) continue;
+        /* At a root in the tablebases, only the moves that keep its best result (syzygy_rank_root). */
+        if (search_state->ply == 0 && !syzygy_root_allows(mv)) continue;
         bool is_capture = get_capture_flag(mv);
         const bool is_quiet = !is_capture && !get_promoted_piece(mv);
 
@@ -1503,6 +1526,20 @@ move_t first_legal_move(board_t* board) {
     return 0;
 }
 
+/* The fallback move when no depth completed: the first legal move the root restriction allows
+ * (syzygy_rank_root). Not first_legal_move, which the search uses at any node (the fifty-move rule's
+ * checkmate test), where the root's restriction doesn't apply. */
+static move_t first_root_move(board_t* board) {
+    move_buffer_t buffer;
+    generate_moves(board, &buffer);
+    for (int i = 0; i < buffer.index; i++) {
+        bool legal = make_move(board, buffer.moves[i]);
+        pop_move(board);
+        if (legal && syzygy_root_allows(buffer.moves[i])) return buffer.moves[i];
+    }
+    return 0;
+}
+
 /**
  * Root search at 'depth' in a window around the previous depth's score. On a fail the failing
  * side is widened, doubling each time, until the window is wider than ASPIRATION_MAX_DELTA and the
@@ -1618,6 +1655,11 @@ static void print_info(int score, int depth, uint64_t nodes, const search_state_
     } else if (score > MATE_SCORE && score < MATE_VALUE) {
         printf("info score mate %d depth %d nodes %" PRIu64 " time %" PRIu64 " nps %" PRIu64 " pv ",
                (MATE_VALUE - score) / 2 + 1, depth, nodes, time, nodes * 1000 / (time ? time : 1));
+    } else if (is_mate_score(score)) {
+        /* A tablebase win or loss: shown as 200 pawns less the plies to the tablebase position. */
+        const int cp = score > 0 ? 20000 - (TB_WIN_SCORE - score) : -20000 + (TB_WIN_SCORE + score);
+        printf("info score cp %d depth %d nodes %" PRIu64 " time %" PRIu64 " nps %" PRIu64 " pv ",
+               cp, depth, nodes, time, nodes * 1000 / (time ? time : 1));
     } else {
         printf("info score cp %d depth %d nodes %" PRIu64 " time %" PRIu64 " nps %" PRIu64 " pv ",
                score, depth, nodes, time, nodes * 1000 / (time ? time : 1));
@@ -1729,6 +1771,8 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
     int stability = 0;
 
     search_state->thread_id = 0;
+    /* Before the helpers start: they read the root restriction it sets. */
+    syzygy_rank_root(board);
     search_helper_t* helpers;
     const int helper_count = start_helpers(board, search_state, limits, &helpers);
 
@@ -1766,7 +1810,9 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
     }
 
     stop_helpers(limits, helpers, helper_count);
-    return move ? move : first_legal_move(board);
+    if (!move) move = first_root_move(board);
+    syzygy_end_search();
+    return move;
 }
 
 void print_bestmove(move_t mv) {

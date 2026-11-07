@@ -28,9 +28,17 @@ set (SOURCES
         src/tune.c
         src/nnue/nnue.c
         src/nnue/nnue_embedded.c
+        src/syzygy.c
+        src/syzygy_fathom.c
 )
 
 add_library(${PROJECT_NAME} ${SOURCES})
+
+# Fathom (Syzygy probing, MIT licence, see third_party/fathom/README.md), kept as it is upstream and
+# compiled through syzygy_fathom.c: its warnings are its own.
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/fathom)
+set_source_files_properties(src/syzygy_fathom.c PROPERTIES COMPILE_OPTIONS "-w"
+        OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/fathom/tbprobe.c;${CMAKE_CURRENT_SOURCE_DIR}/../third_party/fathom/tbchess.c")
 set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
 # PUBLIC, the attack lookups are inlined from headers into every target that links the core.

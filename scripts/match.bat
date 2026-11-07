@@ -19,6 +19,8 @@ rem     ELO0=0 ELO1=5        SPRT bounds (normalized Elo)
 rem     MAX_GAMES=20000      SPRT: stop here if it's still undecided
 rem     TIKI_EVALFILE        network for every tiki, default the last in models\ by name
 rem     NEW_EVALFILE BASE_EVALFILE  SPRT: a different network for one side (to test networks)
+rem     NEW_OPTIONS BASE_OPTIONS    SPRT: UCI options for one side, each Name=value pair in quotes,
+rem                          e.g. set NEW_OPTIONS="SyzygyPath=F:\syzygy\wdl;F:\syzygy\dtz"
 setlocal
 
 for %%d in ("%~dp0..") do set "root=%%~fd"
@@ -108,8 +110,10 @@ call :engine_path "%~3" || exit /b 1
 set "base=%path_found%"
 set engines=-engine "cmd=%new%" name=new
 if defined NEW_EVALFILE set engines=%engines% "option.EvalFile=%NEW_EVALFILE%"
+if defined NEW_OPTIONS for %%o in (%NEW_OPTIONS%) do call set engines=%%engines%% "option.%%~o"
 set engines=%engines% -engine "cmd=%base%" name=base
 if defined BASE_EVALFILE set engines=%engines% "option.EvalFile=%BASE_EVALFILE%"
+if defined BASE_OPTIONS for %%o in (%BASE_OPTIONS%) do call set engines=%%engines%% "option.%%~o"
 set /a rounds=MAX_GAMES / 2
 set engines=%engines% -sprt elo0=%ELO0% elo1=%ELO1% alpha=0.05 beta=0.05 model=normalized
 set "summary=SPRT [%ELO0%, %ELO1%]: %new% vs %base%"

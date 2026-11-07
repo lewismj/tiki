@@ -19,6 +19,8 @@
 #     MAX_GAMES=20000      SPRT: stop here if it's still undecided
 #     TIKI_EVALFILE        network for every tiki, default the newest in models/
 #     NEW_EVALFILE BASE_EVALFILE  SPRT: a different network for one side (to test networks)
+#     NEW_OPTIONS BASE_OPTIONS    SPRT: UCI options for one side, space separated Name=value pairs
+#                          (no spaces in values), e.g. NEW_OPTIONS="SyzygyPath=/mnt/f/syzygy/wdl:/mnt/f/syzygy/dtz"
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -99,8 +101,13 @@ case "$mode" in
         new=$(engine_path "$1")
         base=$(engine_path "$2")
         echo "SPRT [${ELO0:-0}, ${ELO1:-5}]: $new vs $base, $CONCURRENCY at once, network $TIKI_EVALFILE"
-        set -- -engine "cmd=$new" name=new ${NEW_EVALFILE:+"option.EvalFile=$NEW_EVALFILE"} \
-               -engine "cmd=$base" name=base ${BASE_EVALFILE:+"option.EvalFile=$BASE_EVALFILE"} \
+        new_options="" base_options=""
+        for option in ${NEW_OPTIONS:-}; do new_options="$new_options option.$option"; done
+        for option in ${BASE_OPTIONS:-}; do base_options="$base_options option.$option"; done
+        [ -z "$new_options$base_options" ] || echo "Options: new:${new_options:- none}, base:${base_options:- none}"
+        # shellcheck disable=SC2086  # the options are split into separate arguments
+        set -- -engine "cmd=$new" name=new ${NEW_EVALFILE:+"option.EvalFile=$NEW_EVALFILE"} $new_options \
+               -engine "cmd=$base" name=base ${BASE_EVALFILE:+"option.EvalFile=$BASE_EVALFILE"} $base_options \
                -rounds $((${MAX_GAMES:-20000} / 2)) \
                -sprt elo0="${ELO0:-0}" elo1="${ELO1:-5}" alpha=0.05 beta=0.05 model=normalized
         ;;

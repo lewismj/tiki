@@ -14,6 +14,7 @@ set (SOURCES
         src/board_tests.c
         src/search_tests.c
         src/nnue_tests.c
+        src/syzygy_tests.c
         src/test_network.c)
 
 add_executable(${PROJECT_NAME} ${SOURCES})

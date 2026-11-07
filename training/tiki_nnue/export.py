@@ -32,7 +32,7 @@ def quantise(model):
         return values.astype(dtype)
 
     return {
-        "ft_weights": to_int(model.ft.weight, QA, np.int16),        # [INPUTS, HIDDEN]
+        "ft_weights": to_int(model.feature_weights(), QA, np.int16),    # [INPUTS, HIDDEN], shared rows added
         "ft_bias": to_int(model.ft_bias, QA, np.int16),
         "out_weights": to_int(model.out.weight, QB, np.int16),       # [OUTPUT_BUCKETS, 2 * HIDDEN]
         "out_bias": to_int(model.out.bias, QA * QB, np.int32),       # [OUTPUT_BUCKETS]

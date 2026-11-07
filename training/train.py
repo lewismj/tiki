@@ -82,6 +82,22 @@ def make_scheduler(optimiser, args):
     return torch.optim.lr_scheduler.StepLR(optimiser, step_size=args.lr_drop, gamma=0.1)
 
 
+def add_model_arguments(parser):
+    """The network options, shared with train_streaming.py."""
+    parser.add_argument("--hidden", type=int, default=HIDDEN,
+                        help="feature transformer width per side (the engine must be built with the same NNUE_HIDDEN)")
+    parser.add_argument("--factoriser", action="store_true",
+                        help="train shared rows for each piece and square across the king buckets as well "
+                             "(added into the buckets' rows on export; the engine is unchanged)")
+
+
+def load_model(model, state, args, parser):
+    """Restores a checkpoint's weights, which must have the same --factoriser setting."""
+    if ("factor.weight" in state) != args.factoriser:
+        parser.error(f"the checkpoint was trained {'with' if 'factor.weight' in state else 'without'} --factoriser")
+    model.load_state_dict(state)
+
+
 def load_scheduler(scheduler, state, args, parser):
     """Restores a checkpoint's schedule, which must be the same kind as --lr-schedule. A resumed
     cosine schedule keeps the checkpoint's length, a resumed step schedule its --lr-drop."""
@@ -163,8 +179,7 @@ def main():
     parser.add_argument("--out", default="nets", help="directory for checkpoints and exported networks")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument("--batch-size", type=int, default=16384)
-    parser.add_argument("--hidden", type=int, default=HIDDEN,
-                        help="feature transformer width per side (the engine must be built with the same NNUE_HIDDEN)")
+    add_model_arguments(parser)
     add_schedule_arguments(parser)
     parser.add_argument("--wdl", type=float, default=0.3, help="weight of the game result vs the search score")
     parser.add_argument("--validation", type=float, default=0.02,
@@ -197,13 +212,13 @@ def main():
     console.print(summary)
     log(summary)
 
-    model = TikiNNUE(hidden=args.hidden).to(args.device)
+    model = TikiNNUE(hidden=args.hidden, factoriser=args.factoriser).to(args.device)
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = make_scheduler(optimiser, args)
     first_epoch = 1
     if args.resume:
         checkpoint = torch.load(args.resume, map_location=args.device)
-        model.load_state_dict(checkpoint["model"])
+        load_model(model, checkpoint["model"], args, parser)
         optimiser.load_state_dict(checkpoint["optimiser"])
         load_scheduler(scheduler, checkpoint["scheduler"], args, parser)
         first_epoch = checkpoint["epoch"] + 1
