@@ -11,6 +11,7 @@
 #include "../../core/src/uci.h"
 #include "../../core/src/nnue/nnue.h"
 #include "../../core/src/datagen.h"
+#include "core/tiki.h"
 #include "../../core/src/search_constants.h"
 #include "../../core/src/move_generator.h"
 #include "test_network.h"
@@ -658,18 +659,24 @@ void test_material_network_values() {
 }
 
 
-static char* run_datagen(uint32_t seed, uint64_t* written) {
+static char* run_datagen_as(uint32_t seed, uint64_t* written, datagen_format_t format, long* bytes) {
     FILE* out = tmpfile();
     TEST_ASSERT_NOT_NULL(out);
-    const datagen_options_t options = { .games = 2, .depth = 3, .random_plies = 8, .max_plies = 80, .seed = seed };
+    const datagen_options_t options = { .games = 2, .depth = 3, .random_plies = 8, .max_plies = 80, .seed = seed,
+                                        .format = format };
     *written = datagen(out, &options);
 
     long size = ftell(out);
+    if (bytes != NULL) *bytes = size;
     char* text = calloc((size_t) size + 1, 1);
     rewind(out);
     TEST_ASSERT_EQUAL_size_t((size_t) size, fread(text, 1, (size_t) size, out));
     fclose(out);
     return text;
+}
+
+static char* run_datagen(uint32_t seed, uint64_t* written) {
+    return run_datagen_as(seed, written, datagen_text, NULL);
 }
 
 void test_datagen_output_format() {
@@ -701,6 +708,82 @@ void test_datagen_output_format() {
     }
     TEST_ASSERT_EQUAL_UINT64(written, lines);
     free(text);
+}
+
+/* The record training/tiki_nnue/binary.py's encode() makes of a text line, built here from the FEN. */
+static void expected_record(const char* fen, int white_score, const char* white_result, uint8_t* record) {
+    board_t board;
+    parse_fen(fen, &board);
+    int count = 0;
+    for (int sq = 0; sq < 64; sq++) {
+        for (int pc = P; pc <= k; pc++) {
+            if (board.pieces[pc] & (1ULL << sq)) {
+                const int value = pc * 64 + sq;
+                record[2 * count] = (uint8_t) (value & 0xFF);
+                record[2 * count + 1] = (uint8_t) (value >> 8);
+                count++;
+            }
+        }
+    }
+    for (; count < 32; count++) record[2 * count] = record[2 * count + 1] = 0xFF;
+    const int score = board.side == white ? white_score : -white_score;
+    record[64] = (uint8_t) ((uint16_t) (int16_t) score & 0xFF);
+    record[65] = (uint8_t) ((uint16_t) (int16_t) score >> 8);
+    const int result = strcmp(white_result, "1.0") == 0 ? 2 : strcmp(white_result, "0.5") == 0 ? 1 : 0;
+    record[66] = (uint8_t) (board.side == white ? result : 2 - result);
+    record[67] = (uint8_t) board.side;
+}
+
+void test_datagen_binary_matches_text() {
+    /* The same games in both formats: each binary record is its text line encoded. */
+    uint64_t text_written, binary_written;
+    long binary_bytes;
+    char* text = run_datagen_as(42, &text_written, datagen_text, NULL);
+    uint8_t* binary = (uint8_t*) run_datagen_as(42, &binary_written, datagen_binary, &binary_bytes);
+    TEST_ASSERT_TRUE(text_written > 0);
+    TEST_ASSERT_EQUAL_UINT64(text_written, binary_written);
+    TEST_ASSERT_EQUAL_INT64((long) binary_written * DATAGEN_RECORD_SIZE, binary_bytes);
+
+    uint64_t i = 0;
+    bool black_to_move_seen = false;
+    for (char* line = strtok(text, "\n"); line; line = strtok(NULL, "\n"), i++) {
+        char* bar1 = strstr(line, " | ");
+        char* bar2 = strstr(bar1 + 3, " | ");
+        *bar1 = '\0';
+        uint8_t expected[DATAGEN_RECORD_SIZE];
+        expected_record(line, atoi(bar1 + 3), bar2 + 3, expected);
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(expected, binary + i * DATAGEN_RECORD_SIZE, DATAGEN_RECORD_SIZE);
+        black_to_move_seen |= expected[67] == black;
+    }
+    TEST_ASSERT_EQUAL_UINT64(text_written, i);
+    TEST_ASSERT_TRUE(black_to_move_seen);   /* Both sides' scores and results were converted. */
+    free(text);
+    free(binary);
+}
+
+void test_datagen_binary_file() {
+    /* A new .bin file gets the header, later runs append records to it, and a file that isn't
+     * binary data is refused rather than appended to. */
+    const char* path = "datagen_test.bin";
+    remove(path);
+    const int64_t first = datagen_to_file(path, 1, 2, 3);
+    const int64_t second = datagen_to_file(path, 1, 2, 4);
+    TEST_ASSERT_TRUE(first > 0 && second > 0);
+    FILE* in = fopen(path, "rb");
+    TEST_ASSERT_NOT_NULL(in);
+    char magic[DATAGEN_MAGIC_SIZE];
+    TEST_ASSERT_EQUAL_size_t(DATAGEN_MAGIC_SIZE, fread(magic, 1, DATAGEN_MAGIC_SIZE, in));
+    TEST_ASSERT_EQUAL_MEMORY(DATAGEN_BINARY_MAGIC, magic, DATAGEN_MAGIC_SIZE);
+    fseek(in, 0, SEEK_END);
+    TEST_ASSERT_EQUAL_INT64(DATAGEN_MAGIC_SIZE + (first + second) * DATAGEN_RECORD_SIZE, ftell(in));
+    fclose(in);
+    remove(path);
+
+    FILE* other = fopen(path, "wb");
+    fputs("not binary data\n", other);
+    fclose(other);
+    TEST_ASSERT_EQUAL_INT64(-2, datagen_to_file(path, 1, 2, 3));
+    remove(path);
 }
 
 void test_datagen_deterministic() {

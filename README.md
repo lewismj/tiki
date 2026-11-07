@@ -7,7 +7,7 @@
 
 # tiki
 
-A UCI chess engine in C (C23) with its own NNUE evaluation, for Linux, macOS, and Windows.
+A UCI chess engine in C (C23) with its own NNUE evaluation, for Linux, and Windows.
 
 ## Strength
 
@@ -74,7 +74,7 @@ Any UCI GUI or tester can run `tiki` (`tiki.exe`) directly.
 | Command | |
 |---|---|
 | `tiki bench [depth]` | fixed benchmark: node count (a signature of the search and network) and speed |
-| `tiki datagen <file> [games] [depth] [seed]` | self-play training data |
+| `tiki datagen <file> [games] [depth] [seed]` | self-play training data: the trainer's binary format for a `.bin` file, text otherwise |
 | `tiki nnue-eval <net> <fen>` | a network's evaluation of a position |
 
 ## Documentation

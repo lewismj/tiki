@@ -21,6 +21,8 @@ void test_nnue_load_memory();
 void test_nnue_embedded_network();
 void test_material_network_values();
 void test_datagen_output_format();
+void test_datagen_binary_matches_text();
+void test_datagen_binary_file();
 void test_datagen_deterministic();
 
 #endif

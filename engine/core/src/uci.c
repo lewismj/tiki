@@ -204,7 +204,10 @@ void parse_position(const char* position, board_t* board, search_state_t* search
     }
     ptr = strstr(position, "moves");
     if (ptr != NULL) {
-        ptr +=6;
+        /* Past "moves" and the spaces after it. Not a fixed 6: "moves" may end the command, and
+         * skipping its terminator read whatever followed in memory (datagen's reused buffer). */
+        ptr += 5;
+        while (*ptr == ' ') ptr++;
         while (*ptr) {
             move_t move = parse_move(ptr, board);
             if (move == 0) break;

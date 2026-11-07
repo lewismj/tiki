@@ -99,6 +99,8 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_nnue_embedded_network);
     RUN_TEST(test_material_network_values);
     RUN_TEST(test_datagen_output_format);
+    RUN_TEST(test_datagen_binary_matches_text);
+    RUN_TEST(test_datagen_binary_file);
     RUN_TEST(test_datagen_deterministic);
     RUN_TEST(test_search_mate_in_one);
     RUN_TEST(test_search_stalemate_root);
@@ -173,6 +175,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_setoption_hash);
     RUN_TEST(test_setoption_threads);
     RUN_TEST(test_uci_newgame_resets_position);
+    RUN_TEST(test_position_moves_with_nothing_after);
     RUN_TEST(test_go_infinite_limits);
     RUN_TEST(test_go_nodes_limits);
     RUN_TEST(test_go_clock_limits);

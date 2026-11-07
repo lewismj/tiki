@@ -62,11 +62,20 @@ The arguments are file, games, depth and seed. Run several processes with differ
 same or different files:
 
 ```bash
-build/engine/app/tiki datagen data/d8-s1.txt 10000 8 1
+build/engine/app/tiki datagen data/d8-s1.bin 10000 8 1      # the trainer's binary format
+build/engine/app/tiki datagen data/d8-s1.txt 10000 8 1      # text
 ```
 
-Each line is `fen | score | result`, with the score in centipawns and the result 1.0 / 0.5 / 0.0,
-both from white's side. At depth 8 expect very roughly 100 positions per second per process.
+- **A `.bin` file** gets the trainer's binary format (`TIKIBIN1`, `tiki_nnue/binary.py`), ready to train on,
+  with no conversion. A new file gets the header; later runs append to it, and a file that isn't binary
+  data is refused.
+- **Any other name** gets text: each line is `fen | score | result`, with the score in centipawns and the
+  result 1.0 / 0.5 / 0.0, both from white's side. The trainer converts it to a `.bin` on first use.
+- Both hold the same positions for the same games: the binary records are exactly the text lines encoded.
+- At depth 8 expect very roughly 100 positions per second per process.
+- Before 2026-11-07 about half the games were broken: every second game started from the previous game's
+  position (a UCI parsing bug), and many then repeated the start position for hundreds of plies. Don't
+  train on datagen output made before then.
 
 #### Lichess games (`lichess.py`)
 

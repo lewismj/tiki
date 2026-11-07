@@ -15,9 +15,39 @@
 
 
 typedef struct {
-    char fen[100];
+    char fen[100];      /* Text format only. */
     int score;          /* White's point of view. */
+    uint8_t record[DATAGEN_RECORD_SIZE];   /* Binary format only, the result is filled in at the end. */
 } datagen_position_t;
+
+#define RECORD_PAD 0xFFFF
+#define RECORD_SCORE 64     /* Offsets in a record. */
+#define RECORD_RESULT 66
+#define RECORD_SIDE 67
+
+static void put_u16(uint8_t* at, uint16_t value) {
+    at[0] = (uint8_t) (value & 0xFF);
+    at[1] = (uint8_t) (value >> 8);
+}
+
+/* The binary record of 'board' with the search score for the side to move (datagen.h). */
+static void encode_record(const board_t* board, int score, uint8_t* record) {
+    int count = 0;
+    for (int sq = 0; sq < 64; sq++) {
+        for (int pc = P; pc <= k; pc++) {
+            if (board->pieces[pc] & (1ULL << sq)) {
+                put_u16(record + 2 * count++, (uint16_t) (pc * 64 + sq));
+                break;
+            }
+        }
+    }
+    for (; count < 32; count++) put_u16(record + 2 * count, RECORD_PAD);
+    if (score > 32767) score = 32767;
+    if (score < -32767) score = -32767;
+    put_u16(record + RECORD_SCORE, (uint16_t) (int16_t) score);
+    record[RECORD_RESULT] = 1;
+    record[RECORD_SIDE] = (uint8_t) board->side;
+}
 
 
 static bool in_check(board_t* board) {
@@ -105,17 +135,28 @@ static uint64_t play_game(FILE* out, const datagen_options_t* options, uint32_t*
         }
 
         if (!check && !get_capture_flag(mv) && !get_promoted_piece(mv)) {
-            board_to_fen(board, 1 + ply / 2, positions[recorded].fen, sizeof(positions[recorded].fen));
+            if (options->format == datagen_binary) {
+                encode_record(board, search_state->score, positions[recorded].record);
+            } else {
+                board_to_fen(board, 1 + ply / 2, positions[recorded].fen, sizeof(positions[recorded].fen));
+            }
             positions[recorded].score = score;
             recorded++;
         }
 
         append_move(command, sizeof(command), mv);
-        parse_position(command, board, search_state);
-    }
+        parse_position(command, board, search_state);    }
 
     for (int i = 0; i < recorded; i++) {
-        fprintf(out, "%s | %d | %.1f\n", positions[i].fen, positions[i].score, result);
+        if (options->format == datagen_binary) {
+            /* The game result for the side to move: 2 / 1 / 0. */
+            const int white_result = (int) (result * 2.0 + 0.5);
+            uint8_t* record = positions[i].record;
+            record[RECORD_RESULT] = (uint8_t) (record[RECORD_SIDE] == white ? white_result : 2 - white_result);
+            fwrite(record, 1, DATAGEN_RECORD_SIZE, out);
+        } else {
+            fprintf(out, "%s | %d | %.1f\n", positions[i].fen, positions[i].score, result);
+        }
     }
     return (uint64_t) recorded;
 }

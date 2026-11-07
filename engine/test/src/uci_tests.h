@@ -6,6 +6,7 @@ void test_uci_command_tokens();
 void test_uci_stop_does_not_quit();
 void test_uci_quit_exits();
 void test_uci_newgame_resets_position();
+void test_position_moves_with_nothing_after();
 void test_go_infinite_limits();
 void test_go_nodes_limits();
 void test_go_clock_limits();
