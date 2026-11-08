@@ -8,14 +8,12 @@ A UCI chess engine in C (C23) with its own NNUE evaluation, for Linux, and Windo
 
 ## Strength
 
-Not on a rating list yet. Gauntlets on the build of 7 November 2026 with the previous network (`models/tiki-2026-11-06.nnue`; the
-current one is +13 Elo stronger in self-play), one
-thread each, UHO openings:
+Not on a rating list yet. Gauntlets with one thread each, UHO openings:
 
-| Opponent     | Time control               | Games | Score | Elo      |
-| ------------ | -------------------------- | ----- | ----- | -------- |
-| Leorik 3.2.1 | 8+0.08                     | 300   | 60.7% | +75 ± 28 |
-| Leorik 3.2.1 | 90+0.75 (about CCRL Blitz) | 20    | 57.5% | +53 ± 72 |
+| Opponent     | Time control               | Build and network                     | Games | Score | Elo      |
+| ------------ | -------------------------- | ------------------------------------- | ----- | ----- | -------- |
+| Leorik 3.2.1 | 8+0.08                     | 8 Nov 2026, `tiki-2026-11-08.nnue`    | 300   | 62.7% | +90 ± 28 |
+| Leorik 3.2.1 | 90+0.75 (about CCRL Blitz) | 8 Nov 2026, `tiki-2026-11-08.nnue`    | 60    | 60.0% | +70 ± 49 |
 
 ## Network
 
