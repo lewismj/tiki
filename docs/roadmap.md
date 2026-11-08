@@ -7,9 +7,9 @@ together.
 
 - **Search tuning:** an SPSA run of the 47 search and time management parameters on OpenBench (8+0.08), then
   its values SPRT'd against `main`.
-- **Network:** a network trained on Syzygy-relabelled data (35 months, 2023-12 to 2026-10) with the factoriser,
-  SPRT'd against the current one.
-
+- **Network:** done: trained on Syzygy-relabelled, rescaled data (38 months, 2023-09 to 2026-10) with the
+  factoriser, +13.1 ± 6.8 Elo over the previous network ([nnue.md](nnue.md#the-current-network)). Next is the
+  same recipe with PSQT.
 
 ## Next
 

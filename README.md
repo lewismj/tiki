@@ -1,17 +1,16 @@
-<!--
+# tiki
 
 <div align="center" style="display: flex; justify-content: center; align-items: center; gap: 20px;">
   <img src="docs/img/tiki.png" alt="Tiki logo" width="90">
 </div>
--->
 
-# tiki
 
 A UCI chess engine in C (C23) with its own NNUE evaluation, for Linux, and Windows.
 
 ## Strength
 
-Not on a rating list yet. Gauntlets on the current build (`models/tiki-2026-11-10.nnue`, November 2026), one
+Not on a rating list yet. Gauntlets on the build of 7 November 2026 with the previous network (`models/tiki-2026-11-06.nnue`; the
+current one is +13 Elo stronger in self-play), one
 thread each, UHO openings:
 
 | Opponent | Time control | Games | Score | Elo |

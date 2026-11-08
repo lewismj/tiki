@@ -70,8 +70,8 @@ Running the workflow by hand builds the packages as an artifact without releasin
 - **Linux** packages unpack to `tiki-v<version>/`: `bin/tiki` (statically linked), the networks from `models/`, and
   `scripts/run.sh`, which starts tiki with the last network by name (`TIKI_EVALFILE` overrides it).
 - **Windows** packages (`.zip`) hold `bin/tiki.exe` and `scripts/run.bat`, which does the same.
-- **A built-in network:** tick `embed_network` when running the workflow by hand, or set the repository variable
-  `TIKI_EMBED_NETWORK` to `true` for tag pushes.
+- **A built-in network:** every build, by hand or from a tag, has the newest network in `models/` built in, so
+  `bin/tiki` and `bin/tiki.exe` run from a GUI without the run scripts (`TIKI_EVALFILE` or `EvalFile` override it).
 
 `scripts/package.sh <variant> [cmake options]` builds, tests and packages one variant locally into `dist/`, and
 `scripts/package_windows.sh` does the same on Windows (from Git Bash).

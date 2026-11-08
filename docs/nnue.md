@@ -18,10 +18,13 @@ trainer's tests check that both sides compute the same features and integer eval
 
 ## The current network
 
-`models/tiki-2026-11-10.nnue`: 1.71B positions from 33 months of Lichess games (2024-01 to 2026-09) between
-players rated 2000+, labelled with Lichess's Stockfish evaluations (70%) and the game results (30%). 65 epochs of
-100M positions with a cosine learning rate schedule. It beat the previous network (1.1B positions, 2025-01 to
-2026-09) by +24 ± 12 Elo.
+`models/tiki-2026-11-07.nnue`: 1.95B positions from 38 months of Lichess games (2023-09 to 2026-10) between
+players rated 2000+, labelled with Lichess's Stockfish evaluations (70%) and the game results (30%). The results
+of positions with 6 pieces or fewer were corrected with the Syzygy tables, and each month's scores rescaled to the
+same scale (`s` 335). Trained with the factoriser, 65 epochs of 100M positions with a cosine learning rate
+schedule. It beat the previous network (`tiki-2026-11-06.nnue`: 1.71B positions, 2024-01 to 2026-09, no
+relabelling, rescaling or factoriser) by +13.1 ± 6.8 Elo (3,838 games at 8+0.08), which had beaten the one before
+it (1.1B positions, 2025-01 to 2026-09) by +24 ± 12.
 
 ## Training
 
