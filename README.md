@@ -1,4 +1,4 @@
-# tiki
+# Tiki
 
 <div align="center" style="display: flex; justify-content: center; align-items: center; gap: 20px;">
   <img src="docs/img/tiki.png" alt="Tiki logo" width="90">
@@ -12,7 +12,7 @@ Not on a rating list yet. Gauntlets with one thread each, UHO openings.
 
 
 
-So at bullet currently (as of 8-Nov-26) Tiki is, very roughly, somewhere between Leorik (111-112 on CCRL Blitz) and Eleanor (75 on CCRL Blitz).
+So, at bullet, currently (as of 8-Nov-26) Tiki is, very roughly, somewhere between Leorik (111-112 on CCRL Blitz) and Eleanor (75 on CCRL Blitz).
 
 | Opponent     | Time control (s)           | Build and network                  | Games | Score | Elo      |
 | ------------ | -------------------------- | ---------------------------------- | ----- | ----- | -------- |
