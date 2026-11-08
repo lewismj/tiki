@@ -8,12 +8,17 @@ A UCI chess engine in C (C23) with its own NNUE evaluation, for Linux, and Windo
 
 ## Strength
 
-Not on a rating list yet. Gauntlets with one thread each, UHO openings:
+Not on a rating list yet. Gauntlets with one thread each, UHO openings.
 
-| Opponent     | Time control               | Build and network                     | Games | Score | Elo      |
-| ------------ | -------------------------- | ------------------------------------- | ----- | ----- | -------- |
-| Leorik 3.2.1 | 8+0.08                     | 8 Nov 2026, `tiki-2026-11-08.nnue`    | 300   | 62.7% | +90 ± 28 |
-| Leorik 3.2.1 | 90+0.75 (about CCRL Blitz) | 8 Nov 2026, `tiki-2026-11-08.nnue`    | 60    | 60.0% | +70 ± 49 |
+
+
+So at bullet currently (as of 8-Nov-26) Tiki is, very roughly, somewhere between Leorik (111-112 on CCRL Blitz) and Eleanor (75 on CCRL Blitz).
+
+| Opponent     | Time control (s)           | Build and network                  | Games | Score | Elo      |
+| ------------ | -------------------------- | ---------------------------------- | ----- | ----- | -------- |
+| Leorik 3.2.1 | 8+0.08                     | 8 Nov 2026, `tiki-2026-11-08.nnue` | 300   | 62.7% | +90 ± 28 |
+| Leorik 3.2.1 | 90+0.75 (about CCRL Blitz) | 8 Nov 2026, `tiki-2026-11-08.nnue` | 60    | 60.0% | +70 ± 49 |
+| Eleanor 4.1  | 8+0.08                     | 8 Nov 2026, `tiki-2026-11-08.nnue` | 300   | 46.5% | -24 ± 22 |
 
 ## Network
 
