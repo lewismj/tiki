@@ -12,6 +12,7 @@
 #include "board_tests.h"
 #include "search_tests.h"
 #include "nnue_tests.h"
+#include "syzygy_tests.h"
 #include "test_network.h"
 
 #include "../../core/src/attack_mask.h"
@@ -84,13 +85,13 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_nnue_feature_symmetry);
     RUN_TEST(test_nnue_evaluate_known_value);
     RUN_TEST(test_nnue_output_buckets);
-    RUN_TEST(test_nnue_load_single_output_network);
+    RUN_TEST(test_nnue_rejects_other_versions);
+    RUN_TEST(test_nnue_file_keeps_hidden_weight_order);
     RUN_TEST(test_nnue_evaluate_colour_symmetric);
     RUN_TEST(test_nnue_save_load_round_trip);
     RUN_TEST(test_nnue_incremental_matches_refresh);
     RUN_TEST(test_nnue_output_simd_matches_scalar);
-    RUN_TEST(test_nnue_output_small_matches_scalar);
-    RUN_TEST(test_nnue_load_sets_small_output);
+    RUN_TEST(test_nnue_output_reference_formula);
     RUN_TEST(test_nnue_refresh_matches_plain_sum);
     RUN_TEST(test_nnue_cache_rebuilt_for_new_network);
     RUN_TEST(test_nnue_setoption_evalfile);
@@ -98,6 +99,8 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_nnue_embedded_network);
     RUN_TEST(test_material_network_values);
     RUN_TEST(test_datagen_output_format);
+    RUN_TEST(test_datagen_binary_matches_text);
+    RUN_TEST(test_datagen_binary_file);
     RUN_TEST(test_datagen_deterministic);
     RUN_TEST(test_search_mate_in_one);
     RUN_TEST(test_search_stalemate_root);
@@ -172,6 +175,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_setoption_hash);
     RUN_TEST(test_setoption_threads);
     RUN_TEST(test_uci_newgame_resets_position);
+    RUN_TEST(test_position_moves_with_nothing_after);
     RUN_TEST(test_go_infinite_limits);
     RUN_TEST(test_go_nodes_limits);
     RUN_TEST(test_go_clock_limits);
@@ -219,8 +223,18 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_input_wait_for_stop);
     RUN_TEST(test_uci_loop_keeps_commands_during_search);
     RUN_TEST(test_uci_loop_go_infinite_stop);
+    RUN_TEST(test_uci_loop_go_infinite_end_of_input);
     RUN_TEST(test_soft_time_limit);
     RUN_TEST(test_stopped_search_returns_legal_move);
+    RUN_TEST(test_syzygy_bitboard_mirror);
+    RUN_TEST(test_syzygy_without_tables);
+    RUN_TEST(test_syzygy_probe_wdl);
+    RUN_TEST(test_syzygy_en_passant);
+    RUN_TEST(test_syzygy_root_keeps_the_result);
+    RUN_TEST(test_syzygy_root_restriction_only_at_the_root);
+    RUN_TEST(test_syzygy_probe_limit);
+    RUN_TEST(test_syzygy_search_plays_the_win);
+    RUN_TEST(test_syzygy_search_scores_tablebase_wins);
     RUN_TEST(perft_tests);
     if (!skip_full_perft) {
         printf("All perft.\n");

@@ -23,6 +23,11 @@ void init_lmr_table();
 #define MATE_VALUE 890000
 #define MATE_SCORE 880000
 #define STOPPED_SEARCH  (-900000)
+/* A tablebase win (syzygy.h), less the ply it's found at, so nearer wins score higher: below every
+ * mate, above every evaluation. Like mates, these scores are stored in the TT relative to the node
+ * (transposition.h) and pruning leaves them alone (is_mate_score). */
+#define TB_WIN_SCORE (MATE_SCORE - 1000)
+#define TB_WIN_MIN (TB_WIN_SCORE - MAX_PLY)   /* The lowest tablebase win, and so the lowest decisive score. */
 
 #define MAX_MOVES 1024           /* Maximum number of moves in the game.                                     */
 #define MAX_PLY 64               /* Maximum ply we can search.                                               */

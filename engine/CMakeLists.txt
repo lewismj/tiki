@@ -28,43 +28,125 @@ if (WIN32)
     endif()
 endif()
 
-# PEXT (BMI2) slider attacks, otherwise magic bitboards. This changes the layout of attack_mask_t,
-# so it is applied to the core library as a PUBLIC property and every target linking it agrees.
-# The default is whether the build machine supports BMI2 (the compiler accepts -mbmi2 regardless).
-# PEXT is microcoded and slow on AMD Zen 1/2, turn it off there.
-include(CheckCSourceRuns)
-if (WIN32)
-    # __builtin_cpu_supports needs compiler-rt, which clang doesn't link for the MSVC target, so read
-    # CPUID leaf 7 (EBX bit 8 BMI2, bit 5 AVX2). A check keeps its first result, so the
-    # __builtin_cpu_supports checks below are then skipped.
-    foreach (feature IN ITEMS "BMI2;8" "AVX2;5")
-        list(GET feature 0 name)
-        list(GET feature 1 bit)
-        check_c_source_runs("
-#include <cpuid.h>
-int main(void) {
-    unsigned a, b, c, d;
-    return __get_cpuid_count(7, 0, &a, &b, &c, &d) && (b & (1u << ${bit})) ? 0 : 1;
-}" TIKI_HOST_HAS_${name})
-    endforeach()
-endif()
-check_c_source_runs("
-int main(void) {
-    __builtin_cpu_init();
-    return __builtin_cpu_supports(\"bmi2\") ? 0 : 1;
-}" TIKI_HOST_HAS_BMI2)
-option(TIKI_USE_PEXT "Use BMI2 PEXT for slider attacks (requires a BMI2 CPU)" ${TIKI_HOST_HAS_BMI2})
-message(STATUS "TIKI_USE_PEXT: ${TIKI_USE_PEXT}")
+# The CPU the engine is built for, TIKI_ARCH, with Stockfish's names and compiler flags (its Makefile's
+# ARCH), each level including those before it:
+#     general-64           no CPU specific code, plain C network (Stockfish's name; any 64-bit CPU)
+#     x86-64               SSE2, any x86-64 CPU
+#     x86-64-sse41-popcnt  + SSSE3, SSE4.1, POPCNT
+#     x86-64-avx2          + AVX2, BMI1 (magic bitboards: PEXT is slow on AMD Zen 1/2 and older)
+#     x86-64-bmi2          + BMI2, PEXT slider attacks
+#     x86-64-avxvnni       + AVX-VNNI (256 bit, Intel Alder Lake and later, AMD Zen 5)
+#     x86-64-avx512        x86-64-bmi2 + AVX-512 F/BW/DQ/VL
+#     x86-64-vnni512       + AVX-512 VNNI (Intel Ice Lake, Tiger Lake and later, AMD Zen 4 and later)
+#     x86-64-avx512icl     + the rest of Ice Lake's AVX-512 extensions
+#     native               the best of these the build machine runs (the default), general-64 on other CPUs
+# The flags apply to the whole build, so a binary only runs on CPUs of its level. Every level gives the
+# same evaluations and bench (integer arithmetic, -ffp-contract=off: no fused multiply-adds changing a
+# floating point result, as AVX-512 implies FMA).
+set(TIKI_ARCH "native" CACHE STRING "Target CPU level, Stockfish's names (x86-64-bmi2, x86-64-vnni512, ...), or native")
+set(tiki_arches general-64 x86-64 x86-64-sse41-popcnt x86-64-avx2 x86-64-bmi2 x86-64-avxvnni x86-64-avx512 x86-64-vnni512
+                x86-64-avx512icl)
+set_property(CACHE TIKI_ARCH PROPERTY STRINGS native ${tiki_arches})
+set(tiki_pext_arches x86-64-bmi2 x86-64-avxvnni x86-64-avx512 x86-64-vnni512 x86-64-avx512icl)
 
-# AVX2 for the network's accumulator and output layer (only nnue.c is built with -mavx2, a plain
-# C version is used otherwise). The default is whether the build machine supports AVX2.
-check_c_source_runs("
+set(tiki_flags_general-64)
+set(tiki_flags_x86-64 -msse -msse2)
+set(tiki_flags_x86-64-sse41-popcnt ${tiki_flags_x86-64} -msse3 -mpopcnt -mssse3 -msse4.1)
+set(tiki_flags_x86-64-avx2 ${tiki_flags_x86-64-sse41-popcnt} -mavx2 -mbmi)
+set(tiki_flags_x86-64-bmi2 ${tiki_flags_x86-64-avx2} -mbmi2)
+set(tiki_flags_x86-64-avxvnni ${tiki_flags_x86-64-bmi2} -mavxvnni)
+set(tiki_flags_x86-64-avx512 ${tiki_flags_x86-64-bmi2} -mavx512f -mavx512bw -mavx512dq -mavx512vl)
+set(tiki_flags_x86-64-vnni512 ${tiki_flags_x86-64-avx512} -mavx512vnni)
+set(tiki_flags_x86-64-avx512icl ${tiki_flags_x86-64-vnni512} -mavx512ifma -mavx512vbmi -mavx512vbmi2
+                                -mavx512vpopcntdq -mavx512bitalg -mvpclmulqdq -mgfni -mvaes)
+
+# Whether this machine runs code built for 'arch': a program using the level's instructions, built with its
+# flags, runs (an unsupported instruction, or one the OS hasn't enabled, crashes it). For x86-64-bmi2 and
+# the levels above, which use PEXT, it also mustn't be an AMD CPU before Zen 3, where PEXT is microcoded
+# and slow (Stockfish picks x86-64-avx2 there too). The result is cached per level.
+include(CheckCSourceRuns)
+function(tiki_arch_runs arch out)
+    set(probe_x86-64-sse41-popcnt "__m128i v = _mm_max_epi32(_mm_set1_epi32(seed), _mm_setzero_si128());
+    sink = _mm_cvtsi128_si32(v) + (int) _mm_popcnt_u64((unsigned long long) seed);")
+    set(probe_x86-64-avx2 "__m256i v = _mm256_add_epi32(_mm256_set1_epi32(seed), _mm256_set1_epi32(seed));
+    sink = _mm256_cvtsi256_si32(v) + (int) _tzcnt_u64((unsigned long long) seed);")
+    set(probe_x86-64-bmi2 "${probe_x86-64-avx2}
+    sink += (int) _pext_u64((unsigned long long) seed, 0xF0F0ull);")
+    set(probe_x86-64-avxvnni "${probe_x86-64-bmi2}
+    sink += _mm256_cvtsi256_si32(_mm256_dpbusd_avx_epi32(v, v, v));")
+    set(probe_x86-64-avx512 "${probe_x86-64-bmi2}
+    __m512i w = _mm512_maddubs_epi16(_mm512_set1_epi32(seed), _mm512_set1_epi32(seed));
+    sink += _mm512_cvtsi512_si32(_mm512_permutexvar_epi64(_mm512_set1_epi64(seed), w));")
+    set(probe_x86-64-vnni512 "${probe_x86-64-avx512}
+    sink += _mm512_cvtsi512_si32(_mm512_dpbusd_epi32(w, w, w));")
+    set(probe_x86-64-avx512icl "${probe_x86-64-vnni512}
+    sink += _mm512_cvtsi512_si32(_mm512_permutexvar_epi8(_mm512_popcnt_epi64(w), w));")
+    set(fast_pext "1")
+    if (arch IN_LIST tiki_pext_arches)
+        set(fast_pext "!(c == 0x444d4163 && family < 0x19)")    # 'cAMD' of AuthenticAMD, family < Zen 3
+    endif()
+    string(REPLACE "-" "_" name "TIKI_RUNS_${arch}")
+    if (arch MATCHES "^(general-64|x86-64)$")
+        set(${out} TRUE PARENT_SCOPE)
+        return()
+    endif()
+    list(JOIN tiki_flags_${arch} " " CMAKE_REQUIRED_FLAGS)
+    check_c_source_runs("
+#include <cpuid.h>
+#include <immintrin.h>
+volatile int seed = 3, sink;
 int main(void) {
-    __builtin_cpu_init();
-    return __builtin_cpu_supports(\"avx2\") ? 0 : 1;
-}" TIKI_HOST_HAS_AVX2)
-option(TIKI_USE_AVX2 "Use AVX2 for the network (requires an AVX2 CPU)" ${TIKI_HOST_HAS_AVX2})
-message(STATUS "TIKI_USE_AVX2: ${TIKI_USE_AVX2}")
+    ${probe_${arch}}
+    unsigned a, b, c, d;
+    __get_cpuid(0, &a, &b, &c, &d);
+    unsigned eax, ebx, ecx, edx;
+    __get_cpuid(1, &eax, &ebx, &ecx, &edx);
+    const unsigned family = ((eax >> 8) & 0xF) + (((eax >> 8) & 0xF) == 0xF ? (eax >> 20) & 0xFF : 0);
+    (void) family;
+    return ${fast_pext} ? 0 : 1;
+}" ${name})
+    set(${out} ${${name}} PARENT_SCOPE)
+endfunction()
+
+if (TIKI_ARCH STREQUAL "native" AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|x64)$")
+    set(TIKI_ARCH_USED general-64)
+    set(TIKI_ARCH_RUNS_HERE TRUE)
+elseif (TIKI_ARCH STREQUAL "native")
+    # The best level this machine runs.
+    list(REVERSE tiki_arches)
+    foreach (arch IN LISTS tiki_arches)
+        tiki_arch_runs(${arch} runs)
+        if (runs)
+            set(TIKI_ARCH_USED ${arch})
+            break()
+        endif()
+    endforeach()
+    list(REVERSE tiki_arches)
+    set(TIKI_ARCH_RUNS_HERE TRUE)
+elseif (TIKI_ARCH IN_LIST tiki_arches)
+    set(TIKI_ARCH_USED ${TIKI_ARCH})
+    tiki_arch_runs(${TIKI_ARCH} TIKI_ARCH_RUNS_HERE)
+else()
+    list(JOIN tiki_arches ", " names)
+    message(FATAL_ERROR "TIKI_ARCH: unknown '${TIKI_ARCH}', one of native, ${names}")
+endif()
+if (TIKI_ARCH STREQUAL "native")
+    message(STATUS "TIKI_ARCH: native, ${TIKI_ARCH_USED}")
+else()
+    message(STATUS "TIKI_ARCH: ${TIKI_ARCH_USED}")
+endif()
+if (NOT TIKI_ARCH_RUNS_HERE)
+    message(STATUS "TIKI_ARCH: this machine doesn't run ${TIKI_ARCH_USED} code, so its tests aren't run")
+endif()
+add_compile_options(${tiki_flags_${TIKI_ARCH_USED}} -ffp-contract=off)
+# PEXT (BMI2) slider attacks from x86-64-bmi2 up, otherwise magic bitboards. This changes the layout of
+# attack_mask_t, so it is a definition for every target.
+if (TIKI_ARCH_USED IN_LIST tiki_pext_arches)
+    add_compile_definitions(USE_PEXT)
+endif()
+if (TIKI_ARCH_USED STREQUAL "general-64")
+    add_compile_definitions(TIKI_NO_SIMD)              # nnue.c: the plain C network.
+endif()
 
 # Sanitizers for all targets (including Unity), e.g. -DTIKI_SANITIZE=address,undefined or thread.
 set(TIKI_SANITIZE "" CACHE STRING "Comma separated -fsanitize list, empty for none")
@@ -102,17 +184,70 @@ option(TIKI_STATIC "Link tiki statically" OFF)
 # added to models/, and the engine is rebuilt when the embedded file changes.
 option(TIKI_EMBED_NETWORK "Build the newest network in models/ into the engine" OFF)
 set(TIKI_EMBED_NETWORK_FILE "" CACHE FILEPATH "Network to build in with TIKI_EMBED_NETWORK, empty for the newest in models/")
+
+# Only a network the engine can load is built in: its header's version must be NNUE_VERSION (nnue.h).
+# Networks of an older format stay in models/ for older engines, and are passed over.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/core/src/nnue/nnue.h" nnue_version_line REGEX "^#define NNUE_VERSION ")
+# Configure again when nnue.h changes (a new NNUE_VERSION), so the check below isn't left stale.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/core/src/nnue/nnue.h")
+string(REGEX MATCH "[0-9]+" TIKI_NETWORK_VERSION "${nnue_version_line}")
+
+# The format version of the network at 'path' (uint32, little endian, after the 8 byte magic), or
+# "none" if it isn't a tiki network.
+function(tiki_network_version path out)
+    file(READ "${path}" magic LIMIT 8 HEX)
+    if (NOT magic STREQUAL "54494b494e4e5545")          # "TIKINNUE"
+        set(${out} "none" PARENT_SCOPE)
+        return()
+    endif()
+    file(READ "${path}" bytes OFFSET 8 LIMIT 4 HEX)
+    string(LENGTH "${bytes}" length)
+    if (length LESS 8)                                  # Truncated: no version to read.
+        set(${out} "none" PARENT_SCOPE)
+        return()
+    endif()
+    string(SUBSTRING "${bytes}" 0 2 b0)
+    string(SUBSTRING "${bytes}" 2 2 b1)
+    string(SUBSTRING "${bytes}" 4 2 b2)
+    string(SUBSTRING "${bytes}" 6 2 b3)
+    math(EXPR version "0x${b3}${b2}${b1}${b0}")
+    set(${out} ${version} PARENT_SCOPE)
+endfunction()
+
 if (TIKI_EMBED_NETWORK)
     if (TIKI_EMBED_NETWORK_FILE)
         get_filename_component(TIKI_EMBEDDED_NETWORK "${TIKI_EMBED_NETWORK_FILE}" ABSOLUTE)
+        if (NOT EXISTS "${TIKI_EMBEDDED_NETWORK}")
+            message(FATAL_ERROR "TIKI_EMBED_NETWORK: no network at '${TIKI_EMBED_NETWORK_FILE}'")
+        endif()
+        tiki_network_version("${TIKI_EMBEDDED_NETWORK}" version)
+        if (NOT version STREQUAL TIKI_NETWORK_VERSION)
+            message(FATAL_ERROR "TIKI_EMBED_NETWORK: ${TIKI_EMBEDDED_NETWORK} is network format version "
+                                "${version}, this engine reads version ${TIKI_NETWORK_VERSION}")
+        endif()
     else()
         get_filename_component(models_dir "${CMAKE_CURRENT_SOURCE_DIR}/../models" ABSOLUTE)
         file(GLOB TIKI_NETWORKS CONFIGURE_DEPENDS "${models_dir}/*.nnue")
-        list(SORT TIKI_NETWORKS COMPARE NATURAL)
-        list(POP_BACK TIKI_NETWORKS TIKI_EMBEDDED_NETWORK)
-    endif()
-    if (NOT TIKI_EMBEDDED_NETWORK OR NOT EXISTS "${TIKI_EMBEDDED_NETWORK}")
-        message(FATAL_ERROR "TIKI_EMBED_NETWORK: no network found ('${TIKI_EMBED_NETWORK_FILE}', or models/*.nnue)")
+        list(SORT TIKI_NETWORKS COMPARE NATURAL ORDER DESCENDING)
+        set(TIKI_EMBEDDED_NETWORK "")
+        set(skipped "")
+        foreach (network IN LISTS TIKI_NETWORKS)
+            tiki_network_version("${network}" version)
+            if (version STREQUAL TIKI_NETWORK_VERSION)
+                set(TIKI_EMBEDDED_NETWORK "${network}")
+                break()
+            endif()
+            get_filename_component(name "${network}" NAME)
+            list(APPEND skipped "${name} (version ${version})")
+        endforeach()
+        if (skipped)
+            message(STATUS "TIKI_EMBED_NETWORK: passed over networks of another format: ${skipped}")
+        endif()
+        if (NOT TIKI_EMBEDDED_NETWORK)
+            message(FATAL_ERROR "TIKI_EMBED_NETWORK: no network of format version ${TIKI_NETWORK_VERSION} in "
+                                "models/. Add one, set TIKI_EMBED_NETWORK_FILE, or configure with "
+                                "-DTIKI_EMBED_NETWORK=OFF and set TIKI_EVALFILE when running.")
+        endif()
     endif()
     message(STATUS "TIKI_EMBED_NETWORK: ${TIKI_EMBEDDED_NETWORK}")
 endif()

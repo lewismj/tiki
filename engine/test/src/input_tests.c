@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "unity.h"
 #include "input_tests.h"
@@ -213,6 +214,40 @@ void test_uci_loop_go_infinite_stop() {
     /* Would hang if 'stop' were lost. */
     uci_loop(fdopen(fds[0], "r"), &board, &search_state, &limits);
     TEST_ASSERT_TRUE(limits.stop_search_flag);
+}
+
+/* Closes the pipe's write end after 300 ms, by then 'go infinite' is searching. */
+static void* close_later(void* arg) {
+    usleep(300 * 1000);
+    close(*(int*) arg);
+    return NULL;
+}
+
+void test_uci_loop_go_infinite_end_of_input() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+    init_search_state(&search_state);
+    reset_time_control(&limits);
+
+    /* The input ends while 'go infinite' is searching, with no 'stop' or 'quit' (a GUI that
+     * crashed): the search stops and the loop exits, rather than searching on to the depth limit.
+     * (Input that ends before the search starts was already handled: the queued quit stops it.) */
+    int fds[2];
+    TEST_ASSERT_EQUAL_INT(0, pipe(fds));
+    const char* commands = "position startpos\ngo infinite\n";
+    TEST_ASSERT_EQUAL_INT((int) strlen(commands), (int) write(fds[1], commands, strlen(commands)));
+    pthread_t closer;
+    TEST_ASSERT_EQUAL_INT(0, pthread_create(&closer, NULL, close_later, &fds[1]));
+
+    const uint64_t start = clock_time_ms();
+    uci_loop(fdopen(fds[0], "r"), &board, &search_state, &limits);
+    TEST_ASSERT_TRUE(limits.stop_search_flag);
+    TEST_ASSERT_TRUE(limits.stop_engine_flag);
+    const uint64_t elapsed = clock_time_ms() - start;
+    pthread_join(closer, NULL);
+    TEST_ASSERT_TRUE_MESSAGE(elapsed >= 250, "the search should have been running when the input ended");
+    TEST_ASSERT_TRUE_MESSAGE(elapsed < 5000, "the search went on after the input ended");
 }
 
 void test_soft_time_limit() {

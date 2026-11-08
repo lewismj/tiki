@@ -17,8 +17,11 @@
 #     GAMES=200            gauntlet: games against each engine
 #     ELO0=0 ELO1=5        SPRT bounds (normalized Elo)
 #     MAX_GAMES=20000      SPRT: stop here if it's still undecided
-#     TIKI_EVALFILE        network for every tiki, default the newest in models/
+#     TIKI_EVALFILE        network every tiki starts with, default each one's built-in network (so engines
+#                          reading different network formats each play with their own)
 #     NEW_EVALFILE BASE_EVALFILE  SPRT: a different network for one side (to test networks)
+#     NEW_OPTIONS BASE_OPTIONS    SPRT: UCI options for one side, space separated Name=value pairs
+#                          (no spaces in values), e.g. NEW_OPTIONS="SyzygyPath=/mnt/f/syzygy/wdl:/mnt/f/syzygy/dtz"
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -74,11 +77,18 @@ case "$book" in
     *) book_format=pgn ;;
 esac
 
-# tiki loads TIKI_EVALFILE at startup, fastchess passes the environment on to the engines.
-if [ -z "${TIKI_EVALFILE:-}" ]; then
-    TIKI_EVALFILE=$(ls "$root"/models/*.nnue 2> /dev/null | sort -V | tail -n 1)
-fi
-export TIKI_EVALFILE
+# Each tiki starts with TIKI_EVALFILE if it's set (fastchess passes the environment on, so every tiki
+# loads that one), otherwise with the network built into it. A shared file can't serve engines that read
+# different network formats (a build reading version 5 against main reading version 2), built-in ones can.
+# Prints the network the tiki at $1 starts with, or explains and fails if it doesn't start.
+tiki_network() {
+    if ! out=$(printf 'uci\nquit\n' | "$1" 2>&1); then
+        echo "$1 doesn't start: $(echo "$out" | head -n 1)" >&2
+        echo "Build it with its network built in (--embed or --net), or set TIKI_EVALFILE to a network every tiki here reads." >&2
+        return 1
+    fi
+    echo "$out" | sed -n 's/^option name EvalFile type string default //p'
+}
 
 if [ -z "${CONCURRENCY:-}" ]; then
     if command -v lscpu > /dev/null; then
@@ -98,16 +108,25 @@ case "$mode" in
         [ $# -eq 2 ] || usage
         new=$(engine_path "$1")
         base=$(engine_path "$2")
-        echo "SPRT [${ELO0:-0}, ${ELO1:-5}]: $new vs $base, $CONCURRENCY at once, network $TIKI_EVALFILE"
-        set -- -engine "cmd=$new" name=new ${NEW_EVALFILE:+"option.EvalFile=$NEW_EVALFILE"} \
-               -engine "cmd=$base" name=base ${BASE_EVALFILE:+"option.EvalFile=$BASE_EVALFILE"} \
+        new_network=$(tiki_network "$new") || exit 1
+        base_network=$(tiki_network "$base") || exit 1
+        echo "SPRT [${ELO0:-0}, ${ELO1:-5}]: $new (network ${NEW_EVALFILE:-$new_network}) vs" \
+             "$base (network ${BASE_EVALFILE:-$base_network}), $CONCURRENCY at once"
+        new_options="" base_options=""
+        for option in ${NEW_OPTIONS:-}; do new_options="$new_options option.$option"; done
+        for option in ${BASE_OPTIONS:-}; do base_options="$base_options option.$option"; done
+        [ -z "$new_options$base_options" ] || echo "Options: new:${new_options:- none}, base:${base_options:- none}"
+        # shellcheck disable=SC2086  # the options are split into separate arguments
+        set -- -engine "cmd=$new" name=new ${NEW_EVALFILE:+"option.EvalFile=$NEW_EVALFILE"} $new_options \
+               -engine "cmd=$base" name=base ${BASE_EVALFILE:+"option.EvalFile=$BASE_EVALFILE"} $base_options \
                -rounds $((${MAX_GAMES:-20000} / 2)) \
                -sprt elo0="${ELO0:-0}" elo1="${ELO1:-5}" alpha=0.05 beta=0.05 model=normalized
         ;;
     gauntlet)
         tiki=$(engine_path "$1")
+        tiki_net=$(tiki_network "$tiki") || exit 1
         shift
-        echo "Gauntlet: $tiki vs $*, ${GAMES:-200} games each, $CONCURRENCY at once, network $TIKI_EVALFILE"
+        echo "Gauntlet: $tiki (network $tiki_net) vs $*, ${GAMES:-200} games each, $CONCURRENCY at once"
         # Each opponent's options go on the end, then it's shifted off the front.
         opponents=$#
         set -- "$@" -tournament gauntlet -seeds 1 -engine "cmd=$tiki" name=tiki -rounds $((${GAMES:-200} / 2))

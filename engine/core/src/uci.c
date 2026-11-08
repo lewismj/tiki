@@ -16,6 +16,7 @@
 #include "bench.h"
 #include "version.h"
 #include "nnue/nnue.h"
+#include "syzygy.h"
 
 
 #define startpos "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
@@ -203,7 +204,10 @@ void parse_position(const char* position, board_t* board, search_state_t* search
     }
     ptr = strstr(position, "moves");
     if (ptr != NULL) {
-        ptr +=6;
+        /* Past "moves" and the spaces after it. Not a fixed 6: "moves" may end the command, and
+         * skipping its terminator read whatever followed in memory (datagen's reused buffer). */
+        ptr += 5;
+        while (*ptr == ' ') ptr++;
         while (*ptr) {
             move_t move = parse_move(ptr, board);
             if (move == 0) break;
@@ -411,6 +415,22 @@ void parse_setoption(const char* command) {
             printf("info string Could not load network '%s', still using %s\n", path,
                    *nnue_loaded_path() ? nnue_loaded_path() : "the current network");
         }
+    } else if (is_option(name, length, "SyzygyPath")) {
+        /* Directories separated by ';' on Windows, ':' elsewhere, to the end of the line. */
+        size_t path_length = value ? strlen(value) : 0;
+        while (path_length > 0 && isspace((unsigned char) value[path_length - 1])) path_length--;
+        char path[4096];
+        snprintf(path, sizeof(path), "%.*s", (int) path_length, value ? value : "");
+        const int pieces = syzygy_init(path);
+        if (pieces > 0) printf("info string Syzygy tablebases up to %d pieces\n", pieces);
+        else if (path_length > 0 && strcmp(path, "<empty>") != 0) printf("info string No Syzygy tablebases in '%s'\n", path);
+    } else if (is_option(name, length, "SyzygyProbeLimit") && value) {
+        syzygy_set_probe_limit(atoi(value));
+    } else if (is_option(name, length, "SyzygyProbeDepth") && value) {
+        int depth = atoi(value);
+        if (depth < 1) depth = 1;
+        if (depth > SYZYGY_PROBE_DEPTH_MAX) depth = SYZYGY_PROBE_DEPTH_MAX;
+        syzygy_probe_depth = depth;
     } else if (value && set_tunable(name, length, atoi(value))) {
         /* A tunable search parameter (TIKI_TUNE build). */
     } else {
@@ -429,6 +449,11 @@ bool handle_uci_command(const char* command, board_t* board, search_state_t* sea
                    MOVE_OVERHEAD_MAX);
             printf("option name EvalFile type string default %s\n",
                    *nnue_loaded_path() ? nnue_loaded_path() : "<empty>");
+            printf("option name SyzygyPath type string default <empty>\n");
+            printf("option name SyzygyProbeDepth type spin default %d min 1 max %d\n", SYZYGY_PROBE_DEPTH_DEFAULT,
+                   SYZYGY_PROBE_DEPTH_MAX);
+            printf("option name SyzygyProbeLimit type spin default %d min 0 max %d\n", SYZYGY_PROBE_LIMIT_DEFAULT,
+                   SYZYGY_PROBE_LIMIT_MAX);
             print_tunable_options(); /* Only in a TIKI_TUNE build. */
             printf("uciok\n");
             break;

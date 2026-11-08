@@ -9,8 +9,9 @@
 #include "../board.h"
 
 /**
- * Tiki's NNUE: HalfKAv2_hm features -> 512 x 2 accumulator -> SCReLU -> 1 output, from one of 8
- * output layers chosen by the number of pieces on the board (output buckets).
+ * Tiki's NNUE: HalfKAv2_hm features -> 512 x 2 accumulator -> pairwise products -> 512 -> 16 -> CReLU
+ * -> 1, the 512 -> 16 -> 1 part (a layer stack) one of 32 chosen by the number of pieces on the board
+ * and which sides have a queen (output buckets, as Stockfish's SFNNv18).
  * The trainer (training/tiki_nnue) implements the same features and quantisation, any change
  * here must be made there too (training/tests check the two agree).
  *
@@ -24,24 +25,28 @@
  *     (type * 2 + (colour != perspective)), and 10 for either king ("A": both kings share one).
  *   - index = bucket * 704 + kind * 64 + oriented square. 32 * 11 * 64 = 22528 inputs.
  *
- * Output bucket = (pieces on the board, kings included, - 2) / 4: 2-5 pieces is 0 ... 30-32 is 7.
- * Both perspectives share the accumulator, only the output layer depends on the bucket.
+ * Output bucket = piece bucket * 4 + (side to move has a queen ? 2 : 0) + (the other side has ? 1 : 0),
+ * piece bucket = (pieces on the board, kings included, - 2) / 4: 2-5 pieces is 0 ... 30-32 is 7.
+ * Both perspectives share the accumulator, only the layer stack depends on the bucket.
  *
- * Quantisation (what the trainer exports):
- *   accumulator = ft_bias + sum of ft_weights rows for active features, int16, scale QA.
- *   SCReLU(x) = clamp(x, 0, QA)^2.
- *   eval = (sum(SCReLU(acc_stm) * out_w[b][0..511]) + sum(SCReLU(acc_nstm) * out_w[b][512..1023])) / QA
- *          + out_bias[b], then * SCALE / (QA * QB), for output bucket b. Integer division truncates
- *          (C semantics).
- *   Float model: y = SCReLU_f(acc_f) . w + b with acc_f = acc / QA, w = out_w / QB,
- *   b = out_bias / (QA * QB), and eval in centipawns = y * SCALE.
+ * Quantisation (what the trainer exports), for output bucket b:
+ *   accumulator = ft_bias + sum of ft_weights rows for active features, int16, scale QA (255).
+ *   in[i] = (x * y) >> 9 with x = clamp(acc[i], 0, QA), y = clamp(acc[i + 256], 0, QA), i < 256:
+ *           the pairwise product of the accumulator's halves, 0..127 (scale QI = 127, rounded down), the side
+ *           to move's 256 then the other side's (as Stockfish's pairwise CReLU).
+ *   h[j] = clamp(l1_bias[b][j] + sum(in[i] * l1_w[b][j][i]), 0, QH) (CReLU, int8 weights scale QW = 64,
+ *          QH = QI * QW = 8128 is 1.0).
+ *   eval = (out_bias[b] + sum(h[j] * out_w[b][j])) * SCALE / (QH * QW). The division truncates (C).
+ *   Float model: a = pairwise_f(acc / QA), h = CReLU_f(W1 a + b1), y = w2 . h + b2, eval = y * SCALE,
+ *   with W1 = l1_w / QW, b1 = l1_bias / QH, w2 = out_w / QW, b2 = out_bias / (QH * QW).
  *
- * File format (little endian), version 2:
+ * File format (little endian), version 5:
  *   char magic[8] = "TIKINNUE", uint32 version, uint32 inputs, uint32 hidden,
  *   int16 ft_weights[inputs][hidden] (row per feature), int16 ft_bias[hidden],
- *   int16 out_weights[8][2 * hidden] (per bucket, side to move half first), int32 out_bias[8].
- * Version 1 (before output buckets) has one out_weights[2 * hidden] and out_bias. It still loads, as
- * that output layer in every bucket, so it evaluates exactly as before. Networks are saved as version 2.
+ *   int8 l1_weights[32][16][hidden] (per bucket and hidden unit, the side to move's inputs first),
+ *   int32 l1_bias[32][16], int16 out_weights[32][16], int32 out_bias[32].
+ * Earlier versions (1, 2: an output layer straight from the accumulator; 3: PSQT; 4: a hidden layer on
+ * SCReLU inputs, never released) are a different network and aren't loaded.
  */
 
 #define NNUE_KING_BUCKETS 32
@@ -50,34 +55,41 @@
 #define NNUE_INPUTS (NNUE_KING_BUCKETS * NNUE_PIECE_SQUARES)    /* 22528 */
 #define NNUE_HIDDEN 512
 #define NNUE_MAX_ACTIVE 32                                      /* One feature per piece. */
-#define NNUE_OUTPUT_BUCKETS 8
+#define NNUE_L1 16                                              /* Hidden layer width, per bucket. */
+#define NNUE_L1_INPUTS NNUE_HIDDEN                              /* 2 x 256 pairwise products */
+#define NNUE_PIECE_BUCKETS 8
+#define NNUE_OUTPUT_BUCKETS (NNUE_PIECE_BUCKETS * 4)            /* 32 layer stacks */
 
 #define NNUE_QA 255
-#define NNUE_QB 64
+#define NNUE_QI 127                                             /* Hidden layer inputs, 0..127. */
+#define NNUE_QW 64                                              /* Hidden and output weights. */
+#define NNUE_QH (NNUE_QI * NNUE_QW)                             /* Hidden activation 1.0, 8128. */
 #define NNUE_SCALE 400
 
 #define NNUE_MAGIC "TIKINNUE"
-#define NNUE_VERSION 2
-#define NNUE_VERSION_SINGLE_OUTPUT 1                            /* Before output buckets, still loaded. */
+#define NNUE_VERSION 5
 
 /* The weights and accumulators are 64 byte aligned (align, rows of 512 bytes), so no SIMD load
  * splits a cache line. */
 typedef struct {
     int16_t* ft_weights;                    /* [NNUE_INPUTS][NNUE_HIDDEN] */
     int16_t ft_bias[NNUE_HIDDEN] align;
-    int16_t out_weights[NNUE_OUTPUT_BUCKETS][2 * NNUE_HIDDEN] align; /* Side to move, then the other side. */
+    int8_t* l1_weights;                     /* In memory as nnue_l1_index (below), not the file's order */
+    int32_t l1_bias[NNUE_OUTPUT_BUCKETS][NNUE_L1];
+    int16_t out_weights[NNUE_OUTPUT_BUCKETS][NNUE_L1];
     int32_t out_bias[NNUE_OUTPUT_BUCKETS];
-    bool small_output;                      /* Every out_weight within +-NNUE_OUT_WEIGHT_SMALL (see below). */
 } nnue_network_t;
 
 /*
- * Output weights within +-127 (the trainer clips them to 127 / QB) let the AVX2 output layer work in
- * int16 / int32: SCReLU(v) * w as (v * w) * v, v * w fits int16 (255 * 127) and _mm256_madd_epi16
- * sums the pairs into int32. Exact, the int32 sums can't overflow (nnue.c). nnue_load_memory sets
- * small_output for a network that qualifies; any other (older files, networks built in code, which
- * start with it false) uses the int64 sums, with the same results.
+ * Where hidden layer weight [bucket][unit][input] is in nnue_net.l1_weights. In memory the weights are
+ * grouped by 4 inputs: for each group, the 16 units' 4 weights each (64 bytes, two AVX2 registers), so
+ * the AVX2 layer adds a group of 4 inputs to all 16 sums at once, with no horizontal additions. The
+ * file keeps [bucket][unit][input]; load and save convert.
  */
-#define NNUE_OUT_WEIGHT_SMALL 127
+static inline size_t nnue_l1_index(int bucket, int unit, int input) {
+    return (((size_t) bucket * (NNUE_L1_INPUTS / 4) + (size_t) (input / 4)) * NNUE_L1 + (size_t) unit) * 4 +
+           (size_t) (input % 4);
+}
 
 typedef struct {
     int16_t values[2][NNUE_HIDDEN] align;   /* Indexed by perspective (white, black). */
@@ -170,16 +182,27 @@ int nnue_evaluate(const board_t* board);
 /* Changes whenever the network is replaced (nnue_allocate, nnue_load), so caches built for the old one are rebuilt. */
 uint32_t nnue_generation(void);
 
-/* "avx2" or "scalar", the accumulator and output code compiled in (TIKI_USE_AVX2). */
+/* The accumulator and layer stack code compiled in (TIKI_ARCH): "avx512-vnni", "avx512", "avx-vnni", "avx2",
+ * "ssse3", "sse2" or "scalar". */
 const char* nnue_simd(void);
 
-/* The output bucket of a position with 'pieces' pieces (kings included, so at least 2). */
-static inline int nnue_output_bucket(int pieces) {
+/* The piece count part of the output bucket, for 'pieces' pieces (kings included, so at least 2). */
+static inline int nnue_piece_bucket(int pieces) {
     const int bucket = (pieces - 2) / 4;
-    return bucket < 0 ? 0 : bucket >= NNUE_OUTPUT_BUCKETS ? NNUE_OUTPUT_BUCKETS - 1 : bucket;
+    return bucket < 0 ? 0 : bucket >= NNUE_PIECE_BUCKETS ? NNUE_PIECE_BUCKETS - 1 : bucket;
 }
 
-/* The output layer of 'bucket', as nnue_evaluate uses it (SIMD if compiled in) and the plain C reference. */
+/* The output bucket (layer stack): 'pieces' on the board, and whether the side to move and the other
+ * side have a queen. */
+static inline int nnue_output_bucket(int pieces, bool stm_queen, bool nstm_queen) {
+    return nnue_piece_bucket(pieces) * 4 + (stm_queen ? 2 : 0) + (nstm_queen ? 1 : 0);
+}
+
+/* The output bucket of 'board', for its side to move. */
+int nnue_board_bucket(const board_t* board);
+
+/* The layer stack of 'bucket' on an accumulator, in centipawns for 'side': as nnue_evaluate uses it
+ * (SIMD if compiled in) and the plain C reference. */
 int nnue_output(const nnue_accumulator_t* accumulator, colour side, int bucket);
 int nnue_output_scalar(const nnue_accumulator_t* accumulator, colour side, int bucket);
 

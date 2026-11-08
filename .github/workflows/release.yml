@@ -3,26 +3,26 @@
 # packages as a GitHub release. Run it by hand (Actions > Release > Run workflow) to build the
 # packages as a workflow artifact without releasing.
 #
-# The network can be built into the binaries (TIKI_EMBED_NETWORK, the newest in models/), so they run
-# without a .nnue file or the run scripts: the 'embed_network' input when run by hand, and for tag
-# pushes (which have no inputs) the repository variable TIKI_EMBED_NETWORK set to 'true'.
+# The network is always built into the binaries (TIKI_EMBED_NETWORK, the newest in models/ the engine
+# reads), so they run without a .nnue file or the run scripts.
+#
+# One package per CPU level and platform, Stockfish's levels and names (TIKI_ARCH in engine/CMakeLists.txt),
+# as CCRL and other testers expect. A level the runner's CPU doesn't run is built but not tested or benched.
 name: Release
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      embed_network:
-        description: "Build the newest network in models/ into the binaries"
-        type: boolean
-        default: false
 
 permissions:
   contents: write
 
 env:
-  EMBED: ${{ ((github.event_name == 'workflow_dispatch' && inputs.embed_network) || (github.event_name == 'push' && vars.TIKI_EMBED_NETWORK == 'true')) && '-DTIKI_EMBED_NETWORK=ON' || '' }}
+  EMBED: -DTIKI_EMBED_NETWORK=ON
+  ARCHES: >-
+    x86-64 x86-64-sse41-popcnt x86-64-avx2 x86-64-bmi2 x86-64-avxvnni x86-64-avx512 x86-64-vnni512
+    x86-64-avx512icl
 
 jobs:
   linux:
@@ -41,13 +41,9 @@ jobs:
             exit 1
           fi
 
-      # bmi2: AVX2 and PEXT (Intel Haswell+, AMD Zen 3+). avx2: no PEXT, which is slow on AMD Zen 1/2.
-      # x86-64: neither, for any x86-64 CPU.
       - name: Build, test and package
         run: |
-          sh scripts/package.sh x86-64-bmi2 -DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=ON $EMBED
-          sh scripts/package.sh x86-64-avx2 -DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=OFF $EMBED
-          sh scripts/package.sh x86-64 -DTIKI_USE_AVX2=OFF -DTIKI_USE_PEXT=OFF $EMBED
+          for arch in $ARCHES; do sh scripts/package.sh $arch $EMBED; done
 
       - uses: actions/upload-artifact@v4
         with:
@@ -71,12 +67,10 @@ jobs:
           command -v ninja || choco install ninja --no-progress -y
           "/c/Program Files/LLVM/bin/clang" --version
 
-      # The same variants as Linux.
+      # The same levels as Linux.
       - name: Build, test and package
         run: |
-          sh scripts/package_windows.sh x86-64-bmi2 -DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=ON $EMBED
-          sh scripts/package_windows.sh x86-64-avx2 -DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=OFF $EMBED
-          sh scripts/package_windows.sh x86-64 -DTIKI_USE_AVX2=OFF -DTIKI_USE_PEXT=OFF $EMBED
+          for arch in $ARCHES; do sh scripts/package_windows.sh $arch $EMBED; done
 
       - uses: actions/upload-artifact@v4
         with:
@@ -94,7 +88,7 @@ jobs:
           path: dist
           merge-multiple: true
 
-      # Every variant on every platform must search exactly the same tree.
+      # Every level on every platform (that the runners could run) must search exactly the same tree.
       - name: Check the bench signatures match
         run: |
           grep -H "Nodes searched" dist/bench-*.txt
@@ -115,21 +109,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           nodes=$(grep -h "Nodes searched" dist/bench-x86-64-bmi2.txt | tr -dc '0-9')
-          embedded=""
-          if [ -n "$EMBED" ]; then
-            embedded="It's also built into \`bin/tiki\` and \`bin/tiki.exe\`, so a GUI can run them directly (\`TIKI_EVALFILE\` or the \`EvalFile\` option still override it)."
-          fi
           cat > notes.md <<EOF
           Unpack one package and run \`tiki-$GITHUB_REF_NAME/scripts/run.sh\` on Linux or
           \`tiki-$GITHUB_REF_NAME\\scripts\\run.bat\` on Windows (or point a UCI GUI at it).
           The network is in \`models/\`; set \`TIKI_EVALFILE\` to use another.
-          $embedded
+          It's also built into \`bin/tiki\` and \`bin/tiki.exe\`, so a GUI can run them directly (\`TIKI_EVALFILE\` or the \`EvalFile\` option still override it).
 
-          | Package | CPUs |
+          Pick the fastest package your CPU runs (Stockfish's names; all give the same moves and bench):
+
+          | Package (\`linux-\` or \`windows-\`) | CPUs |
           |---|---|
-          | \`linux-x86-64-bmi2\`, \`windows-x86-64-bmi2\` | Intel Haswell (2013) or later, AMD Zen 3 (2020) or later |
-          | \`linux-x86-64-avx2\`, \`windows-x86-64-avx2\` | AMD Zen 1/2 (AVX2, but PEXT is slow) |
-          | \`linux-x86-64\`, \`windows-x86-64\` | Any x86-64 CPU |
+          | \`x86-64-avx512icl\` | Intel Ice Lake, Tiger Lake, Rocket Lake, Sapphire Rapids or later; AMD Zen 4 or later |
+          | \`x86-64-vnni512\` | AVX-512 VNNI (Intel Cascade Lake and the above) |
+          | \`x86-64-avx512\` | AVX-512 without VNNI (Intel Skylake-X, Cannon Lake) |
+          | \`x86-64-avxvnni\` | Intel Alder Lake and later desktop/laptop CPUs without AVX-512 |
+          | \`x86-64-bmi2\` | Intel Haswell (2013) or later, AMD Zen 3 or later |
+          | \`x86-64-avx2\` | AMD Zen 1/2 (AVX2, but PEXT is slow), and AVX2 CPUs without BMI2 |
+          | \`x86-64-sse41-popcnt\` | Older x86-64 CPUs with SSE4.1 and POPCNT (Intel Nehalem, AMD Bulldozer) |
+          | \`x86-64\` | Any x86-64 CPU |
 
           Bench signature: $nodes nodes.
           EOF

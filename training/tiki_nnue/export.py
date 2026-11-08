@@ -1,29 +1,29 @@
-"""Quantisation and the network file format (engine/core/src/nnue/nnue.h), version 2:
+"""Quantisation and the network file format (engine/core/src/nnue/nnue.h), version 5:
 
     char magic[8] = "TIKINNUE", uint32 version, uint32 inputs, uint32 hidden,
     int16 ft_weights[inputs][hidden], int16 ft_bias[hidden],
-    int16 out_weights[OUTPUT_BUCKETS][2 * hidden], int32 out_bias[OUTPUT_BUCKETS]
+    int8  l1_weights[OUTPUT_BUCKETS][L1][hidden], int32 l1_bias[OUTPUT_BUCKETS][L1],
+    int16 out_weights[OUTPUT_BUCKETS][L1], int32 out_bias[OUTPUT_BUCKETS]
 
-all little endian. Version 1 (before output buckets) has a single out_weights[2 * hidden] and out_bias;
-read_network loads it as the same output layer in every bucket, which evaluates exactly as it did.
-quantised_eval() is a reference for what the engine computes, integer arithmetic included, so the
-export can be checked against tiki (tests/test_cross_check.py).
+all little endian. Earlier versions (1, 2: an output layer straight from the accumulator; 3: PSQT;
+4: a hidden layer on SCReLU inputs, never released) are a different network and aren't read. quantised_eval() is a reference for what the engine
+computes, integer arithmetic included, so the export can be checked against tiki
+(tests/test_cross_check.py).
 """
 
 import struct
 
 import numpy as np
 
-from .features import INPUTS, OUTPUT_BUCKETS, active_features, output_bucket, parse_fen
-from .model import QA, QB, SCALE
+from .features import INPUTS, OUTPUT_BUCKETS, active_features, parse_fen, position_bucket
+from .model import L1, QA, QH, QW, SCALE
 
 MAGIC = b"TIKINNUE"
-VERSION = 2
-VERSION_SINGLE_OUTPUT = 1     # Before output buckets, still read.
+VERSION = 5
 
 
 def quantise(model):
-    """Returns the integer network as numpy arrays."""
+    """Returns the integer network as numpy arrays, the shared rows and layers folded in."""
     def to_int(tensor, scale, dtype):
         values = np.rint(tensor.detach().cpu().double().numpy() * scale)
         info = np.iinfo(dtype)
@@ -32,10 +32,12 @@ def quantise(model):
         return values.astype(dtype)
 
     return {
-        "ft_weights": to_int(model.ft.weight, QA, np.int16),        # [INPUTS, HIDDEN]
-        "ft_bias": to_int(model.ft_bias, QA, np.int16),
-        "out_weights": to_int(model.out.weight, QB, np.int16),       # [OUTPUT_BUCKETS, 2 * HIDDEN]
-        "out_bias": to_int(model.out.bias, QA * QB, np.int32),       # [OUTPUT_BUCKETS]
+        "ft_weights": to_int(model.feature_weights(), QA, np.int16),     # [INPUTS, hidden]
+        "ft_bias": to_int(model.ft_bias, QA, np.int16),                   # [hidden]
+        "l1_weights": to_int(model.l1_weights(), QW, np.int8),            # [OUTPUT_BUCKETS, L1, hidden]
+        "l1_bias": to_int(model.l1_biases(), QH, np.int32),               # [OUTPUT_BUCKETS, L1]
+        "out_weights": to_int(model.out.weight, QW, np.int16),            # [OUTPUT_BUCKETS, L1]
+        "out_bias": to_int(model.out.bias, QH * QW, np.int32),            # [OUTPUT_BUCKETS]
     }
 
 
@@ -46,6 +48,8 @@ def write_network(network, path):
         file.write(struct.pack("<III", VERSION, INPUTS, hidden))
         file.write(network["ft_weights"].astype("<i2").tobytes())
         file.write(network["ft_bias"].astype("<i2").tobytes())
+        file.write(network["l1_weights"].astype("i1").tobytes())
+        file.write(network["l1_bias"].astype("<i4").tobytes())
         file.write(network["out_weights"].astype("<i2").tobytes())
         file.write(network["out_bias"].astype("<i4").tobytes())
 
@@ -56,40 +60,51 @@ def read_network(path):
     if data[:8] != MAGIC:
         raise ValueError("not a tiki network")
     version, inputs, hidden = struct.unpack_from("<III", data, 8)
-    if version not in (VERSION, VERSION_SINGLE_OUTPUT) or inputs != INPUTS:
-        raise ValueError(f"unsupported network: version {version}, {inputs} inputs")
-    buckets = OUTPUT_BUCKETS if version == VERSION else 1
+    if version != VERSION or inputs != INPUTS:
+        raise ValueError(f"unsupported network: version {version}, {inputs} inputs (this trainer reads version {VERSION})")
     offset = 20
-    def take(count, dtype):
+
+    def take(shape, dtype):
         nonlocal offset
+        count = int(np.prod(shape))
         values = np.frombuffer(data, dtype=dtype, count=count, offset=offset)
         offset += count * np.dtype(dtype).itemsize
-        return values
+        return values.reshape(shape)
+
     network = {
-        "ft_weights": take(inputs * hidden, "<i2").reshape(inputs, hidden).astype(np.int16),
-        "ft_bias": take(hidden, "<i2").astype(np.int16),
-        "out_weights": take(buckets * 2 * hidden, "<i2").reshape(buckets, 2 * hidden).astype(np.int16),
-        "out_bias": take(buckets, "<i4").astype(np.int32),
+        "ft_weights": take((inputs, hidden), "<i2").astype(np.int16),
+        "ft_bias": take((hidden,), "<i2").astype(np.int16),
+        "l1_weights": take((OUTPUT_BUCKETS, L1, hidden), "i1").astype(np.int8),
+        "l1_bias": take((OUTPUT_BUCKETS, L1), "<i4").astype(np.int32),
+        "out_weights": take((OUTPUT_BUCKETS, L1), "<i2").astype(np.int16),
+        "out_bias": take((OUTPUT_BUCKETS,), "<i4").astype(np.int32),
     }
     if offset != len(data):
         raise ValueError("trailing data after the network")
-    if buckets == 1:
-        network["out_weights"] = np.repeat(network["out_weights"], OUTPUT_BUCKETS, axis=0)
-        network["out_bias"] = np.repeat(network["out_bias"], OUTPUT_BUCKETS)
     return network
 
 
 def dequantise(network):
-    """A float model with exactly the quantised weights (e.g. to fine-tune an exported network)."""
+    """A float model with exactly the quantised weights (e.g. to fine-tune an exported network): the
+    hidden layers as the buckets' own layers, the shared one zero."""
     import torch
     from .model import TikiNNUE
 
-    model = TikiNNUE(hidden=network["ft_bias"].shape[0])
+    hidden = network["ft_bias"].shape[0]
+    model = TikiNNUE(hidden=hidden)
+
+    def f64(array, scale):
+        return torch.from_numpy(array.astype(np.float64) / scale)
+
     with torch.no_grad():
-        model.ft.weight.copy_(torch.from_numpy(network["ft_weights"].astype(np.float64) / QA))
-        model.ft_bias.copy_(torch.from_numpy(network["ft_bias"].astype(np.float64) / QA))
-        model.out.weight.copy_(torch.from_numpy(network["out_weights"].astype(np.float64) / QB))
-        model.out.bias.copy_(torch.from_numpy(network["out_bias"].astype(np.float64) / (QA * QB)))
+        model.ft.weight.copy_(f64(network["ft_weights"], QA))
+        model.ft_bias.copy_(f64(network["ft_bias"], QA))
+        model.l1.weight.copy_(f64(network["l1_weights"], QW).reshape(OUTPUT_BUCKETS * L1, hidden))
+        model.l1.bias.copy_(f64(network["l1_bias"], QH).reshape(OUTPUT_BUCKETS * L1))
+        model.l1_shared.weight.zero_()
+        model.l1_shared.bias.zero_()
+        model.out.weight.copy_(f64(network["out_weights"], QW))
+        model.out.bias.copy_(f64(network["out_bias"], QH * QW))
     return model
 
 
@@ -99,10 +114,18 @@ def _trunc_div(a, b):
     return q if (a >= 0) == (b > 0) else -q
 
 
+def hidden_inputs(accumulator):
+    """The engine's hidden layer inputs from one perspective's int accumulator (hidden values, hidden / 2
+    inputs): the pairwise product of the clamped halves, (x * y) >> 9 with x, y in 0..QA, rounded down,
+    0..127 (u8 in the engine, which computes it as mulhi(x << 7, y))."""
+    clamped = np.clip(accumulator.astype(np.int64), 0, QA)
+    half = len(clamped) // 2
+    return (clamped[:half] * clamped[half:]) >> 9
+
+
 def quantised_eval(network, fen):
     """The engine's evaluation of 'fen' (centipawns, side to move), same integer arithmetic as nnue.c."""
     pieces, side = parse_fen(fen)
-    hidden = network["ft_bias"].shape[0]
 
     def accumulator(perspective):
         acc = network["ft_bias"].astype(np.int64).copy()
@@ -112,14 +135,12 @@ def quantised_eval(network, fen):
             raise ValueError("accumulator overflows int16")
         return acc
 
-    def screlu(acc):
-        return np.clip(acc, 0, QA) ** 2
-
-    bucket = output_bucket(len(pieces))
-    out = network["out_weights"][bucket].astype(np.int64)
-    total = int(np.dot(screlu(accumulator(side)), out[:hidden]) + np.dot(screlu(accumulator(side ^ 1)), out[hidden:]))
-    output = _trunc_div(total, QA) + int(network["out_bias"][bucket])
-    return _trunc_div(output * SCALE, QA * QB)
+    bucket = position_bucket(pieces, side)
+    a = np.concatenate([hidden_inputs(accumulator(side)), hidden_inputs(accumulator(side ^ 1))])
+    h = network["l1_weights"][bucket].astype(np.int64) @ a + network["l1_bias"][bucket].astype(np.int64)
+    h = np.clip(h, 0, QH)
+    output = int(h @ network["out_weights"][bucket].astype(np.int64)) + int(network["out_bias"][bucket])
+    return _trunc_div(output * SCALE, QH * QW)
 
 
 def export(model, path):

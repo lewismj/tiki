@@ -17,8 +17,11 @@ rem                          (unbalanced openings: fewer draws, so an SPRT decid
 rem     GAMES=200            gauntlet: games against each engine
 rem     ELO0=0 ELO1=5        SPRT bounds (normalized Elo)
 rem     MAX_GAMES=20000      SPRT: stop here if it's still undecided
-rem     TIKI_EVALFILE        network for every tiki, default the last in models\ by name
+rem     TIKI_EVALFILE        network every tiki starts with, default each one's built-in network (so engines
+rem                          reading different network formats each play with their own)
 rem     NEW_EVALFILE BASE_EVALFILE  SPRT: a different network for one side (to test networks)
+rem     NEW_OPTIONS BASE_OPTIONS    SPRT: UCI options for one side, each Name=value pair in quotes,
+rem                          e.g. set NEW_OPTIONS="SyzygyPath=F:\syzygy\wdl;F:\syzygy\dtz"
 setlocal
 
 for %%d in ("%~dp0..") do set "root=%%~fd"
@@ -70,8 +73,9 @@ if not exist "%book%" (
 set book_format=pgn
 if /i "%book:~-4%"==".epd" set book_format=epd
 
-rem tiki loads TIKI_EVALFILE at startup, fastchess passes the environment on to the engines.
-if not defined TIKI_EVALFILE for %%f in ("%root%\models\*.nnue") do set "TIKI_EVALFILE=%%~ff"
+rem Each tiki starts with TIKI_EVALFILE if it's set (fastchess passes the environment on, so every tiki
+rem loads that one), otherwise with the network built into it. A shared file can't serve engines that read
+rem different network formats (a build reading version 5 against main reading version 2), built-in ones can.
 
 if not defined CONCURRENCY (
     for /f %%c in ('powershell -NoProfile -Command "(Get-CimInstance Win32_Processor | Measure-Object NumberOfCores -Sum).Sum"') do set /a CONCURRENCY=%%c - 1
@@ -88,9 +92,10 @@ if "%mode%"=="sprt" goto sprt
 rem Gauntlet: tiki, then each opponent.
 call :engine_path "%~2" || exit /b 1
 set "tiki=%path_found%"
+call :tiki_network "%tiki%" || exit /b 1
 set engines=-tournament gauntlet -seeds 1 -engine "cmd=%tiki%" name=tiki
 set /a rounds=GAMES / 2
-set "summary=Gauntlet: %tiki%, %GAMES% games against each engine"
+set "summary=Gauntlet: %tiki% (network %network%), %GAMES% games against each engine"
 shift
 shift
 :next_opponent
@@ -106,16 +111,24 @@ call :engine_path "%~2" || exit /b 1
 set "new=%path_found%"
 call :engine_path "%~3" || exit /b 1
 set "base=%path_found%"
+call :tiki_network "%new%" || exit /b 1
+set "new_network=%network%"
+if defined NEW_EVALFILE set "new_network=%NEW_EVALFILE%"
+call :tiki_network "%base%" || exit /b 1
+set "base_network=%network%"
+if defined BASE_EVALFILE set "base_network=%BASE_EVALFILE%"
 set engines=-engine "cmd=%new%" name=new
 if defined NEW_EVALFILE set engines=%engines% "option.EvalFile=%NEW_EVALFILE%"
+if defined NEW_OPTIONS for %%o in (%NEW_OPTIONS%) do call set engines=%%engines%% "option.%%~o"
 set engines=%engines% -engine "cmd=%base%" name=base
 if defined BASE_EVALFILE set engines=%engines% "option.EvalFile=%BASE_EVALFILE%"
+if defined BASE_OPTIONS for %%o in (%BASE_OPTIONS%) do call set engines=%%engines%% "option.%%~o"
 set /a rounds=MAX_GAMES / 2
 set engines=%engines% -sprt elo0=%ELO0% elo1=%ELO1% alpha=0.05 beta=0.05 model=normalized
-set "summary=SPRT [%ELO0%, %ELO1%]: %new% vs %base%"
+set "summary=SPRT [%ELO0%, %ELO1%]: %new% (network %new_network%) vs %base% (network %base_network%)"
 
 :run
-echo %summary%, %CONCURRENCY% at once, network %TIKI_EVALFILE%
+echo %summary%, %CONCURRENCY% at once
 "%fastchess%" %engines% -rounds %rounds% ^
     -openings "file=%book%" format=%book_format% order=random -repeat ^
     -each tc=%TC% option.Hash=%HASH% option.Threads=%THREADS% ^
@@ -131,6 +144,22 @@ if not exist "%~f1" (
     exit /b 1
 )
 set "path_found=%~f1"
+exit /b 0
+
+rem Sets network to the network the tiki at %1 starts with, or explains and fails if it doesn't start.
+:tiki_network
+set "network="
+set "probe=%TEMP%\tiki-network-%RANDOM%.txt"
+(echo uci& echo quit) | "%~1" > "%probe%" 2>&1
+if not errorlevel 1 goto tiki_network_started
+echo %~1 doesn't start: 1>&2
+type "%probe%" 1>&2
+echo Build it with its network built in ^(--embed or --net^), or set TIKI_EVALFILE to a network every tiki here reads. 1>&2
+del "%probe%"
+exit /b 1
+:tiki_network_started
+for /f "tokens=6*" %%a in ('findstr /b /c:"option name EvalFile" "%probe%"') do set "network=%%b"
+del "%probe%"
 exit /b 0
 
 rem Adds an opponent at path %1, named after its file.

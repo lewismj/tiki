@@ -5,7 +5,7 @@
 
 #include "nnue.h"
 
-#if defined(__AVX2__)
+#if defined(__SSE2__) && !defined(TIKI_NO_SIMD)
 #include <immintrin.h>
 #endif
 
@@ -63,38 +63,58 @@ int nnue_active_features(const board_t* board, colour perspective, int* features
 #define NNUE_FT_BYTES ((size_t) NNUE_INPUTS * NNUE_HIDDEN * sizeof(int16_t))
 static_assert(NNUE_FT_BYTES % 64 == 0, "aligned_alloc needs a multiple of the alignment");
 
-static int16_t* allocate_ft_weights(void) {
+/* Hidden layer weights, 256 KB, on the heap like the feature transformer (not in nnue_network_t, which
+ * nnue_load_memory builds on the stack). */
+#define NNUE_L1_COUNT ((size_t) NNUE_OUTPUT_BUCKETS * NNUE_L1 * NNUE_L1_INPUTS)
+static_assert(NNUE_L1_COUNT % 64 == 0, "aligned_alloc needs a multiple of the alignment");
+
+static void* allocate_aligned(size_t bytes) {
 #if defined(_WIN32)
-    return _aligned_malloc(NNUE_FT_BYTES, 64);
+    return _aligned_malloc(bytes, 64);
 #else
-    return aligned_alloc(64, NNUE_FT_BYTES);
+    return aligned_alloc(64, bytes);
 #endif
 }
 
-static void free_ft_weights(int16_t* weights) {
+static void free_aligned(void* pointer) {
 #if defined(_WIN32)
-    _aligned_free(weights);
+    _aligned_free(pointer);
 #else
-    free(weights);
+    free(pointer);
 #endif
+}
+
+static void free_network(nnue_network_t* net) {
+    free_aligned(net->ft_weights);
+    free_aligned(net->l1_weights);
+    net->ft_weights = NULL;
+    net->l1_weights = NULL;
+}
+
+/* A network with its weight arrays allocated (not initialised), false if either allocation failed
+ * (then neither is kept). */
+static bool allocate_network(nnue_network_t* net) {
+    net->ft_weights = allocate_aligned(NNUE_FT_BYTES);
+    net->l1_weights = allocate_aligned(NNUE_L1_COUNT);
+    if (net->ft_weights == NULL || net->l1_weights == NULL) {
+        free_network(net);
+        return false;
+    }
+    return true;
 }
 
 bool nnue_allocate(void) {
     nnue_free();
-    nnue_net.ft_weights = allocate_ft_weights();
-    if (nnue_net.ft_weights != NULL) memset(nnue_net.ft_weights, 0, NNUE_FT_BYTES);
-    loaded_path[0] = '\0';
     next_generation();
-    memset(nnue_net.ft_bias, 0, sizeof(nnue_net.ft_bias));
-    memset(nnue_net.out_weights, 0, sizeof(nnue_net.out_weights));
-    memset(nnue_net.out_bias, 0, sizeof(nnue_net.out_bias));
-    nnue_net.small_output = false;
-    return nnue_net.ft_weights != NULL;
+    memset(&nnue_net, 0, sizeof(nnue_net));
+    if (!allocate_network(&nnue_net)) return false;
+    memset(nnue_net.ft_weights, 0, NNUE_FT_BYTES);
+    memset(nnue_net.l1_weights, 0, NNUE_L1_COUNT);
+    return true;
 }
 
 void nnue_free(void) {
-    free_ft_weights(nnue_net.ft_weights);
-    nnue_net.ft_weights = NULL;
+    free_network(&nnue_net);
     loaded_path[0] = '\0';
 }
 
@@ -108,14 +128,34 @@ static bool little_endian_host(void) {
     return *(const uint8_t*) &one == 1;
 }
 
-/* Size of a network in the file format with 'buckets' output layers, every valid file is exactly
- * this long (8 for version 2, 1 for version 1). */
+/* Size of a network in the file format, every valid file is exactly this long. */
 #define NNUE_FT_COUNT ((size_t) NNUE_INPUTS * NNUE_HIDDEN)
-#define NNUE_FILE_SIZE_FOR(buckets) (8 + 3 * sizeof(uint32_t) + NNUE_FT_COUNT * sizeof(int16_t) + \
-                                     NNUE_HIDDEN * sizeof(int16_t) + \
-                                     (buckets) * (2 * NNUE_HIDDEN * sizeof(int16_t) + sizeof(int32_t)))
-#define NNUE_FILE_SIZE NNUE_FILE_SIZE_FOR(NNUE_OUTPUT_BUCKETS)
-#define NNUE_FILE_SIZE_SINGLE_OUTPUT NNUE_FILE_SIZE_FOR(1)
+#define NNUE_FILE_SIZE (8 + 3 * sizeof(uint32_t) + NNUE_FT_COUNT * sizeof(int16_t) + NNUE_HIDDEN * sizeof(int16_t) + \
+                        NNUE_L1_COUNT * sizeof(int8_t) + sizeof(nnue_net.l1_bias) + sizeof(nnue_net.out_weights) + \
+                        sizeof(nnue_net.out_bias))
+
+/* Copies the hidden layer weights between the file's order ([bucket][unit][input], 'file') and memory's
+ * (nnue_l1_index, 'memory'): into memory if 'load', else out to the file order. The one place the two
+ * orders meet, so load and save can't disagree. */
+static void convert_l1_weights(int8_t* memory, int8_t* file, bool load) {
+    size_t f = 0;
+    for (int b = 0; b < NNUE_OUTPUT_BUCKETS; b++) {
+        for (int u = 0; u < NNUE_L1; u++) {
+            for (int i = 0; i < NNUE_L1_INPUTS; i++, f++) {
+                if (load) memory[nnue_l1_index(b, u, i)] = file[f];
+                else file[f] = memory[nnue_l1_index(b, u, i)];
+            }
+        }
+    }
+}
+
+/* The hidden layer weights at 'data' + *at (file order) into 'out' (memory order), false if fewer are left. */
+static bool take_l1_weights(const uint8_t* data, size_t size, size_t* at, int8_t* out) {
+    if (size - *at < NNUE_L1_COUNT) return false;
+    convert_l1_weights(out, (int8_t*) (data + *at), true);
+    *at += NNUE_L1_COUNT;
+    return true;
+}
 
 /* Copies the next 'bytes' of 'data' to 'out', false if fewer are left. */
 static bool take(const uint8_t* data, size_t size, size_t* at, void* out, size_t bytes) {
@@ -129,41 +169,25 @@ bool nnue_load_memory(const void* data, size_t size, const char* name) {
     if (!little_endian_host() || data == NULL) return false;
 
     /* Read into a new network, the current one is only replaced once this one is complete. */
-    nnue_network_t net = { .ft_weights = allocate_ft_weights() };
+    nnue_network_t net = { 0 };
     char magic[8];
     uint32_t header[3];
     size_t at = 0;
-    bool ok = net.ft_weights != NULL &&
+    bool ok = allocate_network(&net) &&
               take(data, size, &at, magic, sizeof(magic)) &&
               memcmp(magic, NNUE_MAGIC, sizeof(magic)) == 0 &&
               take(data, size, &at, header, sizeof(header)) &&
-              (header[0] == NNUE_VERSION || header[0] == NNUE_VERSION_SINGLE_OUTPUT) &&
-              header[1] == NNUE_INPUTS && header[2] == NNUE_HIDDEN &&
+              header[0] == NNUE_VERSION && header[1] == NNUE_INPUTS && header[2] == NNUE_HIDDEN &&
               take(data, size, &at, net.ft_weights, NNUE_FT_COUNT * sizeof(int16_t)) &&
-              take(data, size, &at, net.ft_bias, sizeof(net.ft_bias));
-    if (ok && header[0] == NNUE_VERSION) {
-        ok = take(data, size, &at, net.out_weights, sizeof(net.out_weights)) &&
-             take(data, size, &at, net.out_bias, sizeof(net.out_bias));
-    } else if (ok) {
-        /* One output layer, the same in every bucket. */
-        ok = take(data, size, &at, net.out_weights[0], sizeof(net.out_weights[0])) &&
-             take(data, size, &at, &net.out_bias[0], sizeof(net.out_bias[0]));
-        for (int b = 1; b < NNUE_OUTPUT_BUCKETS; b++) {
-            memcpy(net.out_weights[b], net.out_weights[0], sizeof(net.out_weights[0]));
-            net.out_bias[b] = net.out_bias[0];
-        }
-    }
-    ok = ok && at == size; /* Nothing after the network. */
-
-    net.small_output = true;
-    for (int b = 0; ok && b < NNUE_OUTPUT_BUCKETS; b++) {
-        for (int i = 0; i < 2 * NNUE_HIDDEN; i++) {
-            if (abs(net.out_weights[b][i]) > NNUE_OUT_WEIGHT_SMALL) net.small_output = false;
-        }
-    }
+              take(data, size, &at, net.ft_bias, sizeof(net.ft_bias)) &&
+              take_l1_weights(data, size, &at, net.l1_weights) &&
+              take(data, size, &at, net.l1_bias, sizeof(net.l1_bias)) &&
+              take(data, size, &at, net.out_weights, sizeof(net.out_weights)) &&
+              take(data, size, &at, net.out_bias, sizeof(net.out_bias)) &&
+              at == size; /* Nothing after the network. */
 
     if (!ok) {
-        free_ft_weights(net.ft_weights);
+        free_network(&net);
         return false;
     }
     nnue_free();
@@ -178,30 +202,48 @@ bool nnue_load(const char* path) {
     if (file == NULL) return false;
 
     /* One byte more than a network, so a longer file is rejected too. */
-    static_assert(NNUE_FILE_SIZE > NNUE_FILE_SIZE_SINGLE_OUTPUT, "the larger format sets the buffer size");
     uint8_t* data = malloc(NNUE_FILE_SIZE + 1);
     const size_t size = data != NULL ? fread(data, 1, NNUE_FILE_SIZE + 1, file) : 0;
     fclose(file);
 
-    const bool ok = (size == NNUE_FILE_SIZE || size == NNUE_FILE_SIZE_SINGLE_OUTPUT) &&
-                    nnue_load_memory(data, size, path);
+    const bool ok = size == NNUE_FILE_SIZE && nnue_load_memory(data, size, path);
+
+    /* A tiki network of another version (the networks before the hidden layer are version 2): say so,
+     * rather than leave only "could not load". */
+    uint32_t version;
+    if (!ok && size >= 12 && memcmp(data, NNUE_MAGIC, 8) == 0 &&
+        (memcpy(&version, data + 8, sizeof(version)), version != NNUE_VERSION)) {
+        fprintf(stderr, "%s is a version %u network, this build of tiki reads version %d.\n",
+                path, (unsigned) version, NNUE_VERSION);
+    }
     free(data);
     return ok;
 }
 
 bool nnue_save(const char* path) {
     if (!nnue_is_loaded() || !little_endian_host()) return false;
-    FILE* file = fopen(path, "wb");
-    if (file == NULL) return false;
 
+    /* The hidden layer weights back in the file's order, [bucket][unit][input]. */
+    int8_t* l1_file = malloc(NNUE_L1_COUNT);
+    if (l1_file == NULL) return false;
+    convert_l1_weights(nnue_net.l1_weights, l1_file, false);
+
+    FILE* file = fopen(path, "wb");
+    if (file == NULL) {
+        free(l1_file);
+        return false;
+    }
     const uint32_t header[3] = { NNUE_VERSION, NNUE_INPUTS, NNUE_HIDDEN };
     const size_t ft_count = (size_t) NNUE_INPUTS * NNUE_HIDDEN;
     bool ok = fwrite(NNUE_MAGIC, 1, 8, file) == 8 &&
               fwrite(header, sizeof(uint32_t), 3, file) == 3 &&
               fwrite(nnue_net.ft_weights, sizeof(int16_t), ft_count, file) == ft_count &&
               fwrite(nnue_net.ft_bias, sizeof(int16_t), NNUE_HIDDEN, file) == NNUE_HIDDEN &&
+              fwrite(l1_file, sizeof(int8_t), NNUE_L1_COUNT, file) == NNUE_L1_COUNT &&
+              fwrite(nnue_net.l1_bias, sizeof(nnue_net.l1_bias), 1, file) == 1 &&
               fwrite(nnue_net.out_weights, sizeof(nnue_net.out_weights), 1, file) == 1 &&
               fwrite(nnue_net.out_bias, sizeof(nnue_net.out_bias), 1, file) == 1;
+    free(l1_file);
     return fclose(file) == 0 && ok;
 }
 
@@ -210,107 +252,258 @@ static inline const int16_t* feature_row(int feature) {
 }
 
 /*
- * The two operations the network needs, SIMD with AVX2 (16 int16 per register) or plain C.
- * Both give exactly the same results: the accumulator is int16 arithmetic either way, and the
- * output layer sums in int64.
+ * The parts that run on every evaluation, in AVX2 (16 int16 per register) and plain C, with exactly
+ * the same results (integer arithmetic either way): the accumulator update, the hidden layer's inputs
+ * (pairwise products, 0..127) and its sums. The plain C versions are always compiled, as the reference
+ * the tests check the SIMD ones against (nnue_output_scalar).
  */
-#if defined(__AVX2__)
+#define NNUE_PAIRS (NNUE_HIDDEN / 2)            /* Hidden layer inputs per perspective. */
+#define NNUE_GROUPS (NNUE_L1_INPUTS / 4)        /* Groups of 4 inputs (nnue_l1_index). */
+
+/* in[j] = (x * y) >> 9 with x = clamp(v[j], 0, QA) and y = clamp(v[j + NNUE_PAIRS], 0, QA), 0..127:
+ * one perspective's NNUE_HIDDEN accumulator values to its NNUE_PAIRS inputs. */
+static inline void hidden_inputs_scalar(uint8_t* in, const int16_t* values) {
+    for (int j = 0; j < NNUE_PAIRS; j++) {
+        const int x = values[j] < 0 ? 0 : values[j] > NNUE_QA ? NNUE_QA : values[j];
+        const int y = values[j + NNUE_PAIRS] < 0 ? 0 : values[j + NNUE_PAIRS] > NNUE_QA ? NNUE_QA : values[j + NNUE_PAIRS];
+        in[j] = (uint8_t) ((x * y) >> 9);
+    }
+}
+
+/* sums[u] = sum(in[i] * weight[bucket][u][i]) over the NNUE_L1_INPUTS inputs, for each hidden unit u,
+ * a group of 4 inputs at a time over the weights as stored (nnue_l1_index), skipping groups of zeros.
+ * At most 512 * 127 * 128 in magnitude, int32. */
+static inline void hidden_sums_scalar(int32_t* sums, const uint8_t* in, int bucket) {
+    for (int u = 0; u < NNUE_L1; u++) sums[u] = 0;
+    const int8_t* weights = nnue_net.l1_weights + nnue_l1_index(bucket, 0, 0);
+    for (int g = 0; g < NNUE_GROUPS; g++) {
+        const uint8_t* x = in + 4 * g;
+        if ((x[0] | x[1] | x[2] | x[3]) == 0) continue;
+        const int8_t* w = weights + (size_t) g * NNUE_L1 * 4;
+        for (int u = 0; u < NNUE_L1; u++) {
+            sums[u] += x[0] * w[4 * u] + x[1] * w[4 * u + 1] + x[2] * w[4 * u + 2] + x[3] * w[4 * u + 3];
+        }
+    }
+}
+
+/*
+ * The SIMD versions, one code for every x86 level (TIKI_ARCH): vec_t is a register of NNUE_VEC_BYTES,
+ * 64 with AVX-512 (BW), 32 with AVX2, 16 with SSE2. The hidden layer's dot products (uint8 inputs times
+ * int8 weights, four at a time into int32) are one VNNI instruction (vpdpbusd) where the CPU has it,
+ * otherwise maddubs + madd + add (SSSE3 and up); SSE2 alone has no maddubs, so its hidden layer sums are
+ * the plain C ones. Every version gives exactly the scalar results.
+ */
+#if defined(TIKI_NO_SIMD)
+
+/* Plain C (TIKI_ARCH general-64), below. */
+
+#elif defined(__AVX512BW__)
+
+#define NNUE_VEC_BYTES 64
+typedef __m512i vec_t;
+#define vec_load(p) _mm512_loadu_si512((const void*) (p))
+#define vec_store(p, v) _mm512_storeu_si512((void*) (p), (v))
+#define vec_add_16 _mm512_add_epi16
+#define vec_sub_16 _mm512_sub_epi16
+#define vec_max_16 _mm512_max_epi16
+#define vec_min_16 _mm512_min_epi16
+#define vec_slli_16 _mm512_slli_epi16
+#define vec_mulhi_16 _mm512_mulhi_epi16
+#define vec_set1_16 _mm512_set1_epi16
+#define vec_set1_32 _mm512_set1_epi32
+#define vec_zero _mm512_setzero_si512
+#define vec_add_32 _mm512_add_epi32
+#define NNUE_TILE_REGISTERS 16                  /* Of 32: the whole accumulator stays in registers. */
+
+/* _mm512_packus_epi16 packs within each 128-bit lane (a0 b0 a1 b1 ... in 64-bit quarters), the
+ * permute puts the quarters back in order (a0 a1 a2 a3 b0 b1 b2 b3). */
+static inline vec_t vec_packus_16(vec_t a, vec_t b) {
+    return _mm512_permutexvar_epi64(_mm512_set_epi64(7, 5, 3, 1, 6, 4, 2, 0), _mm512_packus_epi16(a, b));
+}
+
+#if defined(__AVX512VNNI__)
+#define NNUE_SIMD_NAME "avx512-vnni"
+#define vec_dpbusd _mm512_dpbusd_epi32
+#else
+#define NNUE_SIMD_NAME "avx512"
+static inline vec_t vec_dpbusd(vec_t sum, vec_t x, vec_t w) {
+    return _mm512_add_epi32(sum, _mm512_madd_epi16(_mm512_maddubs_epi16(x, w), _mm512_set1_epi16(1)));
+}
+#endif
+
+#elif defined(__AVX2__)
+
+#define NNUE_VEC_BYTES 32
+typedef __m256i vec_t;
+#define vec_load(p) _mm256_loadu_si256((const __m256i*) (p))
+#define vec_store(p, v) _mm256_storeu_si256((__m256i*) (p), (v))
+#define vec_add_16 _mm256_add_epi16
+#define vec_sub_16 _mm256_sub_epi16
+#define vec_max_16 _mm256_max_epi16
+#define vec_min_16 _mm256_min_epi16
+#define vec_slli_16 _mm256_slli_epi16
+#define vec_mulhi_16 _mm256_mulhi_epi16
+#define vec_set1_16 _mm256_set1_epi16
+#define vec_set1_32 _mm256_set1_epi32
+#define vec_zero _mm256_setzero_si256
+#define vec_add_32 _mm256_add_epi32
+#define NNUE_TILE_REGISTERS 8                   /* Of 16, the rest hold the rows' loads. */
+
+/* Within each 128-bit half (a0 b0 a1 b1 in 64-bit quarters), the permute restores a0 a1 b0 b1. */
+static inline vec_t vec_packus_16(vec_t a, vec_t b) {
+    return _mm256_permute4x64_epi64(_mm256_packus_epi16(a, b), 0xD8);
+}
+
+#if defined(__AVXVNNI__)
+#define NNUE_SIMD_NAME "avx-vnni"
+#define vec_dpbusd _mm256_dpbusd_avx_epi32
+#else
+#define NNUE_SIMD_NAME "avx2"
+static inline vec_t vec_dpbusd(vec_t sum, vec_t x, vec_t w) {
+    return _mm256_add_epi32(sum, _mm256_madd_epi16(_mm256_maddubs_epi16(x, w), _mm256_set1_epi16(1)));
+}
+#endif
+
+#elif defined(__SSE2__)
+
+#define NNUE_VEC_BYTES 16
+typedef __m128i vec_t;
+#define vec_load(p) _mm_loadu_si128((const __m128i*) (p))
+#define vec_store(p, v) _mm_storeu_si128((__m128i*) (p), (v))
+#define vec_add_16 _mm_add_epi16
+#define vec_sub_16 _mm_sub_epi16
+#define vec_max_16 _mm_max_epi16
+#define vec_min_16 _mm_min_epi16
+#define vec_slli_16 _mm_slli_epi16
+#define vec_mulhi_16 _mm_mulhi_epi16
+#define vec_set1_16 _mm_set1_epi16
+#define vec_set1_32 _mm_set1_epi32
+#define vec_zero _mm_setzero_si128
+#define vec_add_32 _mm_add_epi32
+#define vec_packus_16 _mm_packus_epi16          /* One lane, already in order. */
+#define NNUE_TILE_REGISTERS 8                   /* Of 16. */
+
+#if defined(__SSSE3__)
+#define NNUE_SIMD_NAME "ssse3"
+static inline vec_t vec_dpbusd(vec_t sum, vec_t x, vec_t w) {
+    return _mm_add_epi32(sum, _mm_madd_epi16(_mm_maddubs_epi16(x, w), _mm_set1_epi16(1)));
+}
+#else
+#define NNUE_SIMD_NAME "sse2"
+#define NNUE_SCALAR_SUMS                        /* No maddubs: plain C hidden layer sums. */
+#endif
+
+#endif
+
+#if defined(NNUE_VEC_BYTES)
 
 const char* nnue_simd(void) {
-    return "avx2";
+    return NNUE_SIMD_NAME;
 }
 
 /*
  * out = in + the 'added' rows - the 'removed' rows, over the whole accumulator ('out' may be 'in').
- * A tile of the accumulator stays in registers while every row is applied to it, half the
- * accumulator at a time (8 of the 16 registers, the rest hold the rows' loads).
+ * A tile of the accumulator stays in registers while every row is applied to it.
  */
-#define NNUE_TILE_REGISTERS 8
-#define NNUE_TILE (NNUE_TILE_REGISTERS * 16)
+#define NNUE_TILE (NNUE_TILE_REGISTERS * NNUE_VEC_BYTES / 2)
 static_assert(NNUE_HIDDEN % NNUE_TILE == 0, "the accumulator is a whole number of tiles");
 
 static inline void apply_rows(int16_t* out, const int16_t* in, const int16_t* const* added, int added_count,
                               const int16_t* const* removed, int removed_count) {
+    enum { lanes = NNUE_VEC_BYTES / 2 };
     for (int t = 0; t < NNUE_HIDDEN; t += NNUE_TILE) {
-        __m256i v[NNUE_TILE_REGISTERS];
-        for (int k = 0; k < NNUE_TILE_REGISTERS; k++) v[k] = _mm256_loadu_si256((const __m256i*) (in + t + 16 * k));
+        vec_t v[NNUE_TILE_REGISTERS];
+        for (int k = 0; k < NNUE_TILE_REGISTERS; k++) v[k] = vec_load(in + t + lanes * k);
         for (int a = 0; a < added_count; a++) {
             const int16_t* row = added[a] + t;
-            for (int k = 0; k < NNUE_TILE_REGISTERS; k++) {
-                v[k] = _mm256_add_epi16(v[k], _mm256_loadu_si256((const __m256i*) (row + 16 * k)));
-            }
+            for (int k = 0; k < NNUE_TILE_REGISTERS; k++) v[k] = vec_add_16(v[k], vec_load(row + lanes * k));
         }
         for (int r = 0; r < removed_count; r++) {
             const int16_t* row = removed[r] + t;
-            for (int k = 0; k < NNUE_TILE_REGISTERS; k++) {
-                v[k] = _mm256_sub_epi16(v[k], _mm256_loadu_si256((const __m256i*) (row + 16 * k)));
-            }
+            for (int k = 0; k < NNUE_TILE_REGISTERS; k++) v[k] = vec_sub_16(v[k], vec_load(row + lanes * k));
         }
-        for (int k = 0; k < NNUE_TILE_REGISTERS; k++) _mm256_storeu_si256((__m256i*) (out + t + 16 * k), v[k]);
+        for (int k = 0; k < NNUE_TILE_REGISTERS; k++) vec_store(out + t + lanes * k, v[k]);
     }
 }
 
 /*
- * sum(SCReLU(values[i]) * weights[i]) for one half of the output layer. SCReLU is up to QA^2 =
- * 65025 and a weight up to 32767 in magnitude, so each product is computed and summed in int64
- * (_mm256_mul_epi32 multiplies the even int32 lanes into int64, the odd ones are shifted down).
+ * hidden_inputs_scalar, a register of inputs at a time, as Stockfish does it: x (clamped to 0..QA)
+ * shifted left 7 is at most 32640, so it fits int16, and mulhi by y gives (x * 128 * y) >> 16 =
+ * (x * y) >> 9 in one instruction. y is only clamped above (to QA): a negative y gives a negative
+ * product, which packus saturates to 0, the same as clamping it to 0 first. Results 0..127, so they
+ * pack to uint8 exactly.
  */
-static inline __m256i output_half(__m256i sum, const int16_t* values, const int16_t* weights) {
-    const __m256i zero = _mm256_setzero_si256();
-    const __m256i qa = _mm256_set1_epi16(NNUE_QA);
-    for (int j = 0; j < NNUE_HIDDEN; j += 16) {
-        __m256i v = _mm256_loadu_si256((const __m256i*) (values + j));
-        v = _mm256_min_epi16(_mm256_max_epi16(v, zero), qa);
-        const __m256i w = _mm256_loadu_si256((const __m256i*) (weights + j));
-        for (int half = 0; half < 2; half++) {
-            const __m256i v32 = _mm256_cvtepi16_epi32(half ? _mm256_extracti128_si256(v, 1) : _mm256_castsi256_si128(v));
-            const __m256i w32 = _mm256_cvtepi16_epi32(half ? _mm256_extracti128_si256(w, 1) : _mm256_castsi256_si128(w));
-            const __m256i squared = _mm256_mullo_epi32(v32, v32);
-            sum = _mm256_add_epi64(sum, _mm256_mul_epi32(squared, w32));
-            sum = _mm256_add_epi64(sum, _mm256_mul_epi32(_mm256_srli_epi64(squared, 32), _mm256_srli_epi64(w32, 32)));
-        }
-    }
-    return sum;
+static_assert((NNUE_QA << 7) <= INT16_MAX, "x << 7 must fit int16");
+static_assert(NNUE_PAIRS % NNUE_VEC_BYTES == 0, "a register of inputs a step");
+
+static inline vec_t scaled_x(const int16_t* values) {
+    return vec_slli_16(vec_min_16(vec_max_16(vec_load(values), vec_zero()), vec_set1_16(NNUE_QA)), 7);
 }
+
+static inline vec_t capped_y(const int16_t* values) {
+    return vec_min_16(vec_load(values), vec_set1_16(NNUE_QA));
+}
+
+static inline void hidden_inputs(uint8_t* in, const int16_t* values) {
+    enum { lanes = NNUE_VEC_BYTES / 2 };
+    for (int j = 0; j < NNUE_PAIRS; j += NNUE_VEC_BYTES) {
+        const vec_t p = vec_mulhi_16(scaled_x(values + j), capped_y(values + NNUE_PAIRS + j));
+        const vec_t q = vec_mulhi_16(scaled_x(values + j + lanes), capped_y(values + NNUE_PAIRS + j + lanes));
+        vec_store(in + j, vec_packus_16(p, q));
+    }
+}
+
+#if defined(NNUE_SCALAR_SUMS)
+
+static inline void hidden_sums(int32_t* sums, const uint8_t* in, int bucket) {
+    hidden_sums_scalar(sums, in, bucket);
+}
+
+#else
 
 /*
- * The same sum for small output weights (nnue.h): SCReLU(v) * w = (v * w) * v, with v * w in int16
- * and _mm256_madd_epi16 multiplying by v and adding pairs into int32. Each of the 8 int32 lanes sums
- * 2 * NNUE_HIDDEN / 8 products of at most QA^2 * 127, which can't overflow.
+ * hidden_sums_scalar. The weights are stored by group of 4 inputs (nnue_l1_index): 16 units x 4 weights,
+ * 64 bytes, NNUE_SUM_VECS registers (one with AVX-512, two with AVX2, four with SSE). A group's 4 inputs
+ * are broadcast to every 32-bit lane and dot-multiplied (vec_dpbusd) by each unit's 4 weights into that
+ * unit's int32 lane: each lane of the sums is one unit's sum, in order, with no horizontal additions.
+ * Without VNNI maddubs adds pairs into int16 first, at most 2 * 127 * 128 = 32512, so it never saturates
+ * and every version gives the same sums. NNUE_CHAINS groups a step into separate sums (four registers of
+ * sums in flight), added at the end.
+ *
+ * Every group is computed: skipping the groups of 4 zero inputs (Stockfish's sparse first layer) was
+ * slower, as with these networks over 80% of groups have a non-zero input (35% of the inputs are
+ * non-zero, spread out). Reordering the accumulator after training so zeros share groups could change
+ * that.
  */
-static_assert((int64_t) (2 * NNUE_HIDDEN / 8) * NNUE_QA * NNUE_QA * NNUE_OUT_WEIGHT_SMALL <= INT32_MAX,
-              "the int32 output sums would overflow, sum in int64 every so often");
-static_assert(NNUE_QA * NNUE_OUT_WEIGHT_SMALL <= INT16_MAX, "v * w must fit in int16");
+#define NNUE_SUM_VECS (NNUE_L1 * 4 / NNUE_VEC_BYTES)
+#define NNUE_CHAINS (4 / NNUE_SUM_VECS)
+static_assert(2 * NNUE_QI * 128 <= INT16_MAX, "maddubs pairs must not saturate");
+static_assert(NNUE_L1 * 4 % NNUE_VEC_BYTES == 0, "a group's weights are whole registers");
+static_assert(NNUE_GROUPS % NNUE_CHAINS == 0, "NNUE_CHAINS groups a step");
 
-static inline __m256i output_half_small(__m256i sum, const int16_t* values, const int16_t* weights) {
-    const __m256i zero = _mm256_setzero_si256();
-    const __m256i qa = _mm256_set1_epi16(NNUE_QA);
-    for (int j = 0; j < NNUE_HIDDEN; j += 16) {
-        __m256i v = _mm256_loadu_si256((const __m256i*) (values + j));
-        v = _mm256_min_epi16(_mm256_max_epi16(v, zero), qa);
-        const __m256i w = _mm256_loadu_si256((const __m256i*) (weights + j));
-        sum = _mm256_add_epi32(sum, _mm256_madd_epi16(_mm256_mullo_epi16(v, w), v));
+static inline void hidden_sums(int32_t* sums, const uint8_t* in, int bucket) {
+    const int8_t* weights = nnue_net.l1_weights + nnue_l1_index(bucket, 0, 0);
+    vec_t acc[NNUE_CHAINS][NNUE_SUM_VECS];
+    for (int c = 0; c < NNUE_CHAINS; c++) {
+        for (int k = 0; k < NNUE_SUM_VECS; k++) acc[c][k] = vec_zero();
     }
-    return sum;
+    for (int group = 0; group < NNUE_GROUPS; group += NNUE_CHAINS) {
+        for (int c = 0; c < NNUE_CHAINS; c++) {
+            int32_t four;
+            memcpy(&four, in + 4 * (group + c), sizeof(four));
+            const vec_t x = vec_set1_32(four);
+            const int8_t* w = weights + (size_t) (group + c) * NNUE_L1 * 4;
+            for (int k = 0; k < NNUE_SUM_VECS; k++) acc[c][k] = vec_dpbusd(acc[c][k], x, vec_load(w + NNUE_VEC_BYTES * k));
+        }
+    }
+    for (int k = 0; k < NNUE_SUM_VECS; k++) {
+        vec_t total = acc[0][k];
+        for (int c = 1; c < NNUE_CHAINS; c++) total = vec_add_32(total, acc[c][k]);
+        vec_store(sums + k * (NNUE_VEC_BYTES / 4), total);
+    }
 }
 
-static inline int64_t output_sum(const int16_t* us, const int16_t* them, int bucket) {
-    const int16_t* weights = nnue_net.out_weights[bucket];
-    if (nnue_net.small_output) {
-        __m256i sum = output_half_small(_mm256_setzero_si256(), us, weights);
-        sum = output_half_small(sum, them, weights + NNUE_HIDDEN);
-        int32_t lanes[8];
-        _mm256_storeu_si256((__m256i*) lanes, sum);
-        int64_t total = 0;
-        for (int k = 0; k < 8; k++) total += lanes[k];
-        return total;
-    }
-    __m256i sum = output_half(_mm256_setzero_si256(), us, weights);
-    sum = output_half(sum, them, weights + NNUE_HIDDEN);
-    int64_t lanes[4];
-    _mm256_storeu_si256((__m256i*) lanes, sum);
-    return lanes[0] + lanes[1] + lanes[2] + lanes[3];
-}
+#endif
 
 #else
 
@@ -328,45 +521,50 @@ static inline void apply_rows(int16_t* out, const int16_t* in, const int16_t* co
     }
 }
 
-static int64_t output_sum_scalar(const int16_t* us, const int16_t* them, int bucket);
+static inline void hidden_inputs(uint8_t* in, const int16_t* values) {
+    hidden_inputs_scalar(in, values);
+}
 
-static inline int64_t output_sum(const int16_t* us, const int16_t* them, int bucket) {
-    return output_sum_scalar(us, them, bucket);
+static inline void hidden_sums(int32_t* sums, const uint8_t* in, int bucket) {
+    hidden_sums_scalar(sums, in, bucket);
 }
 
 #endif
 
-static inline int64_t screlu(int16_t x) {
-    int64_t v = x < 0 ? 0 : x > NNUE_QA ? NNUE_QA : x;
-    return v * v;
-}
-
-/* Plain C reference, int64 so SCReLU (up to QA^2) times a weight can't overflow. */
-static int64_t output_sum_scalar(const int16_t* us, const int16_t* them, int bucket) {
-    const int16_t* weights = nnue_net.out_weights[bucket];
-    int64_t sum = 0;
-    for (int i = 0; i < NNUE_HIDDEN; i++) {
-        sum += screlu(us[i]) * weights[i];
-        sum += screlu(them[i]) * weights[NNUE_HIDDEN + i];
+/* The rest of bucket 'bucket's layer stack from the hidden layer sums: bias, CReLU, the output layer,
+ * in centipawns (nnue.h). int64: a clamped activation (up to QH) times an int16 weight, 16 of them. */
+static inline int stack_output(const int32_t* sums, int bucket) {
+    int64_t out = nnue_net.out_bias[bucket];
+    for (int u = 0; u < NNUE_L1; u++) {
+        int64_t h = (int64_t) sums[u] + nnue_net.l1_bias[bucket][u];
+        h = h < 0 ? 0 : h > NNUE_QH ? NNUE_QH : h;
+        out += h * nnue_net.out_weights[bucket][u];
     }
-    return sum;
-}
-
-static inline int scale_output(int64_t sum, int bucket) {
-    int64_t result = sum / NNUE_QA + nnue_net.out_bias[bucket];
-    return (int) (result * NNUE_SCALE / (NNUE_QA * NNUE_QB));
+    return (int) (out * NNUE_SCALE / ((int64_t) NNUE_QH * NNUE_QW));
 }
 
 int nnue_output(const nnue_accumulator_t* accumulator, colour side, int bucket) {
-    return scale_output(output_sum(accumulator->values[side], accumulator->values[side ^ 1], bucket), bucket);
+    uint8_t in[NNUE_L1_INPUTS];
+    int32_t sums[NNUE_L1];
+    hidden_inputs(in, accumulator->values[side]);
+    hidden_inputs(in + NNUE_PAIRS, accumulator->values[side ^ 1]);
+    hidden_sums(sums, in, bucket);
+    return stack_output(sums, bucket);
 }
 
 int nnue_output_scalar(const nnue_accumulator_t* accumulator, colour side, int bucket) {
-    return scale_output(output_sum_scalar(accumulator->values[side], accumulator->values[side ^ 1], bucket), bucket);
+    uint8_t in[NNUE_L1_INPUTS];
+    int32_t sums[NNUE_L1];
+    hidden_inputs_scalar(in, accumulator->values[side]);
+    hidden_inputs_scalar(in + NNUE_PAIRS, accumulator->values[side ^ 1]);
+    hidden_sums_scalar(sums, in, bucket);
+    return stack_output(sums, bucket);
 }
 
-static inline int board_bucket(const board_t* board) {
-    return nnue_output_bucket(pop_count(board->occupancy[both]));
+int nnue_board_bucket(const board_t* board) {
+    const colour side = board->side;
+    return nnue_output_bucket(pop_count(board->occupancy[both]), board->pieces[side == white ? Q : q] != 0,
+                              board->pieces[side == white ? q : Q] != 0);
 }
 
 /* From scratch: the bias plus every active feature's row. */
@@ -385,7 +583,7 @@ void nnue_refresh(const board_t* board, nnue_accumulator_t* accumulator) {
 int nnue_evaluate(const board_t* board) {
     nnue_accumulator_t accumulator;
     nnue_refresh(board, &accumulator);
-    return nnue_output(&accumulator, board->side, board_bucket(board));
+    return nnue_output(&accumulator, board->side, nnue_board_bucket(board));
 }
 
 void nnue_stack_init(nnue_stack_t* stack) {
@@ -507,5 +705,5 @@ int nnue_evaluate_incremental(nnue_stack_t* stack, const board_t* board) {
     for (int c = white; c <= black; c++) {
         if (!top->computed[c]) update_perspective(stack, board, c);
     }
-    return nnue_output(&top->accumulator, board->side, board_bucket(board));
+    return nnue_output(&top->accumulator, board->side, nnue_board_bucket(board));
 }

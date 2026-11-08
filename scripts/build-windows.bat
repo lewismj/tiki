@@ -4,13 +4,13 @@ rem main README). Finds clang in Program Files\LLVM and CMake and Ninja in Visua
 rem aren't on the PATH.
 rem     scripts\build-windows.bat [options] [-- cmake options...]
 rem     scripts\build-windows.bat --embed --test
-rem     scripts\build-windows.bat --variant avx2 -- -DTIKI_SANITIZE=address
+rem     scripts\build-windows.bat --arch x86-64-avx2 -- -DTIKI_SANITIZE=address
 rem Every run sets the options below, so a build directory doesn't keep them from an earlier run.
 setlocal EnableExtensions EnableDelayedExpansion
 
 for %%i in ("%~dp0..") do set "root=%%~fi"
 set "dir=build-windows"
-set "variant=native"
+set "arch=native"
 set "embed=OFF"
 set "net="
 set "benchmarks=OFF"
@@ -33,9 +33,9 @@ if /i "%~1"=="--net" (
     set "net=%~f2"
     shift & shift & goto parse
 )
-if /i "%~1"=="--variant" (
+if /i "%~1"=="--arch" (
     if "%~2"=="" goto usage_error
-    set "variant=%~2"
+    set "arch=%~2"
     shift & shift & goto parse
 )
 if /i "%~1"=="--benchmarks" (set "benchmarks=ON" & shift & goto parse)
@@ -52,13 +52,8 @@ echo Unknown option: %~1 1>&2
 goto usage_error
 
 :parsed
-if /i "%variant%"=="native" (set "cpu=-UTIKI_USE_AVX2 -UTIKI_USE_PEXT") else ^
-if /i "%variant%"=="bmi2" (set "cpu=-DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=ON") else ^
-if /i "%variant%"=="avx2" (set "cpu=-DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=OFF") else ^
-if /i "%variant%"=="x86-64" (set "cpu=-DTIKI_USE_AVX2=OFF -DTIKI_USE_PEXT=OFF") else (
-    echo Unknown variant: %variant% 1>&2
-    goto usage_error
-)
+rem CMake checks the name.
+set "cpu="-DTIKI_ARCH=%arch%""
 
 rem The build directory, relative to the repository unless it's absolute.
 set "build=%root%\%dir%"
@@ -117,8 +112,9 @@ exit /b 2
 echo Usage: scripts\build-windows.bat [options] [-- cmake options...]
 echo   --embed           Build the newest network in models\ into the engine (runs without a .nnue file).
 echo   --net ^<file^>      Build this network into the engine (implies --embed).
-echo   --variant ^<v^>     native (default, what this machine supports), bmi2 (AVX2 and PEXT), avx2 (AVX2,
-echo                     no PEXT, for AMD Zen 1/2) or x86-64 (neither), as the release packages.
+echo   --arch ^<arch^>     CPU level, Stockfish's names: native (default, the best this machine runs), general-64,
+echo                     x86-64, x86-64-sse41-popcnt, x86-64-avx2, x86-64-bmi2, x86-64-avxvnni, x86-64-avx512,
+echo                     x86-64-vnni512 or x86-64-avx512icl (see TIKI_ARCH in engine\CMakeLists.txt).
 echo   --benchmarks      Also build the Google Benchmark micro-benchmarks.
 echo   --test            Run the unit tests and bench smoke test after building.
 echo   --clean           Delete the build directory first.

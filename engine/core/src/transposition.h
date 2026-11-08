@@ -175,8 +175,8 @@ static inline_always bool tt_read(const uint64_t position_hash, const int ply, t
     if (!tt_load_eval(position_hash, &data, &info->eval)) return false;
     info->move = tt_data_move(data);
     info->score = tt_data_score(data);
-    if (info->score < -MATE_SCORE) info->score += ply;
-    if (info->score > MATE_SCORE) info->score -= ply;
+    if (info->score < -TB_WIN_MIN) info->score += ply;
+    if (info->score > TB_WIN_MIN) info->score -= ply;
     info->depth = tt_data_depth(data);
     info->type = tt_data_type(data);
     return true;
@@ -210,8 +210,8 @@ static inline_always int tt_probe(const uint64_t position_hash,
     if (tt_data_depth(data) >= depth) {
         /* Stored relative to this node, convert back to distance from the root. */
         int score = tt_data_score(data);
-        if (score < -MATE_SCORE) score += ply;
-        if (score > MATE_SCORE) score -= ply;
+        if (score < -TB_WIN_MIN) score += ply;
+        if (score > TB_WIN_MIN) score -= ply;
 
         const tt_entry_type entry_type = tt_data_type(data);
         if (entry_type == tt_exact) return score;
@@ -238,8 +238,8 @@ static inline_always bool tt_lookup(const uint64_t position_hash,
 
     *move = tt_data_move(data);
     *score = tt_data_score(data);
-    if (*score < -MATE_SCORE) *score += ply;
-    if (*score > MATE_SCORE) *score -= ply;
+    if (*score < -TB_WIN_MIN) *score += ply;
+    if (*score > TB_WIN_MIN) *score -= ply;
     *depth = tt_data_depth(data);
     *entry_type = tt_data_type(data);
     return true;
@@ -284,9 +284,9 @@ static inline_always void tt_save(const uint64_t position_hash,
     /* A fail-low has no best move, keep the one already stored for this position. */
     if (move == 0 && same_position) move = tt_data_move(old);
 
-    /* Store mate scores relative to this node, so they're valid at any ply. */
-    if (score < -MATE_SCORE) score -= ply;
-    if (score > MATE_SCORE) score += ply;
+    /* Store mate and tablebase scores relative to this node, so they're valid at any ply. */
+    if (score < -TB_WIN_MIN) score -= ply;
+    if (score > TB_WIN_MIN) score += ply;
 
     if (eval != TT_EVAL_NONE) eval = eval > TT_EVAL_MAX ? TT_EVAL_MAX : eval < -TT_EVAL_MAX ? -TT_EVAL_MAX : eval;
     const uint64_t data = tt_pack(move, score, depth, hash_flag, tt_generation);

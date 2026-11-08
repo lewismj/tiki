@@ -29,8 +29,9 @@ void uci_main(void);
 /* Search the fixed bench positions to 'depth' (0 for the default) and print nodes and nodes/second. */
 uint64_t bench(int depth);
 
-/* Self-play NNUE training data appended to 'path' (format in core/src/datagen.h). Returns the
- * number of positions written, -1 if the file can't be opened. */
+/* Self-play NNUE training data appended to 'path' (formats in core/src/datagen.h): the trainer's
+ * binary format if 'path' ends in .bin (a new file gets its header), text otherwise. Returns the
+ * number of positions written, -1 if the file can't be opened, -2 if it exists and isn't binary data. */
 int64_t datagen_to_file(const char* path, int games, int depth, uint32_t seed);
 
 /* Loads the network at 'net_path' and prints its evaluation of 'fen' (centipawns, side to move).

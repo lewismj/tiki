@@ -36,12 +36,17 @@ int main(int argc, char* argv[]) {
         return EXIT_SUCCESS;
     }
 
-    /* 'tiki datagen <file> [games] [depth] [seed]', NNUE training data (see training/README.md). */
+    /* 'tiki datagen <file> [games] [depth] [seed]', NNUE training data (see training/README.md):
+     * the trainer's binary format for a .bin file, text otherwise. */
     if (argc >= 3 && strcmp(argv[1], "datagen") == 0) {
         int games = argc >= 4 ? atoi(argv[3]) : 100;
         int depth = argc >= 5 ? atoi(argv[4]) : 8;
         uint32_t seed = argc >= 6 ? (uint32_t) strtoul(argv[5], NULL, 10) : 1;
         int64_t written = datagen_to_file(argv[2], games, depth, seed);
+        if (written == -2) {
+            fprintf(stderr, "'%s' exists and isn't tiki binary training data.\n", argv[2]);
+            return EXIT_FAILURE;
+        }
         if (written < 0) {
             fprintf(stderr, "Could not open '%s'.\n", argv[2]);
             return EXIT_FAILURE;

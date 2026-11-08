@@ -8,8 +8,7 @@ add_executable(${PROJECT_NAME} src/main.c)
 # The target stays tiki_app, the binary is tiki (tiki.exe), as in the release packages.
 set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME tiki)
 
-# USE_PEXT/-mbmi2 come from tiki_engine_core. No AVX-512 flags: main.c inlines the search, so they
-# would let the compiler emit AVX-512 anywhere and crash on CPUs without it.
+# The CPU flags and USE_PEXT come from TIKI_ARCH (engine/CMakeLists.txt).
 tiki_target_warnings(${PROJECT_NAME})
 
 

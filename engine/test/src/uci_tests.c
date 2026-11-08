@@ -70,6 +70,27 @@ void test_uci_newgame_resets_position() {
     TEST_ASSERT_EQUAL_UINT16(0, search_state.repetition_index);
 }
 
+void test_position_moves_with_nothing_after() {
+    /* 'moves' ending the command, with more text after its terminator (as in a reused buffer):
+     * the start position, nothing read past the end. It once skipped the terminator and played
+     * e2e4 from what followed. */
+    board_t board;
+    board_t expected;
+    search_state_t search_state;
+    init_search_state(&search_state);
+    parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &expected);
+
+    const char buffer[] = "position startpos moves\0e2e4 e7e5";
+    parse_position(buffer, &board, &search_state);
+    TEST_ASSERT_EQUAL_UINT64(expected.hash, board.hash);
+    TEST_ASSERT_EQUAL_UINT16(0, search_state.repetition_index);
+
+    /* Several spaces before the first move are still fine. */
+    parse_position("position startpos moves   e2e4", &board, &search_state);
+    TEST_ASSERT_NOT_EQUAL(expected.hash, board.hash);
+    TEST_ASSERT_EQUAL_INT(black, board.side);
+}
+
 void test_go_infinite_limits() {
     board_t board;
     limits_t limits;
