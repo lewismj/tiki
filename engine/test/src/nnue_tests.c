@@ -85,7 +85,8 @@ static void mirror(const board_t* in, board_t* out) {
     out->en_passant = none_sq;
 }
 
-/* Small random weights, the accumulators stay well inside int16. */
+/* Small random weights, the accumulators stay well inside int16. PSQT weights up to +-0.5 (QA * QB
+ * is 1.0), large enough to change the evaluation by up to 100 centipawns a piece. */
 static void random_network(uint32_t seed) {
     TEST_ASSERT_TRUE(nnue_allocate());
     uint32_t state = seed;
@@ -98,6 +99,19 @@ static void random_network(uint32_t seed) {
             nnue_net.out_weights[b][i] = (int16_t) ((int) (next_random_32(&state) % 255) - 127);
         nnue_net.out_bias[b] = (int32_t) (next_random_32(&state) % 2001) - 1000;
     }
+    for (size_t i = 0; i < (size_t) NNUE_INPUTS * NNUE_OUTPUT_BUCKETS; i++)
+        nnue_net.psqt_weights[i] = (int32_t) (next_random_32(&state) % (NNUE_QA * NNUE_QB + 1)) - NNUE_QA * NNUE_QB / 2;
+}
+
+/* Byte offsets in the file format (nnue.h). */
+#define FILE_FT_END (8 + 3 * sizeof(uint32_t) + ((size_t) NNUE_INPUTS * NNUE_HIDDEN + NNUE_HIDDEN) * sizeof(int16_t))
+#define FILE_PSQT_BYTES ((size_t) NNUE_INPUTS * NNUE_OUTPUT_BUCKETS * sizeof(int32_t))
+
+static bool psqt_all_zero(void) {
+    for (size_t i = 0; i < (size_t) NNUE_INPUTS * NNUE_OUTPUT_BUCKETS; i++) {
+        if (nnue_net.psqt_weights[i] != 0) return false;
+    }
+    return true;
 }
 
 
@@ -183,6 +197,39 @@ void test_nnue_evaluate_known_value() {
     nnue_free();
 }
 
+void test_nnue_psqt_known_value() {
+    /* PSQT only: a queen is worth 900 centipawns to its side, in every bucket and king position.
+     * Each perspective sees +v for its own queen and -v for the other side's, half the difference
+     * counts: (v - -v) / 2 = v. */
+    TEST_ASSERT_TRUE(nnue_allocate());
+    const int32_t queen = 900 * NNUE_QA * NNUE_QB / NNUE_SCALE;
+    for (int bucket = 0; bucket < NNUE_KING_BUCKETS; bucket++) {
+        for (int sq = 0; sq < 64; sq++) {
+            for (int b = 0; b < NNUE_OUTPUT_BUCKETS; b++) {
+                const size_t own = (size_t) bucket * NNUE_PIECE_SQUARES + 8 * 64 + sq;
+                nnue_net.psqt_weights[own * NNUE_OUTPUT_BUCKETS + b] = queen;
+                nnue_net.psqt_weights[(own + 64) * NNUE_OUTPUT_BUCKETS + b] = -queen;
+            }
+        }
+    }
+    board_t board;
+    parse_fen("4k3/8/8/8/8/8/8/3QK3 w - - 0 1", &board);
+    TEST_ASSERT_EQUAL_INT(900, nnue_evaluate(&board));
+    parse_fen("4k3/8/8/8/8/8/8/3QK3 b - - 0 1", &board);
+    TEST_ASSERT_EQUAL_INT(-900, nnue_evaluate(&board));
+    parse_fen("3qk3/8/8/8/8/8/8/3QK3 w - - 0 1", &board);
+    TEST_ASSERT_EQUAL_INT(0, nnue_evaluate(&board));
+
+    /* Only its own output bucket's value counts: 3 pieces is bucket 0. */
+    parse_fen("4k3/8/8/8/8/8/8/3QK3 w - - 0 1", &board);
+    const size_t white_queen = (size_t) nnue_feature_index(white, e1, Q, d1);
+    nnue_net.psqt_weights[white_queen * NNUE_OUTPUT_BUCKETS + 1] = 0;
+    TEST_ASSERT_EQUAL_INT(900, nnue_evaluate(&board));
+    nnue_net.psqt_weights[white_queen * NNUE_OUTPUT_BUCKETS + 0] = 0;
+    TEST_ASSERT_EQUAL_INT(450, nnue_evaluate(&board));
+    nnue_free();
+}
+
 void test_nnue_output_buckets() {
     TEST_ASSERT_EQUAL_INT(0, nnue_output_bucket(2));
     TEST_ASSERT_EQUAL_INT(0, nnue_output_bucket(5));
@@ -217,7 +264,7 @@ void test_nnue_load_single_output_network() {
     random_network(2024);
     size_t size;
     uint8_t* data = saved_network(&size);
-    const size_t outputs = size - (size_t) NNUE_OUTPUT_BUCKETS * (2 * NNUE_HIDDEN * sizeof(int16_t) + sizeof(int32_t));
+    const size_t outputs = FILE_FT_END;     /* No PSQT, the output layer follows the feature transformer. */
     const uint32_t version = NNUE_VERSION_SINGLE_OUTPUT;
     memcpy(data + 8, &version, sizeof(version));
     memmove(data + outputs, nnue_net.out_weights[3], sizeof(nnue_net.out_weights[3]));
@@ -245,11 +292,54 @@ void test_nnue_load_single_output_network() {
         TEST_ASSERT_EQUAL_INT16_ARRAY(weights, nnue_net.out_weights[b], 2 * NNUE_HIDDEN);
         TEST_ASSERT_EQUAL_INT32(bias, nnue_net.out_bias[b]);
     }
+    TEST_ASSERT_TRUE(psqt_all_zero());
 
     /* The version 1 layout with version 2 in the header (or the reverse) is rejected. */
     const uint32_t current = NNUE_VERSION;
     memcpy(data + 8, &current, sizeof(current));
     TEST_ASSERT_FALSE(nnue_load_memory(data, single_size, "wrong version"));
+    free(data);
+    nnue_free();
+}
+
+void test_nnue_load_network_without_psqt() {
+    /* A version 2 network (before PSQT): the same file without the PSQT weights, which load as 0 and
+     * evaluate exactly as the network did without them. */
+    random_network(2025);
+    size_t size;
+    uint8_t* data = saved_network(&size);
+    memmove(data + FILE_FT_END, data + FILE_FT_END + FILE_PSQT_BYTES, size - FILE_FT_END - FILE_PSQT_BYTES);
+    const size_t v2_size = size - FILE_PSQT_BYTES;
+    const uint32_t version = NNUE_VERSION_NO_PSQT;
+    memcpy(data + 8, &version, sizeof(version));
+
+    memset(nnue_net.psqt_weights, 0, FILE_PSQT_BYTES);
+    int expected[POSITION_COUNT];
+    for (int i = 0; i < POSITION_COUNT; i++) {
+        board_t board;
+        parse_fen(positions[i], &board);
+        expected[i] = nnue_evaluate(&board);
+    }
+    nnue_free();
+
+    char path[] = TEMP_TEMPLATE;
+    int fd = mkstemp(path);
+    TEST_ASSERT_TRUE(fd >= 0);
+    TEST_ASSERT_EQUAL_INT((int) v2_size, (int) write(fd, data, (unsigned) v2_size));
+    close(fd);
+    TEST_ASSERT_TRUE(nnue_load(path));
+    unlink(path);
+    TEST_ASSERT_TRUE(psqt_all_zero());
+    for (int i = 0; i < POSITION_COUNT; i++) {
+        board_t board;
+        parse_fen(positions[i], &board);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(expected[i], nnue_evaluate(&board), positions[i]);
+    }
+
+    /* The version 2 layout with version 3 in the header is rejected. */
+    const uint32_t current = NNUE_VERSION;
+    memcpy(data + 8, &current, sizeof(current));
+    TEST_ASSERT_FALSE(nnue_load_memory(data, v2_size, "wrong version"));
     free(data);
     nnue_free();
 }
@@ -405,10 +495,21 @@ typedef struct {
     int null_moves;
 } walk_counts_t;
 
+/* The incremental evaluation and accumulator (PSQT sums included) at the top of 'stack' against a
+ * full refresh of 'board'. */
+static void check_incremental(nnue_stack_t* stack, const board_t* board) {
+    TEST_ASSERT_EQUAL_INT(nnue_evaluate(board), nnue_evaluate_incremental(stack, board));
+    nnue_accumulator_t expected;
+    nnue_refresh(board, &expected);
+    const nnue_accumulator_t* actual = &stack->entries[stack->top].accumulator;
+    TEST_ASSERT_EQUAL_INT16_ARRAY(expected.values[white], actual->values[white], 2 * NNUE_HIDDEN);
+    TEST_ASSERT_EQUAL_INT32_ARRAY(expected.psqt[white], actual->psqt[white], 2 * NNUE_OUTPUT_BUCKETS);
+}
+
 /**
  * Random walk from 'board': a few random moves per node, each made with nnue_push as the search
  * does. Evaluates at about half the nodes, so some evaluations catch up over several moves, and
- * compares the incremental eval with a full refresh.
+ * compares the incremental eval and accumulators with a full refresh.
  */
 static void walk(board_t* board, nnue_stack_t* stack, int depth, uint32_t* rng, walk_counts_t* counts) {
     if (depth == 0) return;
@@ -442,7 +543,7 @@ static void walk(board_t* board, nnue_stack_t* stack, int depth, uint32_t* rng, 
             counts->en_passants += get_enpassant_flag(mv) != 0;
             counts->promotions += get_promoted_piece(mv) != 0;
             if (next_random_32(rng) & 1) {
-                TEST_ASSERT_EQUAL_INT(nnue_evaluate(board), nnue_evaluate_incremental(stack, board));
+                check_incremental(stack, board);
                 counts->evaluated++;
             }
             walk(board, stack, depth - 1, rng, counts);
@@ -473,7 +574,7 @@ void test_nnue_incremental_matches_refresh() {
         board_t board;
         parse_fen(walk_positions[i], &board);
         nnue_reset(&stack);
-        TEST_ASSERT_EQUAL_INT(nnue_evaluate(&board), nnue_evaluate_incremental(&stack, &board));
+        check_incremental(&stack, &board);
         walk(&board, &stack, 5, &rng, &counts);
         TEST_ASSERT_EQUAL_INT(0, stack.top);
     }
@@ -491,6 +592,10 @@ void test_nnue_output_simd_matches_scalar() {
     random_network(5150);
     uint32_t rng = 7;
     nnue_accumulator_t accumulator;
+    for (int b = 0; b < NNUE_OUTPUT_BUCKETS; b++) {
+        accumulator.psqt[white][b] = (int32_t) (next_random_32(&rng) % 200001) - 100000;
+        accumulator.psqt[black][b] = (int32_t) (next_random_32(&rng) % 200001) - 100000;
+    }
     for (int trial = 0; trial < 200; trial++) {
         const int16_t extreme = (int16_t) (trial % 2 ? 32767 : -32768);
         const int bucket = trial % NNUE_OUTPUT_BUCKETS;
@@ -518,6 +623,7 @@ void test_nnue_output_small_matches_scalar() {
     nnue_net.small_output = true;
     uint32_t rng = 11;
     nnue_accumulator_t accumulator;
+    memset(accumulator.psqt, 0, sizeof(accumulator.psqt));
     for (int trial = 0; trial < 200; trial++) {
         const int16_t extreme = (int16_t) (trial % 2 ? NNUE_OUT_WEIGHT_SMALL : -NNUE_OUT_WEIGHT_SMALL);
         const int bucket = trial % NNUE_OUTPUT_BUCKETS;
@@ -547,7 +653,7 @@ void test_nnue_load_sets_small_output() {
     nnue_free();
 
     /* random_network's output weights are within +-127, the first of them set to each limit. */
-    const size_t out_at = 8 + 3 * sizeof(uint32_t) + ((size_t) NNUE_INPUTS * NNUE_HIDDEN + NNUE_HIDDEN) * sizeof(int16_t);
+    const size_t out_at = FILE_FT_END + FILE_PSQT_BYTES;
     const int16_t limits[4] = { NNUE_OUT_WEIGHT_SMALL, -NNUE_OUT_WEIGHT_SMALL, NNUE_OUT_WEIGHT_SMALL + 1,
                                 -NNUE_OUT_WEIGHT_SMALL - 1 };
     for (int i = 0; i < 4; i++) {
@@ -585,6 +691,11 @@ void test_nnue_refresh_matches_plain_sum() {
                 int sum = nnue_net.ft_bias[j];
                 for (int f = 0; f < n; f++) sum += nnue_net.ft_weights[(size_t) features[f] * NNUE_HIDDEN + j];
                 TEST_ASSERT_EQUAL_INT16_MESSAGE((int16_t) sum, accumulator.values[c][j], property_position(i));
+            }
+            for (int b = 0; b < NNUE_OUTPUT_BUCKETS; b++) {
+                int32_t sum = 0;
+                for (int f = 0; f < n; f++) sum += nnue_net.psqt_weights[(size_t) features[f] * NNUE_OUTPUT_BUCKETS + b];
+                TEST_ASSERT_EQUAL_INT32_MESSAGE(sum, accumulator.psqt[c][b], property_position(i));
             }
         }
     }

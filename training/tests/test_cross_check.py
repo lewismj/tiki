@@ -29,16 +29,25 @@ FENS = [
 class CrossCheckTests(unittest.TestCase):
 
     def test_engine_matches_reference(self):
+        self.check(psqt=False)
+
+    def test_engine_matches_reference_with_psqt(self):
+        self.check(psqt=True)
+
+    def check(self, psqt):
         torch.manual_seed(3)
-        model = TikiNNUE()
+        model = TikiNNUE(factoriser=psqt, psqt=psqt)
         # Larger weights than the initialisation, so the accumulators reach the SCReLU clamp.
         with torch.no_grad():
             model.ft.weight.mul_(10)
             model.ft_bias.uniform_(-0.5, 1.5)
             model.out.bias.uniform_(-0.2, 0.2)          # A different output per bucket.
             model.out.weight.normal_(0.0, 0.1)
+            if psqt:
+                model.psqt.weight.normal_(0.0, 0.3)     # Material plus noise, different per bucket.
         model.clip_weights()
         network = quantise(model)
+        self.assertEqual(psqt, "psqt_weights" in network)
 
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "net.nnue")

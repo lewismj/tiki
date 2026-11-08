@@ -20,9 +20,16 @@ HalfKAv2_hm (22528) -> 512 per side -> SCReLU -> concat (1024) -> 1, one of 8 ou
 - **Output buckets.** 8 output layers (1024 -> 1 each) share the accumulator, and a position uses
   the one for its number of pieces, kings included: (pieces - 2) / 4, so 2-5 pieces is bucket 0 and
   30-32 bucket 7. The opening, middlegame and endgame each get their own weighting at almost no cost
-  in speed. Networks are saved as format version 2. Version 1 networks (one output layer, from before
-  output buckets) still load, in the engine and the trainer, as that layer in every bucket, so they
-  evaluate exactly as they did, but their checkpoints (`.pt`) can't be resumed.
+  in speed. Version 1 networks (one output layer, from before output buckets) still load, in the
+  engine and the trainer, as that layer in every bucket, so they evaluate exactly as they did, but
+  their checkpoints (`.pt`) can't be resumed.
+- **PSQT (`--psqt`).** Each feature also has a value per output bucket, summed per perspective like the
+  accumulator (incrementally in the engine, refresh cache included), and half the difference between the
+  side to move's sum and the other side's is added to the output. It starts as material (P 100, N 300,
+  B 320, R 500, Q 900, the same on every square), so the net starts from material and learns the
+  rest. With `--factoriser` it has shared rows too. Saved as format version 3 (int32 PSQT weights
+  after the feature transformer, 0.7 MB). A network without PSQT is still saved as version 2, exactly
+  as before, and the engine loads version 2 with PSQT weights of 0, which evaluates identically.
 - **Factoriser (`--factoriser`, training only).** Each feature's row is trained as the sum of its own
   row and a row shared by that piece on that square in all 32 king buckets (704 shared rows). The
   shared rows learn from every position, so rarely seen king buckets start from what the common ones
@@ -201,6 +208,27 @@ scale (by about 19% for Lichess), which the search's margins are tuned to. Resca
 the data already has (335) evens out the months and keeps the eval scale. Only the scores change. Each
 output goes via a `.part` file, existing outputs are skipped (`--force` rewrites them), and the table shows
 `s` fitted again on each output, which should be the `--scale-to` value.
+
+#### Adding a Lichess month
+
+Every month goes through the same three steps before it's trained on: convert, relabel with the Syzygy
+tables, rescale to 335. The trainer reads only the last directory, so a month that skips a step is
+missing from training, not mixed in unprocessed. In WSL, from `training/`:
+
+```bash
+M=2026-11
+lichess_convert/lichess_convert --min-elo 2000 /mnt/f/lichess2/lichess_db_standard_rated_$M.pgn.zst \
+        /mnt/f/lichess2/data-2000-s100/lichess-$M.bin
+syzygy_relabel/syzygy_relabel --tb /mnt/f/syzygy/wdl /mnt/f/lichess2/data-2000-s100 /mnt/f/lichess2/data-2000-s100-tb
+python3 rescale.py --scale-to 335 /mnt/f/lichess2/data-2000-s100-tb /mnt/f/lichess2/data-2000-s100-tb-s335
+```
+
+The relabeller and `rescale.py` skip outputs that already exist, so run over the whole directories they
+process only the new month; the months already done are left as they are. Each month is rescaled by its
+own fitted `s`, so a new month never needs the others redone. Check the new month's `s` in `rescale.py`'s
+table: a jump like 2026-08's (395-429, against about 335 before) means Lichess's Stockfish scores changed
+scale, which the rescale corrects, but it's worth knowing about. The relabeller maps the tables into
+memory, so don't cap it with `ulimit -v`.
 - **Downloads:** with `--download-dir`, each tar is downloaded first (with a progress bar, resuming
   a partial `.part` file) and kept, so it can be converted again later with other options.
 - **Re-running:** tars already converted are skipped, so you can run the same command again.
@@ -246,8 +274,10 @@ Set `TIKI_APP` to the `tiki` binary to include the engine cross-check in the tes
 | `--lr-drop` | 10 | `step`: multiply the learning rate by 0.1 every N epochs |
 | `--lr-min` | 1e-5 | `cosine`: the learning rate of the last epoch |
 | `--wdl` | 0.3 | weight of the game result against the search score |
+| `--loss-power` | 2 | exponent of the error between win probabilities: 2 is the MSE, above 2 weights large errors more (Stockfish uses 2.5). With a power other than 2 the log also gives the validation MSE, since losses at different powers don't compare; resuming with another power is allowed |
 | `--hidden` | 512 | accumulator width per side (the engine's `NNUE_HIDDEN`) |
 | `--factoriser` | off | train shared rows across the king buckets as well (see Network); a checkpoint resumes only with the setting it was trained with |
+| `--psqt` | off | add the PSQT term (see Network), format version 3; a checkpoint resumes only with the setting it was trained with |
 | `--validation` | 0.02 | fraction held out for the validation loss, as whole games |
 | `--batch-size` | 16384 | |
 | `--workers` | 4 | processes converting `.txt` data to `.bin` |
@@ -431,7 +461,7 @@ TIKI_APP=../build/engine/app/tiki python3 -m unittest discover -s tests
 | Test | Checks |
 |---|---|
 | `test_features.py` | known indices (the same values the C tests use), range, uniqueness, and colour-flip and mirror symmetry |
-| `test_model.py` | colour symmetry of the float model; converting white-relative scores to the side to move; the file round trip; the integer eval matching the float model on the quantised weights; a small training run reducing the loss; the factoriser: starting as the plain net, each feature adding its shared row, evaluating and exporting exactly as the folded plain net, clipping the sums, training the shared rows, and resuming only with the same setting |
+| `test_model.py` | colour symmetry of the float model; converting white-relative scores to the side to move; the file round trip; the integer eval matching the float model on the quantised weights; a small training run reducing the loss; `--loss-power` (2 is the MSE, other powers, a finite gradient at 0, rejecting powers below 1) and the validation MSE logged beside it; the factoriser: starting as the plain net, each feature adding its shared row, evaluating and exporting exactly as the folded plain net, clipping the sums, training the shared rows, and resuming only with the same setting; PSQT: starting from material, colour symmetry, each bucket using its own values, the integer eval matching the float model, the version 3 round trip (version 2 without PSQT), folding the factorised PSQT, training it, and resuming only with the same setting |
 | `test_cross_check.py` | exports a network and checks that `tiki nnue-eval` gives exactly `quantised_eval()`; skipped unless `TIKI_APP` is set |
 | `test_data.py` | the batch features computed from binary records match `parse_line` and `collate`, including on positions from random games; converting text to binary (blank lines, CRLF, a missing final newline, any number of workers) and loading the result; rejecting files that aren't binary data or are truncated |
 | `test_lichess.py` | converts a small `.pgn.zst` built in the test: only analysed games are parsed; the quiet-position, mate-score, opening, Elo, score and sample filters; the output reads back in the trainer, and the binary output is the text output encoded. Skipped without `python-chess` or `zstandard` |

@@ -12,6 +12,12 @@ on the same square in every king bucket (704 shared rows). The shared rows learn
 so king buckets that are rarely seen start from what the common ones learnt and only learn their
 difference. feature_weights() adds the two, and that is all the engine sees: the exported network has
 the same size and format either way.
+
+With psqt=True, each feature also has a value per output bucket (PSQT), summed per perspective like
+the accumulator, and half the difference between the side to move's sum and the other side's is added
+to the output: y += (psqt_stm[bucket] - psqt_nstm[bucket]) / 2. It starts as material values (a piece
+is worth the same on every square), so the net starts from material and learns the rest. With the
+factoriser too, the PSQT has shared rows the same way.
 """
 
 import torch
@@ -30,6 +36,19 @@ SCALE = 400     # Network output to centipawns, also the scale of the score -> w
 FT_CLIP = 1.98
 OUT_CLIP = 127 / QB  # Quantised output weights fit in int8 range, so SCReLU(v) * w can use int16 (madd).
 
+# Starting PSQT values in centipawns, by piece type (P N B R Q K), for a piece of the perspective's side
+# (the other side's pieces are the negative). Kings have none (feature kind 10 is either king).
+PSQT_MATERIAL = (100, 300, 320, 500, 900, 0)
+
+
+def material_psqt():
+    """[PIECE_SQUARES, OUTPUT_BUCKETS] starting PSQT values (eval / SCALE), by feature kind and square."""
+    values = torch.zeros(PIECE_SQUARES, OUTPUT_BUCKETS)
+    for kind in range(10):
+        value = PSQT_MATERIAL[kind // 2] / SCALE
+        values[kind * 64:(kind + 1) * 64] = value if kind % 2 == 0 else -value
+    return values
+
 
 def screlu(x):
     return torch.clamp(x, 0.0, 1.0) ** 2
@@ -37,7 +56,7 @@ def screlu(x):
 
 class TikiNNUE(nn.Module):
 
-    def __init__(self, hidden=HIDDEN, factoriser=False):
+    def __init__(self, hidden=HIDDEN, factoriser=False, psqt=False):
         super().__init__()
         self.hidden = hidden
         self.ft = nn.EmbeddingBag(INPUTS, hidden, mode="sum")
@@ -50,10 +69,23 @@ class TikiNNUE(nn.Module):
         self.factor = nn.EmbeddingBag(PIECE_SQUARES, hidden, mode="sum") if factoriser else None
         if self.factor is not None:
             nn.init.zeros_(self.factor.weight)
+        # PSQT, material to start with: in the shared rows with the factoriser, else in every king bucket.
+        self.psqt = nn.Embedding(INPUTS, OUTPUT_BUCKETS) if psqt else None
+        self.psqt_factor = nn.Embedding(PIECE_SQUARES, OUTPUT_BUCKETS) if psqt and factoriser else None
+        with torch.no_grad():
+            if self.psqt_factor is not None:
+                nn.init.zeros_(self.psqt.weight)
+                self.psqt_factor.weight.copy_(material_psqt())
+            elif self.psqt is not None:
+                self.psqt.weight.copy_(material_psqt().repeat(KING_BUCKETS, 1))
 
     @property
     def factorised(self):
         return self.factor is not None
+
+    @property
+    def has_psqt(self):
+        return self.psqt is not None
 
     def forward(self, stm_indices, stm_offsets, nstm_indices, nstm_offsets, bucket):
         """Inputs as for nn.EmbeddingBag (flat indices, start offset per sample) and each sample's
@@ -68,6 +100,11 @@ class TikiNNUE(nn.Module):
             us = F.embedding_bag(stm_indices, weights, stm_offsets, mode="sum") + self.ft_bias
             them = F.embedding_bag(nstm_indices, weights, nstm_offsets, mode="sum") + self.ft_bias
         outputs = self.out(torch.cat([screlu(us), screlu(them)], dim=1))    # [batch, OUTPUT_BUCKETS]
+        if self.psqt is not None:
+            weights = self.psqt_weights()
+            psqt_us = F.embedding_bag(stm_indices, weights, stm_offsets, mode="sum")
+            psqt_them = F.embedding_bag(nstm_indices, weights, nstm_offsets, mode="sum")
+            outputs = outputs + (psqt_us - psqt_them) / 2
         return outputs.gather(1, bucket.long().unsqueeze(1)).squeeze(1)
 
     def feature_weights(self):
@@ -77,6 +114,16 @@ class TikiNNUE(nn.Module):
             return self.ft.weight
         own = self.ft.weight.view(KING_BUCKETS, PIECE_SQUARES, self.hidden)
         return (own + self.factor.weight).view(INPUTS, self.hidden)
+
+    def psqt_weights(self):
+        """Each feature's PSQT values as the engine uses them, [INPUTS, OUTPUT_BUCKETS] (None without
+        PSQT): with the factoriser, its own plus its shared row."""
+        if self.psqt is None:
+            return None
+        if self.psqt_factor is None:
+            return self.psqt.weight
+        own = self.psqt.weight.view(KING_BUCKETS, PIECE_SQUARES, OUTPUT_BUCKETS)
+        return (own + self.psqt_factor.weight).view(INPUTS, OUTPUT_BUCKETS)
 
     @torch.no_grad()
     def clip_weights(self):
@@ -92,11 +139,15 @@ class TikiNNUE(nn.Module):
         self.out.weight.clamp_(-OUT_CLIP, OUT_CLIP)
 
 
-def loss_fn(output, score, result, wdl):
-    """MSE between win probabilities: the net's, and a blend of the search score's and the game result.
+def loss_fn(output, score, result, wdl, power=2.0):
+    """Mean |error| ** power between win probabilities: the net's, and a blend of the search score's and
+    the game result. power 2 is the MSE; above 2 weights large errors more (Stockfish's trainer uses 2.5).
 
     output is the net's eval / SCALE, score centipawns and result 1 / 0.5 / 0, both for the side to move.
     wdl is the weight of the game result (0 trains on the search score only).
     """
     target = (1.0 - wdl) * torch.sigmoid(score / SCALE) + wdl * result
-    return ((torch.sigmoid(output) - target) ** 2).mean()
+    error = torch.sigmoid(output) - target
+    if power == 2.0:
+        return (error ** 2).mean()
+    return (error.abs() ** power).mean()

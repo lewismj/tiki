@@ -79,9 +79,18 @@ static void free_ft_weights(int16_t* weights) {
 #endif
 }
 
+#define NNUE_PSQT_COUNT ((size_t) NNUE_INPUTS * NNUE_OUTPUT_BUCKETS)
+#define NNUE_PSQT_BYTES (NNUE_PSQT_COUNT * sizeof(int32_t))
+
+/* Zeroed, as for a network without PSQT. */
+static int32_t* allocate_psqt_weights(void) {
+    return calloc(NNUE_PSQT_COUNT, sizeof(int32_t));
+}
+
 bool nnue_allocate(void) {
     nnue_free();
     nnue_net.ft_weights = allocate_ft_weights();
+    nnue_net.psqt_weights = allocate_psqt_weights();
     if (nnue_net.ft_weights != NULL) memset(nnue_net.ft_weights, 0, NNUE_FT_BYTES);
     loaded_path[0] = '\0';
     next_generation();
@@ -89,12 +98,18 @@ bool nnue_allocate(void) {
     memset(nnue_net.out_weights, 0, sizeof(nnue_net.out_weights));
     memset(nnue_net.out_bias, 0, sizeof(nnue_net.out_bias));
     nnue_net.small_output = false;
-    return nnue_net.ft_weights != NULL;
+    if (nnue_net.ft_weights == NULL || nnue_net.psqt_weights == NULL) {
+        nnue_free();
+        return false;
+    }
+    return true;
 }
 
 void nnue_free(void) {
     free_ft_weights(nnue_net.ft_weights);
+    free(nnue_net.psqt_weights);
     nnue_net.ft_weights = NULL;
+    nnue_net.psqt_weights = NULL;
     loaded_path[0] = '\0';
 }
 
@@ -108,14 +123,15 @@ static bool little_endian_host(void) {
     return *(const uint8_t*) &one == 1;
 }
 
-/* Size of a network in the file format with 'buckets' output layers, every valid file is exactly
- * this long (8 for version 2, 1 for version 1). */
+/* Size of a network in the file format with 'buckets' output layers and 'psqt' bytes of PSQT weights,
+ * every valid file is exactly this long (version 3: 8 buckets with PSQT, 2: 8 without, 1: 1 without). */
 #define NNUE_FT_COUNT ((size_t) NNUE_INPUTS * NNUE_HIDDEN)
-#define NNUE_FILE_SIZE_FOR(buckets) (8 + 3 * sizeof(uint32_t) + NNUE_FT_COUNT * sizeof(int16_t) + \
-                                     NNUE_HIDDEN * sizeof(int16_t) + \
-                                     (buckets) * (2 * NNUE_HIDDEN * sizeof(int16_t) + sizeof(int32_t)))
-#define NNUE_FILE_SIZE NNUE_FILE_SIZE_FOR(NNUE_OUTPUT_BUCKETS)
-#define NNUE_FILE_SIZE_SINGLE_OUTPUT NNUE_FILE_SIZE_FOR(1)
+#define NNUE_FILE_SIZE_FOR(buckets, psqt) (8 + 3 * sizeof(uint32_t) + NNUE_FT_COUNT * sizeof(int16_t) + \
+                                           NNUE_HIDDEN * sizeof(int16_t) + (psqt) + \
+                                           (buckets) * (2 * NNUE_HIDDEN * sizeof(int16_t) + sizeof(int32_t)))
+#define NNUE_FILE_SIZE NNUE_FILE_SIZE_FOR(NNUE_OUTPUT_BUCKETS, NNUE_PSQT_BYTES)
+#define NNUE_FILE_SIZE_NO_PSQT NNUE_FILE_SIZE_FOR(NNUE_OUTPUT_BUCKETS, 0)
+#define NNUE_FILE_SIZE_SINGLE_OUTPUT NNUE_FILE_SIZE_FOR(1, 0)
 
 /* Copies the next 'bytes' of 'data' to 'out', false if fewer are left. */
 static bool take(const uint8_t* data, size_t size, size_t* at, void* out, size_t bytes) {
@@ -129,19 +145,22 @@ bool nnue_load_memory(const void* data, size_t size, const char* name) {
     if (!little_endian_host() || data == NULL) return false;
 
     /* Read into a new network, the current one is only replaced once this one is complete. */
-    nnue_network_t net = { .ft_weights = allocate_ft_weights() };
+    nnue_network_t net = { .ft_weights = allocate_ft_weights(), .psqt_weights = allocate_psqt_weights() };
     char magic[8];
     uint32_t header[3];
     size_t at = 0;
-    bool ok = net.ft_weights != NULL &&
+    bool ok = net.ft_weights != NULL && net.psqt_weights != NULL &&
               take(data, size, &at, magic, sizeof(magic)) &&
               memcmp(magic, NNUE_MAGIC, sizeof(magic)) == 0 &&
               take(data, size, &at, header, sizeof(header)) &&
-              (header[0] == NNUE_VERSION || header[0] == NNUE_VERSION_SINGLE_OUTPUT) &&
+              (header[0] == NNUE_VERSION || header[0] == NNUE_VERSION_NO_PSQT ||
+               header[0] == NNUE_VERSION_SINGLE_OUTPUT) &&
               header[1] == NNUE_INPUTS && header[2] == NNUE_HIDDEN &&
               take(data, size, &at, net.ft_weights, NNUE_FT_COUNT * sizeof(int16_t)) &&
               take(data, size, &at, net.ft_bias, sizeof(net.ft_bias));
-    if (ok && header[0] == NNUE_VERSION) {
+    /* Older versions have no PSQT, its weights stay 0. */
+    if (ok && header[0] == NNUE_VERSION) ok = take(data, size, &at, net.psqt_weights, NNUE_PSQT_BYTES);
+    if (ok && header[0] != NNUE_VERSION_SINGLE_OUTPUT) {
         ok = take(data, size, &at, net.out_weights, sizeof(net.out_weights)) &&
              take(data, size, &at, net.out_bias, sizeof(net.out_bias));
     } else if (ok) {
@@ -164,6 +183,7 @@ bool nnue_load_memory(const void* data, size_t size, const char* name) {
 
     if (!ok) {
         free_ft_weights(net.ft_weights);
+        free(net.psqt_weights);
         return false;
     }
     nnue_free();
@@ -178,12 +198,13 @@ bool nnue_load(const char* path) {
     if (file == NULL) return false;
 
     /* One byte more than a network, so a longer file is rejected too. */
-    static_assert(NNUE_FILE_SIZE > NNUE_FILE_SIZE_SINGLE_OUTPUT, "the larger format sets the buffer size");
+    static_assert(NNUE_FILE_SIZE > NNUE_FILE_SIZE_NO_PSQT && NNUE_FILE_SIZE_NO_PSQT > NNUE_FILE_SIZE_SINGLE_OUTPUT,
+                  "the largest format sets the buffer size");
     uint8_t* data = malloc(NNUE_FILE_SIZE + 1);
     const size_t size = data != NULL ? fread(data, 1, NNUE_FILE_SIZE + 1, file) : 0;
     fclose(file);
 
-    const bool ok = (size == NNUE_FILE_SIZE || size == NNUE_FILE_SIZE_SINGLE_OUTPUT) &&
+    const bool ok = (size == NNUE_FILE_SIZE || size == NNUE_FILE_SIZE_NO_PSQT || size == NNUE_FILE_SIZE_SINGLE_OUTPUT) &&
                     nnue_load_memory(data, size, path);
     free(data);
     return ok;
@@ -200,6 +221,7 @@ bool nnue_save(const char* path) {
               fwrite(header, sizeof(uint32_t), 3, file) == 3 &&
               fwrite(nnue_net.ft_weights, sizeof(int16_t), ft_count, file) == ft_count &&
               fwrite(nnue_net.ft_bias, sizeof(int16_t), NNUE_HIDDEN, file) == NNUE_HIDDEN &&
+              fwrite(nnue_net.psqt_weights, sizeof(int32_t), NNUE_PSQT_COUNT, file) == NNUE_PSQT_COUNT &&
               fwrite(nnue_net.out_weights, sizeof(nnue_net.out_weights), 1, file) == 1 &&
               fwrite(nnue_net.out_bias, sizeof(nnue_net.out_bias), 1, file) == 1;
     return fclose(file) == 0 && ok;
@@ -352,34 +374,69 @@ static int64_t output_sum_scalar(const int16_t* us, const int16_t* them, int buc
     return sum;
 }
 
-static inline int scale_output(int64_t sum, int bucket) {
-    int64_t result = sum / NNUE_QA + nnue_net.out_bias[bucket];
+/* The output layer's sum, plus the bias and the PSQT term (nnue.h), in centipawns. */
+static inline int scale_output(int64_t sum, const nnue_accumulator_t* accumulator, colour side, int bucket) {
+    const int64_t psqt = ((int64_t) accumulator->psqt[side][bucket] - accumulator->psqt[side ^ 1][bucket]) / 2;
+    const int64_t result = sum / NNUE_QA + nnue_net.out_bias[bucket] + psqt;
     return (int) (result * NNUE_SCALE / (NNUE_QA * NNUE_QB));
 }
 
 int nnue_output(const nnue_accumulator_t* accumulator, colour side, int bucket) {
-    return scale_output(output_sum(accumulator->values[side], accumulator->values[side ^ 1], bucket), bucket);
+    return scale_output(output_sum(accumulator->values[side], accumulator->values[side ^ 1], bucket),
+                        accumulator, side, bucket);
 }
 
 int nnue_output_scalar(const nnue_accumulator_t* accumulator, colour side, int bucket) {
-    return scale_output(output_sum_scalar(accumulator->values[side], accumulator->values[side ^ 1], bucket), bucket);
+    return scale_output(output_sum_scalar(accumulator->values[side], accumulator->values[side ^ 1], bucket),
+                        accumulator, side, bucket);
 }
 
 static inline int board_bucket(const board_t* board) {
     return nnue_output_bucket(pop_count(board->occupancy[both]));
 }
 
-/* From scratch: the bias plus every active feature's row. */
-static void refresh_perspective(const board_t* board, colour perspective, int16_t* values) {
+static inline const int32_t* psqt_row(int feature) {
+    return &nnue_net.psqt_weights[(size_t) feature * NNUE_OUTPUT_BUCKETS];
+}
+
+/*
+ * One perspective's accumulator and PSQT sums: out = in + the 'added' features - the 'removed' ones
+ * ('out' may be 'in'). At most NNUE_MAX_ACTIVE of each.
+ */
+static void apply_features(int16_t* out, int32_t* out_psqt, const int16_t* in, const int32_t* in_psqt,
+                           const int* added, int added_count, const int* removed, int removed_count) {
+    const int16_t* added_rows[NNUE_MAX_ACTIVE];
+    const int16_t* removed_rows[NNUE_MAX_ACTIVE];
+    for (int a = 0; a < added_count; a++) added_rows[a] = feature_row(added[a]);
+    for (int r = 0; r < removed_count; r++) removed_rows[r] = feature_row(removed[r]);
+    apply_rows(out, in, added_rows, added_count, removed_rows, removed_count);
+
+    /* 8 int32 per feature, which the compiler vectorises. */
+    int32_t psqt[NNUE_OUTPUT_BUCKETS];
+    memcpy(psqt, in_psqt, sizeof(psqt));
+    for (int a = 0; a < added_count; a++) {
+        const int32_t* row = psqt_row(added[a]);
+        for (int b = 0; b < NNUE_OUTPUT_BUCKETS; b++) psqt[b] += row[b];
+    }
+    for (int r = 0; r < removed_count; r++) {
+        const int32_t* row = psqt_row(removed[r]);
+        for (int b = 0; b < NNUE_OUTPUT_BUCKETS; b++) psqt[b] -= row[b];
+    }
+    memcpy(out_psqt, psqt, sizeof(psqt));
+}
+
+static const int32_t no_psqt[NNUE_OUTPUT_BUCKETS];
+
+/* From scratch: the bias plus every active feature's row, and the sum of their PSQT rows. */
+static void refresh_perspective(const board_t* board, colour perspective, nnue_accumulator_t* accumulator) {
     int features[NNUE_MAX_ACTIVE];
-    const int16_t* rows[NNUE_MAX_ACTIVE];
     int n = nnue_active_features(board, perspective, features);
-    for (int f = 0; f < n; f++) rows[f] = feature_row(features[f]);
-    apply_rows(values, nnue_net.ft_bias, rows, n, NULL, 0);
+    apply_features(accumulator->values[perspective], accumulator->psqt[perspective], nnue_net.ft_bias, no_psqt,
+                   features, n, NULL, 0);
 }
 
 void nnue_refresh(const board_t* board, nnue_accumulator_t* accumulator) {
-    for (int c = white; c <= black; c++) refresh_perspective(board, c, accumulator->values[c]);
+    for (int c = white; c <= black; c++) refresh_perspective(board, c, accumulator);
 }
 
 int nnue_evaluate(const board_t* board) {
@@ -403,6 +460,7 @@ static void init_cache(nnue_stack_t* stack) {
     for (int c = white; c <= black; c++) {
         for (int sq = 0; sq < 64; sq++) {
             memcpy(stack->cache[c][sq].values, nnue_net.ft_bias, sizeof(nnue_net.ft_bias));
+            memset(stack->cache[c][sq].psqt, 0, sizeof(stack->cache[c][sq].psqt));
             memset(stack->cache[c][sq].pieces, 0, sizeof(stack->cache[c][sq].pieces));
         }
     }
@@ -410,26 +468,28 @@ static void init_cache(nnue_stack_t* stack) {
 }
 
 /* refresh_perspective through the cache: only the pieces that differ from the cached position. */
-static void refresh_cached(nnue_stack_t* stack, const board_t* board, colour perspective, int16_t* values) {
+static void refresh_cached(nnue_stack_t* stack, const board_t* board, colour perspective,
+                           nnue_accumulator_t* accumulator) {
     if (stack->cache_generation != nnue_generation()) init_cache(stack);
 
     const square king = trailing_zero_count(board->pieces[perspective == white ? K : k]);
     nnue_cache_entry_t* entry = &stack->cache[perspective][king];
 
     /* At most 32 pieces were on the board then, and 32 are now. */
-    const int16_t* added[NNUE_MAX_ACTIVE];
-    const int16_t* removed[NNUE_MAX_ACTIVE];
+    int added[NNUE_MAX_ACTIVE];
+    int removed[NNUE_MAX_ACTIVE];
     int added_count = 0, removed_count = 0;
     for (int pc = P; pc <= k; pc++) {
         const bitboard now = board->pieces[pc];
         bitboard gone = entry->pieces[pc] & ~now;
         bitboard arrived = now & ~entry->pieces[pc];
-        while (gone) removed[removed_count++] = feature_row(nnue_feature_index(perspective, king, pc, get_lsb_and_pop_bit(&gone)));
-        while (arrived) added[added_count++] = feature_row(nnue_feature_index(perspective, king, pc, get_lsb_and_pop_bit(&arrived)));
+        while (gone) removed[removed_count++] = nnue_feature_index(perspective, king, pc, get_lsb_and_pop_bit(&gone));
+        while (arrived) added[added_count++] = nnue_feature_index(perspective, king, pc, get_lsb_and_pop_bit(&arrived));
         entry->pieces[pc] = now;
     }
-    apply_rows(entry->values, entry->values, added, added_count, removed, removed_count);
-    memcpy(values, entry->values, sizeof(entry->values));
+    apply_features(entry->values, entry->psqt, entry->values, entry->psqt, added, added_count, removed, removed_count);
+    memcpy(accumulator->values[perspective], entry->values, sizeof(entry->values));
+    memcpy(accumulator->psqt[perspective], entry->psqt, sizeof(entry->psqt));
 }
 
 static inline void add_change(nnue_piece_square_t* changes, int8_t* count, piece pc, square sq) {
@@ -479,7 +539,7 @@ static void update_perspective(nnue_stack_t* stack, const board_t* board, colour
         from--;
     }
     if (!stack->entries[from].computed[perspective]) {
-        refresh_cached(stack, board, perspective, top->accumulator.values[perspective]);
+        refresh_cached(stack, board, perspective, &top->accumulator);
         top->computed[perspective] = true;
         return;
     }
@@ -488,16 +548,18 @@ static void update_perspective(nnue_stack_t* stack, const board_t* board, colour
     const square king = trailing_zero_count(board->pieces[perspective == white ? K : k]);
     for (int i = from + 1; i <= stack->top; i++) {
         nnue_entry_t* entry = &stack->entries[i];
-        const int16_t* added[2];
-        const int16_t* removed[2];
+        const nnue_accumulator_t* previous = &stack->entries[i - 1].accumulator;
+        int added[2];
+        int removed[2];
         for (int a = 0; a < entry->added_count; a++) {
-            added[a] = feature_row(nnue_feature_index(perspective, king, entry->added[a].pc, entry->added[a].sq));
+            added[a] = nnue_feature_index(perspective, king, entry->added[a].pc, entry->added[a].sq);
         }
         for (int r = 0; r < entry->removed_count; r++) {
-            removed[r] = feature_row(nnue_feature_index(perspective, king, entry->removed[r].pc, entry->removed[r].sq));
+            removed[r] = nnue_feature_index(perspective, king, entry->removed[r].pc, entry->removed[r].sq);
         }
-        apply_rows(entry->accumulator.values[perspective], stack->entries[i - 1].accumulator.values[perspective],
-                   added, entry->added_count, removed, entry->removed_count);
+        apply_features(entry->accumulator.values[perspective], entry->accumulator.psqt[perspective],
+                       previous->values[perspective], previous->psqt[perspective],
+                       added, entry->added_count, removed, entry->removed_count);
         entry->computed[perspective] = true;
     }
 }

@@ -89,12 +89,17 @@ def add_model_arguments(parser):
     parser.add_argument("--factoriser", action="store_true",
                         help="train shared rows for each piece and square across the king buckets as well "
                              "(added into the buckets' rows on export; the engine is unchanged)")
+    parser.add_argument("--psqt", action="store_true",
+                        help="add a PSQT term: a value per feature and output bucket, starting from material "
+                             "(network format version 3, needs an engine that reads it)")
 
 
 def load_model(model, state, args, parser):
-    """Restores a checkpoint's weights, which must have the same --factoriser setting."""
+    """Restores a checkpoint's weights, which must have the same --factoriser and --psqt settings."""
     if ("factor.weight" in state) != args.factoriser:
         parser.error(f"the checkpoint was trained {'with' if 'factor.weight' in state else 'without'} --factoriser")
+    if ("psqt.weight" in state) != args.psqt:
+        parser.error(f"the checkpoint was trained {'with' if 'psqt.weight' in state else 'without'} --psqt")
     model.load_state_dict(state)
 
 
@@ -134,12 +139,27 @@ def binary_files(paths, workers, log):
     return result
 
 
-def run_epoch(model, batches, device, wdl, optimiser=None, progress=None, task=None, log=None, label=""):
-    """One pass over 'batches', training if an optimiser is given. Returns the mean loss.
+def add_loss_arguments(parser):
+    """The loss options, shared by train.py and train_streaming.py."""
+    parser.add_argument("--wdl", type=float, default=0.3, help="weight of the game result vs the search score")
+    parser.add_argument("--loss-power", type=float, default=2.0,
+                        help="exponent of the error (2: MSE; Stockfish uses 2.5); must be >= 1")
+
+
+def check_loss_arguments(parser, args):
+    if args.loss_power < 1.0:
+        parser.error("--loss-power must be >= 1")
+
+
+def run_epoch(model, batches, device, wdl, optimiser=None, progress=None, task=None, log=None, label="",
+              power=2.0):
+    """One pass over 'batches', training if an optimiser is given. Returns (mean loss, mean MSE); they're
+    the same when power is 2, and the MSE lets runs with different powers be compared.
 
     Advances 'task' on 'progress', and writes to 'log' every 10% of the pass."""
     model.train(optimiser is not None)
     total = torch.zeros((), device=device)
+    total_mse = torch.zeros((), device=device)
     count, positions = 0, 0
     start = time.time()
     log_every = max(1, len(batches) // 10)
@@ -154,13 +174,16 @@ def run_epoch(model, batches, device, wdl, optimiser=None, progress=None, task=N
     with torch.set_grad_enabled(optimiser is not None):
         for stm_indices, stm_offsets, nstm_indices, nstm_offsets, bucket, score, result in batches:
             output = model(stm_indices, stm_offsets, nstm_indices, nstm_offsets, bucket)
-            loss = loss_fn(output, score, result, wdl)
+            loss = loss_fn(output, score, result, wdl, power)
             if optimiser is not None:
                 optimiser.zero_grad(set_to_none=True)
                 loss.backward()
                 optimiser.step()
                 model.clip_weights()
             total += loss.detach()
+            if power != 2.0:
+                with torch.no_grad():
+                    total_mse += loss_fn(output, score, result, wdl)
             count += 1
             positions += len(score)
             if count % UPDATE_EVERY == 0:
@@ -169,8 +192,18 @@ def run_epoch(model, batches, device, wdl, optimiser=None, progress=None, task=N
                 mean, rate = report(0)
                 log(f"{label}: batch {count}/{len(batches)}, loss {mean:.6f}, {rate:,.0f} positions/s")
     if count == 0:
-        return 0.0
-    return report(count % UPDATE_EVERY)[0]
+        return 0.0, 0.0
+    mean = report(count % UPDATE_EVERY)[0]
+    return mean, (mean if power == 2.0 else total_mse.item() / count)
+
+
+def epoch_result(epoch, train_loss, validation, power, lr, seconds, name):
+    """The line logged after each epoch. With a power other than 2 it adds the validation MSE, which
+    compares with runs at other powers (the losses themselves don't)."""
+    validation_loss, validation_mse = validation
+    mse = "" if power == 2.0 else f" (MSE {validation_mse:.6f})"
+    return (f"epoch {epoch}: train {train_loss:.6f}, validation {validation_loss:.6f}{mse}, "
+            f"lr {lr:g}, {seconds:.0f}s -> {name}.nnue")
 
 
 def main():
@@ -181,7 +214,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=16384)
     add_model_arguments(parser)
     add_schedule_arguments(parser)
-    parser.add_argument("--wdl", type=float, default=0.3, help="weight of the game result vs the search score")
+    add_loss_arguments(parser)
     parser.add_argument("--validation", type=float, default=0.02,
                         help="fraction held out for validation, in blocks of consecutive positions (whole games)")
     parser.add_argument("--workers", type=int, default=4, help="processes for converting .txt data to .bin")
@@ -189,6 +222,7 @@ def main():
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--seed", type=int, default=1)
     args = parser.parse_args()
+    check_loss_arguments(parser, args)
 
     torch.manual_seed(args.seed)
     rng = np.random.default_rng(args.seed)
@@ -212,7 +246,7 @@ def main():
     console.print(summary)
     log(summary)
 
-    model = TikiNNUE(hidden=args.hidden, factoriser=args.factoriser).to(args.device)
+    model = TikiNNUE(hidden=args.hidden, factoriser=args.factoriser, psqt=args.psqt).to(args.device)
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = make_scheduler(optimiser, args)
     first_epoch = 1
@@ -247,9 +281,9 @@ def main():
             log(f"epoch {epoch}: started, lr {lr:g}")
 
             train_loss = run_epoch(model, train_batches, args.device, args.wdl, optimiser,
-                                   progress, training, log, f"epoch {epoch} train")
-            validation_loss = run_epoch(model, validation_batches, args.device, args.wdl,
-                                        progress=progress, task=validating)
+                                   progress, training, log, f"epoch {epoch} train", power=args.loss_power)[0]
+            validation = run_epoch(model, validation_batches, args.device, args.wdl,
+                                   progress=progress, task=validating, power=args.loss_power)
             scheduler.step()
 
             name = os.path.join(args.out, f"tiki-{epoch}")
@@ -258,11 +292,10 @@ def main():
             export(model.cpu(), name + ".nnue")
             model.to(args.device)
 
-            result = (f"epoch {epoch}: train {train_loss:.6f}, validation {validation_loss:.6f}, "
-                      f"lr {lr:g}, {time.time() - start:.0f}s -> {name}.nnue")
+            result = epoch_result(epoch, train_loss, validation, args.loss_power, lr, time.time() - start, name)
             progress.console.print(result)
             log(result)
-            progress.update(overall, advance=1, loss=f"{validation_loss:.6f}")
+            progress.update(overall, advance=1, loss=f"{validation[0]:.6f}")
 
     log("finished")
 

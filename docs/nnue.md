@@ -30,9 +30,10 @@ players rated 2000+, labelled with Lichess's Stockfish evaluations (70%) and the
 ```bash
 python3 training/lichess_download.py --download-dir <dir> --months 2024-01:2026-09     # Lichess monthly dumps
 training/lichess_convert/lichess_convert --min-elo 2000 <month>.pgn.zst <month>.bin
-training/syzygy_relabel/syzygy_relabel --tb <tables> <data dir> <relabelled dir>    # optional
+training/syzygy_relabel/syzygy_relabel --tb <tables> <data dir> <relabelled dir>
+python3 training/rescale.py --scale-to 335 <relabelled dir> <rescaled dir>    # see training/README.md, "Adding a Lichess month"
 python3 training/train_streaming.py --data <dir> --out <nets> --epochs 65 --epoch-positions 100000000 \
-        --lr-schedule cosine --wdl 0.3 [--factoriser]
+        --lr-schedule cosine --wdl 0.3 [--factoriser] [--psqt]
 build/engine/app/tiki nnue-eval <nets>/tiki-65.nnue "<fen>"
 ```
 
@@ -43,3 +44,6 @@ build/engine/app/tiki nnue-eval <nets>/tiki-65.nnue "<fen>"
   about a third of them were wrong.
 - **Factoriser:** trains weights shared by all king buckets as well, added into each bucket on export (the network
   file is unchanged).
+- **PSQT (`--psqt`, not yet SPRT'd):** a value per feature and output bucket, starting from material, added to the
+  output (half the side to move's sum minus the other side's). Kept incrementally beside the accumulator. Network
+  format version 3; version 2 networks load with no PSQT and evaluate as before.

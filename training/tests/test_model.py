@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from tiki_nnue.data import collate, parse_line
 from tiki_nnue.export import dequantise, export, quantise, quantised_eval, read_network, write_network
 from tiki_nnue.features import OUTPUT_BUCKETS, output_bucket
-from tiki_nnue.model import FT_CLIP, HIDDEN, SCALE, TikiNNUE, loss_fn
+from tiki_nnue.model import FT_CLIP, HIDDEN, QA, QB, SCALE, TikiNNUE, loss_fn
 
 FENS = [
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -135,6 +135,56 @@ class ModelTests(unittest.TestCase):
             optimiser.step()
             self.model.clip_weights()
         self.assertLess(loss().item(), start * 0.2)
+
+    def test_loss_power(self):
+        """--loss-power: 2 (the default) is the MSE, other powers are mean |error| ** power, with a finite
+        gradient where the error is 0; the trainers reject a power below 1."""
+        output = torch.tensor([0.5, -1.0, 0.0, 2.0], requires_grad=True)
+        score = torch.tensor([100.0, -300.0, 0.0, 500.0])
+        result = torch.tensor([1.0, 0.0, 0.5, 1.0])
+        target = 0.7 * torch.sigmoid(score / SCALE) + 0.3 * result
+        error = torch.sigmoid(output) - target
+        self.assertTrue(torch.equal(loss_fn(output, score, result, 0.3), (error ** 2).mean()))
+        self.assertTrue(torch.equal(loss_fn(output, score, result, 0.3, 2.0), (error ** 2).mean()))
+        for power in (2.25, 2.5, 3.0):
+            self.assertTrue(torch.allclose(loss_fn(output, score, result, 0.3, power),
+                                           (error.abs() ** power).mean()))
+        # Errors below 1, so a higher power gives a smaller loss.
+        self.assertLess(loss_fn(output, score, result, 0.3, 2.5).item(), loss_fn(output, score, result, 0.3).item())
+
+        exact = torch.zeros(1, requires_grad=True)
+        loss_fn(exact, torch.zeros(1), torch.full((1,), 0.5), 0.3, 2.5).backward()
+        self.assertEqual(0.0, exact.grad.item())
+
+        import argparse
+        from train import add_loss_arguments, check_loss_arguments
+        parser = argparse.ArgumentParser()
+        add_loss_arguments(parser)
+        self.assertEqual(2.0, parser.parse_args([]).loss_power)
+        self.assertEqual(2.5, parser.parse_args(["--loss-power", "2.5"]).loss_power)
+        with self.assertRaises(SystemExit):
+            check_loss_arguments(parser, parser.parse_args(["--loss-power", "0.5"]))
+
+    def test_run_epoch_reports_the_mse(self):
+        """run_epoch returns (loss, MSE): the same at power 2, the MSE alongside the power's loss otherwise,
+        so validation losses of runs with different powers can be compared."""
+        from train import epoch_result, run_epoch
+        lines = [f"{fen} | {score} | {result}" for fen, score, result in
+                 zip(FENS, (30, -250, 400, 80, -600), (0.5, 0.0, 1.0, 0.5, 0.0))]
+        batches = [collate([parse_line(line) for line in lines])]
+        loss, mse = run_epoch(self.model, batches, "cpu", 0.3)
+        self.assertEqual(loss, mse)
+        with torch.no_grad():
+            output = self.model(*batches[0][:5])
+        expected = loss_fn(output, batches[0][5], batches[0][6], 0.3, 2.5).item()
+        expected_mse = loss_fn(output, batches[0][5], batches[0][6], 0.3).item()
+        loss, mse = run_epoch(self.model, batches, "cpu", 0.3, power=2.5)
+        self.assertAlmostEqual(expected, loss, places=6)
+        self.assertAlmostEqual(expected_mse, mse, places=6)
+        self.assertEqual("epoch 3: train 0.020000, validation 0.021000, lr 0.001, 5s -> n/tiki-3.nnue",
+                         epoch_result(3, 0.02, (0.021, 0.021), 2.0, 0.001, 5, "n/tiki-3"))
+        self.assertEqual("epoch 3: train 0.010000, validation 0.011000 (MSE 0.021000), lr 0.001, 5s -> n/tiki-3.nnue",
+                         epoch_result(3, 0.01, (0.011, 0.021), 2.5, 0.001, 5, "n/tiki-3"))
 
     def test_other_width_round_trip(self):
         """A net of another width than the default (--hidden 256) writes its width to the file and reads back as the same net,
@@ -266,6 +316,128 @@ class FactoriserTests(unittest.TestCase):
             load_model(TikiNNUE(), factorised, parser.parse_args([]), parser)
         with self.assertRaisesRegex(ValueError, "without --factoriser"):
             load_model(TikiNNUE(factoriser=True), plain, parser.parse_args(["--factoriser"]), parser)
+
+
+class PsqtTests(unittest.TestCase):
+
+    def random_psqt(self, model):
+        """Larger, varied weights everywhere (PSQT included), so every term counts."""
+        with torch.no_grad():
+            model.ft.weight.normal_(0.0, 0.1)
+            model.ft_bias.uniform_(-0.2, 0.8)
+            model.out.weight.normal_(0.0, 0.3)
+            model.psqt.weight.normal_(0.0, 0.5)
+            if model.psqt_factor is not None:
+                model.psqt_factor.weight.normal_(0.0, 0.5)
+        model.clip_weights()
+        return model
+
+    def test_starts_from_material(self):
+        """With the rest of the net silent, a new PSQT net evaluates material, from the side to move."""
+        for factoriser in (False, True):
+            model = TikiNNUE(factoriser=factoriser, psqt=True)
+            with torch.no_grad():
+                model.out.weight.zero_()
+            fens = ["4k3/8/8/8/8/8/8/3QK3 w - - 0 1", "4k3/8/8/8/8/8/8/3QK3 b - - 0 1",
+                    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+                    "4k3/pp6/8/8/8/8/8/R3K3 w - - 0 1"]
+            for expected, actual in zip((900, -900, 0, 300), evaluate(model, fens)):
+                self.assertAlmostEqual(expected, actual, places=3)
+
+    def test_colour_symmetric(self):
+        torch.manual_seed(5)
+        model = self.random_psqt(TikiNNUE(psqt=True))
+        for a, b in zip(evaluate(model, FENS), evaluate(model, FLIPPED)):
+            self.assertAlmostEqual(a, b, places=3)
+
+    def test_psqt_uses_own_bucket(self):
+        """Changing one output bucket's PSQT values changes only the positions in that bucket."""
+        torch.manual_seed(6)
+        model = self.random_psqt(TikiNNUE(psqt=True))
+        before = evaluate(model, FENS)
+        with torch.no_grad():
+            model.psqt.weight[:, 2] += torch.randn(22528) * 0.5     # FENS[2] alone is in bucket 2.
+        after = evaluate(model, FENS)
+        for i, (a, b) in enumerate(zip(before, after)):
+            if i == 2:
+                self.assertNotAlmostEqual(a, b, places=1)
+            else:
+                self.assertAlmostEqual(a, b, places=4)
+
+    def test_quantised_matches_dequantised_float(self):
+        torch.manual_seed(7)
+        network = quantise(self.random_psqt(TikiNNUE(psqt=True)))
+        self.assertEqual((22528, OUTPUT_BUCKETS), network["psqt_weights"].shape)
+        for fen, expected in zip(FENS, evaluate(dequantise(network), FENS)):
+            self.assertLess(abs(quantised_eval(network, fen) - expected), 2, fen)
+
+    def test_file_round_trip(self):
+        """Written as version 3 with the PSQT weights, read back the same; without PSQT, version 2."""
+        torch.manual_seed(8)
+        network = quantise(self.random_psqt(TikiNNUE(psqt=True)))
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "net.nnue")
+            write_network(network, path)
+            with open(path, "rb") as file:
+                self.assertEqual(3, struct.unpack("<I", file.read(12)[8:])[0])
+            self.assertEqual(20 + 2 * (22528 * HIDDEN + HIDDEN + 8 * 2 * HIDDEN) + 8 * 4 + 22528 * 8 * 4,
+                             os.path.getsize(path))
+            loaded = read_network(path)
+            for key in ("ft_weights", "ft_bias", "psqt_weights", "out_weights", "out_bias"):
+                np.testing.assert_array_equal(network[key], loaded[key])
+
+            write_network(quantise(TikiNNUE()), path)
+            with open(path, "rb") as file:
+                self.assertEqual(2, struct.unpack("<I", file.read(12)[8:])[0])
+            self.assertNotIn("psqt_weights", read_network(path))
+
+    def test_factoriser_folds_the_psqt(self):
+        """With the factoriser, each feature's PSQT is its own plus the shared row, and the export is
+        the folded net."""
+        torch.manual_seed(9)
+        model = self.random_psqt(TikiNNUE(factoriser=True, psqt=True))
+        weights = model.psqt_weights()
+        for feature in (0, 703, 704, 5 * 704 + 321, 22527):
+            torch.testing.assert_close(weights[feature], model.psqt.weight[feature] + model.psqt_factor.weight[feature % 704])
+        network = quantise(model)
+        expected = np.rint(weights.detach().double().numpy() * QA * QB)
+        np.testing.assert_array_equal(expected, network["psqt_weights"])
+        for fen, b in zip(FENS, evaluate(dequantise(network), FENS)):
+            self.assertLess(abs(quantised_eval(network, fen) - b), 2, fen)
+
+    def test_training_trains_the_psqt(self):
+        torch.manual_seed(10)
+        model = TikiNNUE(factoriser=True, psqt=True)
+        lines = [f"{fen} | {score} | {result}" for fen, score, result in
+                 zip(FENS, (30, -250, 400, 80, -600), (0.5, 0.0, 1.0, 0.5, 0.0))]
+        batch = collate([parse_line(line) for line in lines])
+        # The training rate: at 1e-2 a new factorised net (shared rows at 0) can saturate on these 5
+        # positions and stop learning, with or without PSQT.
+        optimiser = torch.optim.Adam(model.parameters(), lr=1e-3)
+        shared = model.psqt_factor.weight.detach().clone()
+        start = loss_fn(model(*batch[:5]), batch[5], batch[6], wdl=0.3).item()
+        for _ in range(200):
+            optimiser.zero_grad()
+            value = loss_fn(model(*batch[:5]), batch[5], batch[6], wdl=0.3)
+            value.backward()
+            optimiser.step()
+            model.clip_weights()
+        self.assertLess(loss_fn(model(*batch[:5]), batch[5], batch[6], wdl=0.3).item(), start * 0.2)
+        self.assertGreater((model.psqt_factor.weight - shared).abs().max().item(), 0.01)
+
+    def test_resume_needs_the_same_setting(self):
+        from train import add_model_arguments, load_model
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        add_model_arguments(parser)
+        parser.error = lambda message: (_ for _ in ()).throw(ValueError(message))
+        with_psqt = TikiNNUE(psqt=True).state_dict()
+        load_model(TikiNNUE(psqt=True), with_psqt, parser.parse_args(["--psqt"]), parser)
+        with self.assertRaisesRegex(ValueError, "with --psqt"):
+            load_model(TikiNNUE(), with_psqt, parser.parse_args([]), parser)
+        with self.assertRaisesRegex(ValueError, "without --psqt"):
+            load_model(TikiNNUE(psqt=True), TikiNNUE().state_dict(), parser.parse_args(["--psqt"]), parser)
 
 
 if __name__ == "__main__":

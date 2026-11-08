@@ -26,8 +26,9 @@ from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, T
 from tiki_nnue.export import export
 from tiki_nnue.model import TikiNNUE
 from tiki_nnue.stream import Epoch, StreamData, TrainingStream, ValidationBatches, data_files
-from train import (Log, add_model_arguments, add_schedule_arguments, binary_files, console, load_model,
-                   load_scheduler, make_scheduler, run_epoch)
+from train import (Log, add_loss_arguments, add_model_arguments, add_schedule_arguments, binary_files,
+                   check_loss_arguments, console, epoch_result, load_model, load_scheduler, make_scheduler,
+                   run_epoch)
 
 
 def main():
@@ -41,7 +42,7 @@ def main():
     add_model_arguments(parser)
     parser.add_argument("--buffer", type=int, default=8_000_000, help="positions shuffled together (memory: ~68 bytes each, x2)")
     add_schedule_arguments(parser)
-    parser.add_argument("--wdl", type=float, default=0.3, help="weight of the game result vs the search score")
+    add_loss_arguments(parser)
     parser.add_argument("--validation", type=float, default=0.02,
                         help="fraction held out for validation, in blocks of consecutive positions (whole games)")
     parser.add_argument("--validation-max", type=int, default=2_000_000,
@@ -51,6 +52,7 @@ def main():
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--seed", type=int, default=1)
     args = parser.parse_args()
+    check_loss_arguments(parser, args)
     if args.epoch_positions < 0 or args.buffer < 1 or args.validation_max < 0:
         parser.error("--epoch-positions and --validation-max must be >= 0, --buffer >= 1")
 
@@ -75,7 +77,7 @@ def main():
     console.print(summary)
     log(summary)
 
-    model = TikiNNUE(hidden=args.hidden, factoriser=args.factoriser).to(args.device)
+    model = TikiNNUE(hidden=args.hidden, factoriser=args.factoriser, psqt=args.psqt).to(args.device)
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = make_scheduler(optimiser, args)
     first_epoch = 1
@@ -122,9 +124,9 @@ def main():
             log(f"epoch {epoch}: started, lr {lr:g}")
 
             train_loss = run_epoch(model, Epoch(batches, per_epoch), args.device, args.wdl, optimiser,
-                                   progress, training, log, f"epoch {epoch} train")
-            validation_loss = run_epoch(model, validation_batches, args.device, args.wdl,
-                                        progress=progress, task=validating)
+                                   progress, training, log, f"epoch {epoch} train", power=args.loss_power)[0]
+            validation = run_epoch(model, validation_batches, args.device, args.wdl,
+                                   progress=progress, task=validating, power=args.loss_power)
             scheduler.step()
 
             name = os.path.join(args.out, f"tiki-{epoch}")
@@ -133,11 +135,10 @@ def main():
             export(model.cpu(), name + ".nnue")
             model.to(args.device)
 
-            result = (f"epoch {epoch}: train {train_loss:.6f}, validation {validation_loss:.6f}, "
-                      f"lr {lr:g}, {time.time() - start:.0f}s -> {name}.nnue")
+            result = epoch_result(epoch, train_loss, validation, args.loss_power, lr, time.time() - start, name)
             progress.console.print(result)
             log(result)
-            progress.update(overall, advance=1, loss=f"{validation_loss:.6f}")
+            progress.update(overall, advance=1, loss=f"{validation[0]:.6f}")
 
     log("finished")
 
