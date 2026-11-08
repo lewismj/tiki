@@ -89,17 +89,12 @@ def add_model_arguments(parser):
     parser.add_argument("--factoriser", action="store_true",
                         help="train shared rows for each piece and square across the king buckets as well "
                              "(added into the buckets' rows on export; the engine is unchanged)")
-    parser.add_argument("--psqt", action="store_true",
-                        help="add a PSQT term: a value per feature and output bucket, starting from material "
-                             "(network format version 3, needs an engine that reads it)")
 
 
 def load_model(model, state, args, parser):
-    """Restores a checkpoint's weights, which must have the same --factoriser and --psqt settings."""
+    """Restores a checkpoint's weights, which must have the same --factoriser setting."""
     if ("factor.weight" in state) != args.factoriser:
         parser.error(f"the checkpoint was trained {'with' if 'factor.weight' in state else 'without'} --factoriser")
-    if ("psqt.weight" in state) != args.psqt:
-        parser.error(f"the checkpoint was trained {'with' if 'psqt.weight' in state else 'without'} --psqt")
     model.load_state_dict(state)
 
 
@@ -246,7 +241,7 @@ def main():
     console.print(summary)
     log(summary)
 
-    model = TikiNNUE(hidden=args.hidden, factoriser=args.factoriser, psqt=args.psqt).to(args.device)
+    model = TikiNNUE(hidden=args.hidden, factoriser=args.factoriser).to(args.device)
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = make_scheduler(optimiser, args)
     first_epoch = 1

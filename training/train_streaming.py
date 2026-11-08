@@ -77,7 +77,7 @@ def main():
     console.print(summary)
     log(summary)
 
-    model = TikiNNUE(hidden=args.hidden, factoriser=args.factoriser, psqt=args.psqt).to(args.device)
+    model = TikiNNUE(hidden=args.hidden, factoriser=args.factoriser).to(args.device)
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
     scheduler = make_scheduler(optimiser, args)
     first_epoch = 1

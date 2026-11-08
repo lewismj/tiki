@@ -10,8 +10,7 @@
 
 /**
  * Tiki's NNUE: HalfKAv2_hm features -> 512 x 2 accumulator -> SCReLU -> 1 output, from one of 8
- * output layers chosen by the number of pieces on the board (output buckets), plus a PSQT term: a
- * value per feature and output bucket, summed like the accumulator and added to the output.
+ * output layers chosen by the number of pieces on the board (output buckets).
  * The trainer (training/tiki_nnue) implements the same features and quantisation, any change
  * here must be made there too (training/tests check the two agree).
  *
@@ -37,19 +36,12 @@
  *   Float model: y = SCReLU_f(acc_f) . w + b with acc_f = acc / QA, w = out_w / QB,
  *   b = out_bias / (QA * QB), and eval in centipawns = y * SCALE.
  *
- * PSQT: psqt[perspective][b] = sum of psqt_weights[feature][b] over that perspective's active
- * features (int32, no bias, scale QA * QB like out_bias), kept incrementally beside the accumulator.
- * It's added before the scaling: (... / QA + out_bias[b] + (psqt[stm][b] - psqt[nstm][b]) / 2)
- * * SCALE / (QA * QB). Half the difference, so a piece counts once although both perspectives see it.
- *
- * File format (little endian), version 3:
+ * File format (little endian), version 2:
  *   char magic[8] = "TIKINNUE", uint32 version, uint32 inputs, uint32 hidden,
  *   int16 ft_weights[inputs][hidden] (row per feature), int16 ft_bias[hidden],
- *   int32 psqt_weights[inputs][8] (row per feature, a value per output bucket),
  *   int16 out_weights[8][2 * hidden] (per bucket, side to move half first), int32 out_bias[8].
- * Version 2 (before PSQT) is the same without psqt_weights, and loads with them all 0, so it
- * evaluates exactly as before. Version 1 (before output buckets) also has one out_weights[2 * hidden]
- * and out_bias, loaded as that output layer in every bucket. Networks are saved as version 3.
+ * Version 1 (before output buckets) has one out_weights[2 * hidden] and out_bias. It still loads, as
+ * that output layer in every bucket, so it evaluates exactly as before. Networks are saved as version 2.
  */
 
 #define NNUE_KING_BUCKETS 32
@@ -65,8 +57,7 @@
 #define NNUE_SCALE 400
 
 #define NNUE_MAGIC "TIKINNUE"
-#define NNUE_VERSION 3
-#define NNUE_VERSION_NO_PSQT 2                                  /* Before PSQT, still loaded. */
+#define NNUE_VERSION 2
 #define NNUE_VERSION_SINGLE_OUTPUT 1                            /* Before output buckets, still loaded. */
 
 /* The weights and accumulators are 64 byte aligned (align, rows of 512 bytes), so no SIMD load
@@ -74,7 +65,6 @@
 typedef struct {
     int16_t* ft_weights;                    /* [NNUE_INPUTS][NNUE_HIDDEN] */
     int16_t ft_bias[NNUE_HIDDEN] align;
-    int32_t* psqt_weights;                  /* [NNUE_INPUTS][NNUE_OUTPUT_BUCKETS] */
     int16_t out_weights[NNUE_OUTPUT_BUCKETS][2 * NNUE_HIDDEN] align; /* Side to move, then the other side. */
     int32_t out_bias[NNUE_OUTPUT_BUCKETS];
     bool small_output;                      /* Every out_weight within +-NNUE_OUT_WEIGHT_SMALL (see below). */
@@ -91,7 +81,6 @@ typedef struct {
 
 typedef struct {
     int16_t values[2][NNUE_HIDDEN] align;   /* Indexed by perspective (white, black). */
-    int32_t psqt[2][NNUE_OUTPUT_BUCKETS];   /* The same, PSQT sums per output bucket. */
 } nnue_accumulator_t;
 
 /**
@@ -128,7 +117,6 @@ typedef struct {
  */
 typedef struct {
     int16_t values[NNUE_HIDDEN] align;
-    int32_t psqt[NNUE_OUTPUT_BUCKETS];
     bitboard pieces[12];
 } nnue_cache_entry_t;
 
@@ -148,7 +136,7 @@ int nnue_feature_index(colour perspective, square king, piece pc, square sq);
 /* Writes the active feature indices for 'perspective' to 'features', returns how many. */
 int nnue_active_features(const board_t* board, colour perspective, int* features);
 
-/* Allocates (zeroed) weights, PSQT included, so a network can be built in code (tests). */
+/* Allocates (zeroed) weights, so a network can be built in code (tests). */
 bool nnue_allocate(void);
 void nnue_free(void);
 

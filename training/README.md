@@ -23,13 +23,6 @@ HalfKAv2_hm (22528) -> 512 per side -> SCReLU -> concat (1024) -> 1, one of 8 ou
   in speed. Version 1 networks (one output layer, from before output buckets) still load, in the
   engine and the trainer, as that layer in every bucket, so they evaluate exactly as they did, but
   their checkpoints (`.pt`) can't be resumed.
-- **PSQT (`--psqt`).** Each feature also has a value per output bucket, summed per perspective like the
-  accumulator (incrementally in the engine, refresh cache included), and half the difference between the
-  side to move's sum and the other side's is added to the output. It starts as material (P 100, N 300,
-  B 320, R 500, Q 900, the same on every square), so the net starts from material and learns the
-  rest. With `--factoriser` it has shared rows too. Saved as format version 3 (int32 PSQT weights
-  after the feature transformer, 0.7 MB). A network without PSQT is still saved as version 2, exactly
-  as before, and the engine loads version 2 with PSQT weights of 0, which evaluates identically.
 - **Factoriser (`--factoriser`, training only).** Each feature's row is trained as the sum of its own
   row and a row shared by that piece on that square in all 32 king buckets (704 shared rows). The
   shared rows learn from every position, so rarely seen king buckets start from what the common ones
@@ -277,7 +270,6 @@ Set `TIKI_APP` to the `tiki` binary to include the engine cross-check in the tes
 | `--loss-power` | 2 | exponent of the error between win probabilities: 2 is the MSE, above 2 weights large errors more (Stockfish uses 2.5). With a power other than 2 the log also gives the validation MSE, since losses at different powers don't compare; resuming with another power is allowed |
 | `--hidden` | 512 | accumulator width per side (the engine's `NNUE_HIDDEN`) |
 | `--factoriser` | off | train shared rows across the king buckets as well (see Network); a checkpoint resumes only with the setting it was trained with |
-| `--psqt` | off | add the PSQT term (see Network), format version 3; a checkpoint resumes only with the setting it was trained with |
 | `--validation` | 0.02 | fraction held out for the validation loss, as whole games |
 | `--batch-size` | 16384 | |
 | `--workers` | 4 | processes converting `.txt` data to `.bin` |
@@ -461,7 +453,7 @@ TIKI_APP=../build/engine/app/tiki python3 -m unittest discover -s tests
 | Test | Checks |
 |---|---|
 | `test_features.py` | known indices (the same values the C tests use), range, uniqueness, and colour-flip and mirror symmetry |
-| `test_model.py` | colour symmetry of the float model; converting white-relative scores to the side to move; the file round trip; the integer eval matching the float model on the quantised weights; a small training run reducing the loss; `--loss-power` (2 is the MSE, other powers, a finite gradient at 0, rejecting powers below 1) and the validation MSE logged beside it; the factoriser: starting as the plain net, each feature adding its shared row, evaluating and exporting exactly as the folded plain net, clipping the sums, training the shared rows, and resuming only with the same setting; PSQT: starting from material, colour symmetry, each bucket using its own values, the integer eval matching the float model, the version 3 round trip (version 2 without PSQT), folding the factorised PSQT, training it, and resuming only with the same setting |
+| `test_model.py` | colour symmetry of the float model; converting white-relative scores to the side to move; the file round trip; the integer eval matching the float model on the quantised weights; a small training run reducing the loss; `--loss-power` (2 is the MSE, other powers, a finite gradient at 0, rejecting powers below 1) and the validation MSE logged beside it; the factoriser: starting as the plain net, each feature adding its shared row, evaluating and exporting exactly as the folded plain net, clipping the sums, training the shared rows, and resuming only with the same setting |
 | `test_cross_check.py` | exports a network and checks that `tiki nnue-eval` gives exactly `quantised_eval()`; skipped unless `TIKI_APP` is set |
 | `test_data.py` | the batch features computed from binary records match `parse_line` and `collate`, including on positions from random games; converting text to binary (blank lines, CRLF, a missing final newline, any number of workers) and loading the result; rejecting files that aren't binary data or are truncated |
 | `test_lichess.py` | converts a small `.pgn.zst` built in the test: only analysed games are parsed; the quiet-position, mate-score, opening, Elo, score and sample filters; the output reads back in the trainer, and the binary output is the text output encoded. Skipped without `python-chess` or `zstandard` |
