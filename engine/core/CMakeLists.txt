@@ -41,16 +41,7 @@ set_source_files_properties(src/syzygy_fathom.c PROPERTIES COMPILE_OPTIONS "-w"
         OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/fathom/tbprobe.c;${CMAKE_CURRENT_SOURCE_DIR}/../third_party/fathom/tbchess.c")
 set_target_properties(${PROJECT_NAME} PROPERTIES PUBLIC ${PROJECT_SOURCE_DIR}/include)
 
-# PUBLIC, the attack lookups are inlined from headers into every target that links the core.
-if(TIKI_USE_PEXT)
-    target_compile_definitions(${PROJECT_NAME} PUBLIC USE_PEXT)
-    target_compile_options(${PROJECT_NAME} PUBLIC "-mbmi2")
-endif()
-
-# Only the network code, so AVX2 instructions can't appear anywhere else.
-if(TIKI_USE_AVX2)
-    set_source_files_properties(src/nnue/nnue.c PROPERTIES COMPILE_OPTIONS "-mavx2")
-endif()
+# The CPU flags and USE_PEXT come from TIKI_ARCH (engine/CMakeLists.txt), for every target.
 
 tiki_target_warnings(${PROJECT_NAME})
 

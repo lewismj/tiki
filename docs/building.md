@@ -19,13 +19,34 @@ test runs `tiki`, so it's skipped unless `TIKI_EVALFILE` is set or a network is 
 | CMake option | |
 |---|---|
 | `-DTIKI_EMBED_NETWORK=ON` | builds a network into `tiki`, so it runs with no `.nnue` file: the newest in `models/` by the date in its name, or `-DTIKI_EMBED_NETWORK_FILE=<path>`. The binary grows by the network's size and evaluates exactly as with the file. |
-| `-DTIKI_USE_PEXT=OFF` | magic bitboards instead of PEXT (on by default with BMI2; turn it off on AMD Zen 1/2, where PEXT is slow) |
-| `-DTIKI_USE_AVX2=OFF` | plain C for the network instead of AVX2 (same evaluations) |
+| `-DTIKI_ARCH=<level>` | the CPU level, Stockfish's names and flags: `native` (default, the best the building machine runs), `general-64` (plain C), `x86-64`, `x86-64-sse41-popcnt`, `x86-64-avx2`, `x86-64-bmi2`, `x86-64-avxvnni`, `x86-64-avx512`, `x86-64-vnni512`, `x86-64-avx512icl`. See below. |
 | `-DTIKI_TUNE=ON` | the tunable search parameters become UCI options, for SPSA ([testing.md](testing.md#spsa-tuning)) |
 | `-DTIKI_SEARCH_STATS=ON` | counts move ordering statistics, printed by `bench` |
 | `-DTIKI_SANITIZE=address,undefined` | sanitizers (or `thread`) |
 | `-DTIKI_BUILD_TESTS=OFF` | no unit tests (and no Unity download) |
 | `-DTIKI_BUILD_BENCHMARKS=OFF` | no Google Benchmark |
+
+### CPU levels
+
+`TIKI_ARCH` follows Stockfish's `ARCH` (its Makefile), names and compiler flags, each level including the ones
+before it. The flags apply to the whole build, so a binary runs only on CPUs of its level or above.
+
+| Level | Adds | Network code |
+|---|---|---|
+| `general-64` | nothing CPU specific | plain C |
+| `x86-64` | SSE2 | SSE2 (plain C hidden layer) |
+| `x86-64-sse41-popcnt` | SSSE3, SSE4.1, POPCNT | SSSE3 |
+| `x86-64-avx2` | AVX2, BMI1 (magic bitboards: PEXT is slow on AMD Zen 1/2) | AVX2 |
+| `x86-64-bmi2` | BMI2, PEXT slider attacks | AVX2 |
+| `x86-64-avxvnni` | AVX-VNNI (Intel Alder Lake and later) | AVX2 with VNNI dot products |
+| `x86-64-avx512` | `x86-64-bmi2` + AVX-512 F/BW/DQ/VL | AVX-512 |
+| `x86-64-vnni512` | AVX-512 VNNI (Intel Ice Lake, Tiger Lake and later, AMD Zen 4 and later) | AVX-512 with VNNI |
+| `x86-64-avx512icl` | the rest of Ice Lake's AVX-512 extensions | AVX-512 with VNNI |
+
+`native` tries the levels from the top on the building machine (a test program per level) and takes the first
+that runs; on an AMD CPU before Zen 3 it stops at `x86-64-avx2`, as PEXT is slow there. Every level gives exactly
+the same evaluations and bench (integer arithmetic, and `-ffp-contract=off` so AVX-512's FMA can't change a
+floating point result). A level the building machine can't run is built but its tests aren't run.
 
 Use Release (or RelWithDebInfo). Debug (`-O0`) doesn't build yet, because some `always_inline` functions are called
 through function pointers in the move generator.
@@ -63,15 +84,16 @@ downloaded. See [testing.md](testing.md#openbench) for the server setup.
 ## Releases
 
 Pushing a tag `v<version>` matching `ENGINE_VERSION` in `engine/core/src/version.h` (e.g. `v0.0.1`) runs
-`.github/workflows/release.yml`, which publishes a GitHub release with a package per CPU variant (`x86-64-bmi2`,
-`x86-64-avx2`, `x86-64`) and platform. It's only published if all six packages give the same bench signature.
+`.github/workflows/release.yml`, which publishes a GitHub release with a package per CPU level (Stockfish's eight
+x86-64 levels, above) and platform. It's only published if every package the runners can run gives the same bench
+signature.
 Running the workflow by hand builds the packages as an artifact without releasing.
 
-- **Linux** packages unpack to `tiki-v<version>/`: `bin/tiki` (statically linked), the networks from `models/`, and
-  `scripts/run.sh`, which starts tiki with the last network by name (`TIKI_EVALFILE` overrides it).
+- **Linux** packages unpack to `tiki-v<version>/`: `bin/tiki` (statically linked), the newest network from `models/` of
+  the format it reads, and `scripts/run.sh`, which starts tiki with it (`TIKI_EVALFILE` overrides it).
 - **Windows** packages (`.zip`) hold `bin/tiki.exe` and `scripts/run.bat`, which does the same.
 - **A built-in network:** every build, by hand or from a tag, has the newest network in `models/` built in, so
   `bin/tiki` and `bin/tiki.exe` run from a GUI without the run scripts (`TIKI_EVALFILE` or `EvalFile` override it).
 
-`scripts/package.sh <variant> [cmake options]` builds, tests and packages one variant locally into `dist/`, and
+`scripts/package.sh <level> [cmake options]` builds, tests and packages one level locally into `dist/`, and
 `scripts/package_windows.sh` does the same on Windows (from Git Bash).

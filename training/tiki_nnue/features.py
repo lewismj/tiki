@@ -9,7 +9,9 @@ PIECE_KINDS = 11
 PIECE_SQUARES = PIECE_KINDS * 64            # 704
 INPUTS = KING_BUCKETS * PIECE_SQUARES       # 22528
 MAX_ACTIVE = 32
-OUTPUT_BUCKETS = 8                          # Output layers, chosen by the number of pieces (output_bucket).
+PIECE_BUCKETS = 8                           # By the number of pieces (piece_bucket).
+OUTPUT_BUCKETS = PIECE_BUCKETS * 4          # x which sides have a queen (output_bucket): 32 layer stacks.
+OWN_QUEEN_KIND, THEIR_QUEEN_KIND = 8, 9     # Feature kinds (feature_index) of the perspective's queens and the other side's.
 
 WHITE, BLACK = 0, 1
 PIECES = "PNBRQKpnbrqk"
@@ -52,10 +54,31 @@ def feature_index(perspective, king, piece, sq):
     return bucket * PIECE_SQUARES + kind * 64 + oriented_sq
 
 
-def output_bucket(piece_count):
-    """The output layer for a position with 'piece_count' pieces (kings included): (n - 2) / 4,
-    so 2-5 pieces is bucket 0 ... 30-32 bucket 7. Works on ints and integer tensors alike."""
+def piece_bucket(piece_count):
+    """The piece count part of the output bucket (kings included): (n - 2) / 4, so 2-5 pieces is 0 ...
+    30-32 is 7. Works on ints and integer tensors alike."""
     return (piece_count - 2) // 4
+
+
+def output_bucket(piece_count, stm_queen, nstm_queen):
+    """The layer stack a position uses (as Stockfish's SFNNv18): piece_bucket * 4, plus 2 if the side to
+    move has a queen and 1 if the other side has. 0..31. Works on ints / bools and tensors alike."""
+    return piece_bucket(piece_count) * 4 + stm_queen * 2 + nstm_queen * 1
+
+
+def bucket_of_features(stm_features):
+    """output_bucket from the side to move's active features (one per piece, so their count is the
+    piece count, and the queens are kinds OWN_QUEEN_KIND / THEIR_QUEEN_KIND)."""
+    kinds = [feature % PIECE_SQUARES // 64 for feature in stm_features]
+    return output_bucket(len(stm_features), int(OWN_QUEEN_KIND in kinds), int(THEIR_QUEEN_KIND in kinds))
+
+
+def position_bucket(pieces, side):
+    """output_bucket of parse_fen's (pieces, side)."""
+    queens = {piece for piece, _ in pieces if piece % 6 == 4}       # 4 = Q, 10 = q.
+    stm_queen = (4 if side == WHITE else 10) in queens
+    nstm_queen = (10 if side == WHITE else 4) in queens
+    return output_bucket(len(pieces), int(stm_queen), int(nstm_queen))
 
 
 def active_features(pieces, perspective):

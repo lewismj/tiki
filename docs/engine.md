@@ -108,8 +108,9 @@ increment (`movestogo n` divides by n instead of 20). Two limits:
 
 tiki's own network only, see [nnue.md](nnue.md). The accumulators are updated incrementally along the search path,
 lazily (only when a position is evaluated). When a king moves, its side is refreshed from a cache of accumulators
-per king square ("Finny tables"), applying only the pieces that differ. The accumulator updates and the output
-layer use AVX2 when it's built in, with identical results to the plain C version.
+per king square ("Finny tables"), applying only the pieces that differ. The accumulator updates and the layer stack
+use SIMD for the CPU level built for (SSE2, SSSE3, AVX2, AVX-VNNI, AVX-512, AVX-512 VNNI; see
+[building.md](building.md#cpu-levels)), with identical results to the plain C version.
 
 ## Source layout
 

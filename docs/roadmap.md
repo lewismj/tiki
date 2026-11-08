@@ -8,16 +8,21 @@ together.
 - **Search tuning:** an SPSA run of the 47 search and time management parameters on OpenBench (8+0.08), then
   its values SPRT'd against `main`.
 - **Network:** done: trained on Syzygy-relabelled, rescaled data (38 months, 2023-09 to 2026-10) with the
-  factoriser, +13.1 ± 6.8 Elo over the previous network ([nnue.md](nnue.md#the-current-network)). Next is the
-  same recipe with PSQT.
+  factoriser, +13.1 ± 6.8 Elo over the previous network ([nnue.md](nnue.md#the-current-network)). PSQT was tried
+  on the same recipe and removed (worse validation, no gain in games). Then pairwise inputs and a hidden layer
+  (512 -> 16 -> 1) in 32 layer stacks by piece count × queens (format version 5): +18.3 ± 8.3 Elo over the
+  previous network on the same data, despite about 6% lower search speed ([nnue.md](nnue.md#the-current-network)).
+  From here, one change per test: loss power 2.5, more data, a second hidden layer.
 
 ## Next
 
 - **Network:**
-  - PSQT: implemented (`--psqt`, format version 3, tested incremental and against the trainer), needs a full
-    training run and an SPRT;
-  - output buckets by material (non-pawn material, or queens on/off × piece count) instead of piece count;
+  - reorder the accumulator after training so zero inputs share groups of 4, then skip them (Stockfish's sparse
+    first layer; without reordering over 80% of groups have a non-zero input, and skipping was slower);
+  - AVX-512 VNNI / AVX-VNNI for the hidden layer (one instruction for maddubs + madd + add);
   - a longer training schedule (100 epochs), checked by the validation loss first;
+  - `--loss-power 2.5` (Stockfish's exponent), on its own run;
+  - fine-tuning on Leela's positions (the Stockfish binpacks, scored by Leela), from the Lichess network;
   - more data: self-play written directly in the binary format, more months, endgame-heavy samples.
 - **Search:** a second, shorter SPSA run at a longer time control (about 40+0.4), since the first tunes the margins
   for shallow searches.

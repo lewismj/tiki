@@ -2,15 +2,16 @@
 # Builds tiki (Release) on Linux or in WSL:
 #     scripts/build-linux-wsl.sh [options] [-- cmake options...]
 #     scripts/build-linux-wsl.sh --embed --test
-#     scripts/build-linux-wsl.sh --cc clang-22 --variant avx2 -- -DTIKI_SANITIZE=address,undefined
+#     scripts/build-linux-wsl.sh --cc clang-22 --arch x86-64-avx2 -- -DTIKI_SANITIZE=address,undefined
 # Every run sets the options below, so a build directory doesn't keep them from an earlier run.
 usage() {
     cat <<EOF
 Usage: scripts/build-linux-wsl.sh [options] [-- cmake options...]
   --embed           Build the newest network in models/ into the engine (runs without a .nnue file).
   --net <file>      Build this network into the engine (implies --embed).
-  --variant <v>     native (default, what this machine supports), bmi2 (AVX2 and PEXT), avx2 (AVX2, no
-                    PEXT, for AMD Zen 1/2) or x86-64 (neither), as the release packages.
+  --arch <arch>     CPU level, Stockfish's names: native (default, the best this machine runs), general-64,
+                    x86-64, x86-64-sse41-popcnt, x86-64-avx2, x86-64-bmi2, x86-64-avxvnni, x86-64-avx512,
+                    x86-64-vnni512 or x86-64-avx512icl (see TIKI_ARCH in engine/CMakeLists.txt).
   --cc <compiler>   C compiler, e.g. clang-22 (default \$CC, else clang). C++ follows it (clang-22 -> clang++-22).
   --static          Link statically, as the release packages.
   --benchmarks      Also build the Google Benchmark micro-benchmarks.
@@ -24,7 +25,7 @@ set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 dir=build-linux
-variant=native
+arch=native
 cc=${CC:-clang}
 embed=OFF
 net=
@@ -37,7 +38,7 @@ while [ $# -gt 0 ]; do
     case $1 in
         --embed) embed=ON ;;
         --net) [ $# -ge 2 ] || { usage >&2; exit 2; }; embed=ON; net=$(cd "$(dirname "$2")" && pwd)/$(basename "$2"); shift ;;
-        --variant) [ $# -ge 2 ] || { usage >&2; exit 2; }; variant=$2; shift ;;
+        --arch) [ $# -ge 2 ] || { usage >&2; exit 2; }; arch=$2; shift ;;
         --cc) [ $# -ge 2 ] || { usage >&2; exit 2; }; cc=$2; shift ;;
         --static) static=ON ;;
         --benchmarks) benchmarks=ON ;;
@@ -51,13 +52,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-case $variant in
-    native) cpu="-UTIKI_USE_AVX2 -UTIKI_USE_PEXT" ;;    # Defaults from this machine again.
-    bmi2)   cpu="-DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=ON" ;;
-    avx2)   cpu="-DTIKI_USE_AVX2=ON -DTIKI_USE_PEXT=OFF" ;;
-    x86-64) cpu="-DTIKI_USE_AVX2=OFF -DTIKI_USE_PEXT=OFF" ;;
-    *) echo "Unknown variant: $variant" >&2; usage >&2; exit 2 ;;
-esac
+cpu="-DTIKI_ARCH=$arch"                 # CMake checks the name.
 
 case $cc in
     *clang*) cxx=$(echo "$cc" | sed 's/clang/clang++/') ;;

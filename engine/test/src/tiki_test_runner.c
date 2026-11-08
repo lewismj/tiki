@@ -85,13 +85,13 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_nnue_feature_symmetry);
     RUN_TEST(test_nnue_evaluate_known_value);
     RUN_TEST(test_nnue_output_buckets);
-    RUN_TEST(test_nnue_load_single_output_network);
+    RUN_TEST(test_nnue_rejects_other_versions);
+    RUN_TEST(test_nnue_file_keeps_hidden_weight_order);
     RUN_TEST(test_nnue_evaluate_colour_symmetric);
     RUN_TEST(test_nnue_save_load_round_trip);
     RUN_TEST(test_nnue_incremental_matches_refresh);
     RUN_TEST(test_nnue_output_simd_matches_scalar);
-    RUN_TEST(test_nnue_output_small_matches_scalar);
-    RUN_TEST(test_nnue_load_sets_small_output);
+    RUN_TEST(test_nnue_output_reference_formula);
     RUN_TEST(test_nnue_refresh_matches_plain_sum);
     RUN_TEST(test_nnue_cache_rebuilt_for_new_network);
     RUN_TEST(test_nnue_setoption_evalfile);

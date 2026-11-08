@@ -7,7 +7,8 @@ implement the features and the integer evaluation, and the tests check that they
 ### Network
 
 ```text
-HalfKAv2_hm (22528) -> 512 per side -> SCReLU -> concat (1024) -> 1, one of 8 output layers by piece count
+HalfKAv2_hm (22528) -> 512 per side -> pairwise -> concat (512) -> 16 -> CReLU -> 1
+                                                   \__ one of 32 layer stacks: piece count x queens __/
 ```
 
 - **Features (HalfKAv2_hm).** For each side ("perspective"), every piece is a feature indexed by
@@ -16,23 +17,37 @@ HalfKAv2_hm (22528) -> 512 per side -> SCReLU -> concat (1024) -> 1, one of 8 ou
   are own/their pawn, knight, bishop, rook and queen (10), plus one shared kind for both kings
   (the "A"). So 32 × 11 × 64 = 22528 inputs, and at most 32 are active.
 - **Accumulator.** 512 values per perspective (`--hidden`, the engine's `NNUE_HIDDEN`): the feature transformer's bias plus the sum of
-  the active features' rows. The side to move's half comes first in the output layer.
-- **Output buckets.** 8 output layers (1024 -> 1 each) share the accumulator, and a position uses
-  the one for its number of pieces, kings included: (pieces - 2) / 4, so 2-5 pieces is bucket 0 and
-  30-32 bucket 7. The opening, middlegame and endgame each get their own weighting at almost no cost
-  in speed. Version 1 networks (one output layer, from before output buckets) still load, in the
-  engine and the trainer, as that layer in every bucket, so they evaluate exactly as they did, but
-  their checkpoints (`.pt`) can't be resumed.
+  the active features' rows.
+- **Pairwise.** Each perspective's accumulator becomes 256 hidden layer inputs: the first half times
+  the second, each clamped to 0..1 (Stockfish's pairwise activation), the side to move's first. A
+  smooth, square-like activation like SCReLU, at half the inputs: on 30M positions (3 epochs of
+  2026-10) it trained as well as 1024 SCReLU inputs (validation 0.024267 vs 0.024260; the
+  architecture before the hidden layer: 0.024559), and the hidden layer costs half as much.
+- **Layer stacks (output buckets).** 32 small networks (512 -> 16 -> CReLU -> 1 each) share the
+  accumulator, and a position uses one, as in Stockfish's SFNNv18: piece bucket × 4 + 2 if the side
+  to move has a queen + 1 if the other side has, where the piece bucket is (pieces - 2) / 4 (kings
+  included, so 2-5 pieces is 0 and 30-32 is 7). The hidden layer is trained as each bucket's own
+  layer plus one shared by all of them (folded together on export, like the factoriser), so rarely
+  seen buckets start from what the common ones learnt; the own layers start at zero and the output
+  layers equal, so every bucket starts as the same network. Only one stack is evaluated, so 32 cost
+  no more than 1. The network after the accumulator takes about 116 ns per evaluation against 52 ns
+  before (AVX2), about 6% of search speed. Earlier formats (versions 1-4: an output layer straight
+  from the accumulator, PSQT, a hidden layer on 1024 SCReLU inputs) are a different network and aren't
+  loaded; the 1024-input version cost about 290 ns, 30% of search speed. PSQT was tried (a value per feature and bucket, as Stockfish
+  had until SFNNv17) and lost: validation 0.021374 vs 0.021330, and -6 ± 20 Elo after 340 games.
 - **Factoriser (`--factoriser`, training only).** Each feature's row is trained as the sum of its own
   row and a row shared by that piece on that square in all 32 king buckets (704 shared rows). The
   shared rows learn from every position, so rarely seen king buckets start from what the common ones
   learnt and only learn their difference. On export the shared rows are added into every bucket's
   rows, so the network file and the engine are the same as without it. On 30M positions of 2026-09
   (3 epochs) it lowered the validation loss from 0.02709 to 0.02634, about 6% slower to train.
-- **Quantisation.** Accumulator × 255 (QA) as int16, output weights × 64 (QB) as int16, output
-  bias × QA × QB as int32. Output weights are clipped to 127 / QB, so their int16 values fit in
-  ±127 and the engine's AVX2 output layer can use `_mm256_madd_epi16` (networks with larger ones
-  still load, using a slower int64 sum). Eval in centipawns = network output × 400 (SCALE).
+- **Quantisation.** Accumulator × 255 (QA) as int16. The hidden layer's inputs are the pairwise
+  products (x × y) >> 9 of the clamped (0..255) halves, 0..127 (QI) as uint8; its weights × 64 (QW) as int8 (clipped to
+  127 / 64 in training) and biases × QI × QW (QH = 8128, an activation of 1.0) as int32, so the
+  engine's AVX2 code multiplies uint8 by int8 with `_mm256_maddubs_epi16` (pairs fit int16). CReLU
+  clamps the sums to 0..QH. Output weights × QW as int16, bias × QH × QW as int32, and eval in
+  centipawns = output × 400 (SCALE) / (QH × QW), the division truncating. `quantised_eval()` in
+  `export.py` is the reference; the engine gives exactly the same.
 
 ### Pipeline
 
@@ -453,8 +468,8 @@ TIKI_APP=../build/engine/app/tiki python3 -m unittest discover -s tests
 | Test | Checks |
 |---|---|
 | `test_features.py` | known indices (the same values the C tests use), range, uniqueness, and colour-flip and mirror symmetry |
-| `test_model.py` | colour symmetry of the float model; converting white-relative scores to the side to move; the file round trip; the integer eval matching the float model on the quantised weights; a small training run reducing the loss; `--loss-power` (2 is the MSE, other powers, a finite gradient at 0, rejecting powers below 1) and the validation MSE logged beside it; the factoriser: starting as the plain net, each feature adding its shared row, evaluating and exporting exactly as the folded plain net, clipping the sums, training the shared rows, and resuming only with the same setting |
-| `test_cross_check.py` | exports a network and checks that `tiki nnue-eval` gives exactly `quantised_eval()`; skipped unless `TIKI_APP` is set |
+| `test_model.py` | colour symmetry of the float model; converting white-relative scores to the side to move; the 32 output buckets (piece count, queens, from a FEN and from the trainer's features); each bucket using only its own layer stack; every bucket starting the same; the hidden layer as own plus shared, by hand; clipping the hidden weights' sums to int8; the file round trip (dtypes too) and rejecting older versions; the integer eval exactly the float model's on the quantised weights once the hidden inputs are rounded as the engine rounds them; the uint8 / int16 limits the engine's SIMD relies on; a small training run reducing the loss and training the buckets' own layers; `--loss-power` (2 is the MSE, other powers, a finite gradient at 0, rejecting powers below 1) and the validation MSE logged beside it; the factoriser: starting as the plain net, each feature adding its shared row, evaluating and exporting exactly as the folded plain net, clipping the sums, training the shared rows, and resuming only with the same setting |
+| `test_cross_check.py` | exports random networks (with and without the factoriser) and checks that `tiki nnue-eval` gives exactly `quantised_eval()`, on fixed positions covering each queen combination and on 150 positions from random games (most of the 32 buckets); skipped unless `TIKI_APP` is set. Run it against a SIMD build and a plain C one (`-DTIKI_ARCH=general-64`) |
 | `test_data.py` | the batch features computed from binary records match `parse_line` and `collate`, including on positions from random games; converting text to binary (blank lines, CRLF, a missing final newline, any number of workers) and loading the result; rejecting files that aren't binary data or are truncated |
 | `test_lichess.py` | converts a small `.pgn.zst` built in the test: only analysed games are parsed; the quiet-position, mate-score, opening, Elo, score and sample filters; the output reads back in the trainer, and the binary output is the text output encoded. Skipped without `python-chess` or `zstandard` |
 | `test_lichess_download.py` | retrying failed downloads with longer pauses, giving up after the retries, not retrying an unpublished month; counting a partial download towards the space needed |
@@ -470,4 +485,7 @@ TIKI_APP=../build/engine/app/tiki python3 -m unittest discover -s tests
 - **Data:**
   - multi-threaded datagen, writing the binary format directly;
   - a node limit instead of a depth limit.
-- **Bigger nets:** a larger L1 and output buckets (by material), once there is enough data.
+- **Loss power 2.5** (Stockfish's exponent, `--loss-power 2.5`) against 2, on the same data: compare by SPRT,
+  as the validation loss of a different power isn't comparable.
+- **Bigger nets:** a second hidden layer (512 -> 16 -> 32 -> 1, cheap), then a wider accumulator once there is
+  enough data.

@@ -53,3 +53,8 @@ else()
     add_test(NAME bench COMMAND sh -c "[ -n \"$TIKI_EVALFILE\" ] || exit 77; exec \"$1\" bench 6" sh $<TARGET_FILE:tiki_app>)
 endif()
 set_tests_properties(bench PROPERTIES TIMEOUT 300 PASS_REGULAR_EXPRESSION "Nodes searched" SKIP_RETURN_CODE 77)
+
+# Built for a CPU level this machine doesn't run (TIKI_ARCH): built, but not run (ctest lists them as disabled).
+if (NOT TIKI_ARCH_RUNS_HERE)
+    set_tests_properties(unit perft_full bench PROPERTIES DISABLED TRUE)
+endif()

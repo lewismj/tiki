@@ -8,10 +8,13 @@ parent. Independently trained nets learn their hidden units in different orders,
 
 The format (engine/core/src/nnue/nnue.h, little endian):
     char magic[8] = "TIKINNUE", uint32 version, uint32 inputs, uint32 hidden,
-    int16 ft_weights[inputs * hidden], int16 ft_bias[hidden],
-    int16 out_weights[buckets * 2 * hidden], int32 out_bias[buckets]
-with 8 output buckets in version 2 and 1 in version 1 (before output buckets). The nets averaged must all
-have the same version, which the output keeps.
+    int16 ft_weights[inputs * hidden], int16 ft_bias[hidden], then
+    version 5:    int8 l1_weights[32 * 16 * hidden], int32 l1_bias[32 * 16],
+                  int16 out_weights[32 * 16], int32 out_bias[32]           (32 layer stacks, 16 hidden units)
+    version 4:    the same with l1_weights[32 * 16 * 2 * hidden] (SCReLU inputs, never released)
+    versions 1-2: int16 out_weights[buckets * 2 * hidden], int32 out_bias[buckets]
+                  (8 output buckets in version 2, 1 in version 1)
+The nets averaged must all have the same version, which the output keeps.
 """
 
 import argparse
@@ -20,7 +23,8 @@ import sys
 import numpy as np
 
 MAGIC = b"TIKINNUE"
-BUCKETS = {1: 1, 2: 8}      # Output layers in each version of the format.
+VERSIONS = (1, 2, 4, 5)
+STACKS, L1 = 32, 16         # Versions 4 and 5: layer stacks and hidden layer width.
 HEADER = np.dtype([("magic", "S8"), ("version", "<u4"), ("inputs", "<u4"), ("hidden", "<u4")])
 
 
@@ -30,12 +34,17 @@ def read_net(path):
     if len(data) < HEADER.itemsize:
         sys.exit(f"{path}: too short to be a network")
     header = np.frombuffer(data, HEADER, count=1)[0]
-    if header["magic"] != MAGIC or int(header["version"]) not in BUCKETS:
-        sys.exit(f"{path}: not a tiki network (versions {', '.join(map(str, BUCKETS))})")
+    if header["magic"] != MAGIC or int(header["version"]) not in VERSIONS:
+        sys.exit(f"{path}: not a tiki network (versions {', '.join(map(str, VERSIONS))})")
     version, inputs, hidden = int(header["version"]), int(header["inputs"]), int(header["hidden"])
-    buckets = BUCKETS[version]
 
-    layout = [("<i2", inputs * hidden), ("<i2", hidden), ("<i2", buckets * 2 * hidden), ("<i4", buckets)]
+    layout = [("<i2", inputs * hidden), ("<i2", hidden)]
+    if version in (4, 5):
+        inputs_per_unit = 2 * hidden if version == 4 else hidden
+        layout += [("i1", STACKS * L1 * inputs_per_unit), ("<i4", STACKS * L1), ("<i2", STACKS * L1), ("<i4", STACKS)]
+    else:
+        buckets = 8 if version == 2 else 1
+        layout += [("<i2", buckets * 2 * hidden), ("<i4", buckets)]
     expected = HEADER.itemsize + sum(np.dtype(dtype).itemsize * count for dtype, count in layout)
     if len(data) != expected:
         sys.exit(f"{path}: {len(data)} bytes, expected {expected} for {inputs} inputs and {hidden} hidden")

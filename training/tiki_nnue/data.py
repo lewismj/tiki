@@ -14,7 +14,7 @@ import numpy as np
 import torch
 
 from .binary import PAD
-from .features import BLACK, KING, PIECE_SQUARES, WHITE, active_features, output_bucket, parse_fen
+from .features import BLACK, KING, PIECE_SQUARES, WHITE, active_features, bucket_of_features, output_bucket, parse_fen
 
 
 def parse_line(line):
@@ -40,7 +40,7 @@ def collate(samples):
 
     stm_indices, stm_offsets = bag(s[0] for s in samples)
     nstm_indices, nstm_offsets = bag(s[1] for s in samples)
-    bucket = torch.tensor([output_bucket(len(s[0])) for s in samples], dtype=torch.long)   # A feature per piece.
+    bucket = torch.tensor([bucket_of_features(s[0]) for s in samples], dtype=torch.long)
     score = torch.tensor([s[2] for s in samples], dtype=torch.float32)
     result = torch.tensor([s[3] for s in samples], dtype=torch.float32)
     return stm_indices, stm_offsets, nstm_indices, nstm_offsets, bucket, score, result
@@ -82,7 +82,11 @@ def batch_tensors(records, device="cpu"):
     side = tensor(records["side"]).int()
     stm_indices, stm_offsets = perspective_features(pieces, side)
     nstm_indices, nstm_offsets = perspective_features(pieces, side ^ 1)
-    bucket = output_bucket((pieces != PAD).sum(dim=1)).long()
+    valid = pieces != PAD
+    piece = pieces >> 6
+    stm_queen = (valid & (piece == torch.where(side == WHITE, 4, 10)[:, None])).any(dim=1)    # 4 = Q, 10 = q.
+    nstm_queen = (valid & (piece == torch.where(side == WHITE, 10, 4)[:, None])).any(dim=1)
+    bucket = output_bucket(valid.sum(dim=1), stm_queen.long(), nstm_queen.long()).long()
     score = tensor(records["score"]).float()
     result = tensor(records["result"]).float() / 2
     return stm_indices, stm_offsets, nstm_indices, nstm_offsets, bucket, score, result
