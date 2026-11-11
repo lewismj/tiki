@@ -89,7 +89,7 @@ void test_tt_stores_best_move() {
     /* A fail-low (no move) for the same position keeps the stored move. */
     tt_new_search();
     tt_save(TEST_HASH, tt_alpha, 4, 0, 10, 0, TT_EVAL_NONE);
-    TEST_ASSERT_EQUAL_INT(20, tt_probe(TEST_HASH, 4, 0, 20, 30, &tt_move)); /* Fail-hard, returns alpha. */
+    TEST_ASSERT_EQUAL_INT(10, tt_probe(TEST_HASH, 4, 0, 20, 30, &tt_move)); /* Fail-soft, the stored bound. */
     TEST_ASSERT_EQUAL_UINT32(mv, tt_move);
 
     /* Different position, nothing returned. */
@@ -166,13 +166,13 @@ void test_tt_read_and_cutoff() {
     TEST_ASSERT_EQUAL_INT(TT_NOT_FOUND, tt_cutoff(&info, 0, -INF, INF));
     TEST_ASSERT_EQUAL_INT(TT_NOT_FOUND, tt_cutoff(&info, 0, 0, 1));
 
-    /* tt_cutoff agrees with tt_probe, fail-hard. */
+    /* tt_cutoff agrees with tt_probe, fail-soft (the stored score, not the window's bound). */
     const move_t mv = encode_move(e2, e4, P, 0, 0, 1, 0, 0, 0);
     tt_save(TEST_HASH, tt_beta, 5, 0, 60, mv, 40);
     TEST_ASSERT_TRUE(tt_read(TEST_HASH, 0, &info));
     TEST_ASSERT_EQUAL_UINT32(mv, info.move);
     TEST_ASSERT_EQUAL_INT(40, info.eval);
-    TEST_ASSERT_EQUAL_INT(50, tt_cutoff(&info, 5, 10, 50));
+    TEST_ASSERT_EQUAL_INT(60, tt_cutoff(&info, 5, 10, 50));
     TEST_ASSERT_EQUAL_INT(TT_NOT_FOUND, tt_cutoff(&info, 5, 10, 70));
     TEST_ASSERT_EQUAL_INT(TT_NOT_FOUND, tt_cutoff(&info, 6, 10, 50)); /* Too shallow. */
 

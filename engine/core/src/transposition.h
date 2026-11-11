@@ -182,12 +182,14 @@ static inline_always bool tt_read(const uint64_t position_hash, const int ply, t
     return true;
 }
 
-/* tt_probe's answer from an entry already read: the cutoff score for this window, or TT_NOT_FOUND. */
+/* tt_probe's answer from an entry already read: the cutoff score for this window, or TT_NOT_FOUND.
+ * Fail-soft, as the search: a bound that cuts off returns the stored score itself (at or below alpha
+ * for an upper bound, at or above beta for a lower bound), not alpha or beta. */
 static inline_always int tt_cutoff(const tt_info_t* info, const int depth, const int alpha, const int beta) {
     if (info->depth < depth) return TT_NOT_FOUND;
     if (info->type == tt_exact) return info->score;
-    if (info->type == tt_alpha && info->score <= alpha) return alpha;
-    if (info->type == tt_beta && info->score >= beta) return beta;
+    if (info->type == tt_alpha && info->score <= alpha) return info->score;
+    if (info->type == tt_beta && info->score >= beta) return info->score;
     return TT_NOT_FOUND;
 }
 
@@ -215,8 +217,8 @@ static inline_always int tt_probe(const uint64_t position_hash,
 
         const tt_entry_type entry_type = tt_data_type(data);
         if (entry_type == tt_exact) return score;
-        if (entry_type == tt_alpha && score <= alpha) return alpha;
-        if (entry_type == tt_beta && score >= beta) return beta;
+        if (entry_type == tt_alpha && score <= alpha) return score;     /* Fail-soft, as tt_cutoff. */
+        if (entry_type == tt_beta && score >= beta) return score;
     }
     return TT_NOT_FOUND;
 }

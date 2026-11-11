@@ -798,12 +798,15 @@ static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* 
         raw_eval = tt_hit && tt.eval != TT_EVAL_NONE ? tt.eval : evaluation(board, &search_state->nnue);
         eval = adjusted_eval(raw_eval + eval_correction(board, search_state), tt_hit ? &tt : NULL);
     }
+    /* Fail-soft: the scores returned are the ones found (the stand pat, a capture's), which may lie
+     * outside the window, never clamped to alpha or beta. */
     if (eval >= beta) {
         tt_save(board->hash, tt_beta, 0, search_state->ply, eval, 0, raw_eval);
-        return beta;
+        return eval;
     }
     const int alpha_orig = alpha;
     if (eval > alpha) alpha = eval;
+    int best_score = eval;  /* -INF in check: every evasion is searched, no stand pat. */
 
     move_buffer_t buffer;
     int scores[MOVE_BUFFER_SIZE];
@@ -822,8 +825,15 @@ static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* 
              * promotions (QUEEN_PROMOTION_SCORE) sort with the winning captures, before this. */
             if (scores[i] < 0 && get_capture_flag(mv)) break;
 
-            /* Delta pruning, even winning the piece can't bring the score up to alpha. */
-            if (!get_promoted_piece(mv) && eval + captured_value(board, mv) + DELTA_MARGIN <= alpha) continue;
+            /* Delta pruning, even winning the piece can't bring the score up to alpha. Its optimistic
+             * score still counts towards the best, so a fail low stays a valid upper bound. */
+            if (!get_promoted_piece(mv)) {
+                const int optimistic = eval + captured_value(board, mv) + DELTA_MARGIN;
+                if (optimistic <= alpha) {
+                    if (optimistic > best_score) best_score = optimistic;
+                    continue;
+                }
+            }
         }
 
         ++search_state->ply;
@@ -835,12 +845,13 @@ static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* 
 
             if (limits->stop_search_flag) return STOPPED_SEARCH;
 
+            if (score > best_score) best_score = score;
             if (score > alpha) {
                 alpha = score;
                 best_move = mv;
                 if (score >= beta) {
                     tt_save(board->hash, tt_beta, 0, search_state->ply, score, mv, raw_eval);
-                    return beta;
+                    return score;
                 }
             }
         } else {
@@ -849,9 +860,10 @@ static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* 
         }
     }
     if (in_check && !has_legal_moves) return -MATE_VALUE + search_state->ply;
-    /* Fail-hard as in negamax: an exact score if something (the stand pat or a move) raised alpha. */
-    tt_save(board->hash, alpha > alpha_orig ? tt_exact : tt_alpha, 0, search_state->ply, alpha, best_move, raw_eval);
-    return alpha;
+    /* An exact score if something (the stand pat or a move) raised alpha, otherwise an upper bound. */
+    tt_save(board->hash, alpha > alpha_orig ? tt_exact : tt_alpha, 0, search_state->ply, best_score, best_move,
+            raw_eval);
+    return best_score;
 }
 
 int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state, limits_t* limits) {
@@ -1172,7 +1184,7 @@ static int negamax_node(int alpha,
     /* Tablebases (syzygy.h): after a capture or pawn move, with few enough pieces. Positions with as
      * many pieces as the largest tables only from SyzygyProbeDepth. The result is saved as a TT bound
      * (a win a lower bound, a loss an upper bound: a faster mate may exist, a draw exact) and
-     * returned, fail-hard: the node isn't searched for a faster mate. */
+     * returned (fail-soft, the score itself): the node isn't searched for a faster mate. */
     if (search_state->ply > 0 && !excluded_move && syzygy_search_pieces > 0 && board->fifty_move == 0 &&
         board->castle_flag == 0) {
         const int pieces = pop_count(board->occupancy[both]);
@@ -1184,7 +1196,7 @@ static int negamax_node(int alpha,
             const tt_entry_type tb_type = wdl > 0 ? tt_beta : wdl < 0 ? tt_alpha : tt_exact;
             const int tb_depth = depth + 6 < MAX_PLY - 1 ? depth + 6 : MAX_PLY - 1;
             tt_save(board->hash, tb_type, tb_depth, ply, tb_score, 0, tt_hit ? tt.eval : TT_EVAL_NONE);
-            return tb_score >= beta ? beta : tb_score <= alpha ? alpha : tb_score;
+            return tb_score;
         }
     }
 
@@ -1213,9 +1225,10 @@ static int negamax_node(int alpha,
     const bool improving = !in_check && is_improving(raw_eval, ply >= 2 ? search_state->static_evals[ply - 2] : -INF,
                                                      ply >= 4 ? search_state->static_evals[ply - 4] : -INF);
 
+    /* Fail-soft: the static eval that's this far above beta (can_reverse_futility_prune: never a mate score). */
     if (!excluded_move &&
         can_reverse_futility_prune(depth, static_eval, beta, in_check, is_pv_node, search_state->ply, improving))
-        return beta;
+        return static_eval;
 
     /* Null move pruning, searched at null_move_depth. */
     if (!excluded_move && can_null_move(board, search_state, depth, beta, static_eval, in_check, is_pv_node)) {
@@ -1236,8 +1249,10 @@ static int negamax_node(int alpha,
         /* A stopped null search returns -STOPPED_SEARCH, which would look like a cutoff. */
         if (limits->stop_search_flag) return STOPPED_SEARCH;
         if (score >= beta) {
-            /* Fail-hard: beta, never the null search's score (a mate found after passing isn't real). */
-            if (depth < NMP_VERIFY_DEPTH || search_state->nmp_min_ply != 0) return beta;
+            /* Fail-soft: the null search's score, but beta for a mate or tablebase score (a mate found
+             * after passing isn't real). */
+            const int null_score = is_mate_score(score) ? beta : score;
+            if (depth < NMP_VERIFY_DEPTH || search_state->nmp_min_ply != 0) return null_score;
             /* Deep, the cutoff is verified by searching this node normally at the null search's depth,
              * with null moves off for the first three quarters of it, so a zugzwang (where passing
              * would be best) can't cut off a large subtree. */
@@ -1245,7 +1260,7 @@ static int negamax_node(int alpha,
             const int verified = negamax_node(beta - 1, beta, null_depth, false, board, search_state, limits);
             search_state->nmp_min_ply = 0;
             if (limits->stop_search_flag) return STOPPED_SEARCH;
-            if (verified >= beta) return beta;
+            if (verified >= beta) return is_mate_score(verified) ? beta : verified;
         }
     }
 
@@ -1277,7 +1292,8 @@ static int negamax_node(int alpha,
 
             const singular_result_t result = singular_result(score, s_beta, tt_score, beta, is_pv_node);
             count_singular(search_state, search_state->nodes - nodes_before, result);
-            if (result == singular_multi_cut) return beta;
+            /* Fail-soft: another move reached s_beta (>= beta), a lower bound on the node (as Stockfish). */
+            if (result == singular_multi_cut) return s_beta;
             if (result == singular_extend) extension = 1;
             else if (result == singular_reduce) extension = -SE_REDUCTION;
         }
@@ -1306,6 +1322,9 @@ static int negamax_node(int alpha,
     bool has_legal_moves = false;
     int num_moves_searched = 0;
     int score;
+    /* Fail-soft: the best score of the moves searched, returned whatever the window (alpha only moves
+     * when a move scores above it). */
+    int best_score = -INF;
     move_t best_move = 0;
     if (tt_move && !excluded_move) COUNT_STAT(search_state, tt_move_nodes);
     /* Quiet moves searched without a cutoff, for the history malus when a later quiet move cuts, and
@@ -1363,6 +1382,13 @@ static int negamax_node(int alpha,
         /* Futility and history pruning, quiet moves that don't give check. The first move is always
          * searched. */
         if (((futile && num_moves_searched > 0 && is_quiet) || history_prunable) && !gives_check) {
+            /* Fail-soft: a futility-pruned move is assumed to score at most the futility value (at or
+             * below alpha), so it counts towards the best score, as Stockfish does; otherwise a fail
+             * low would return, and save as an upper bound, the lower score of the moves searched. */
+            if (futile && is_quiet) {
+                const int futility_value = static_eval + FUTILITY_BASE + FUTILITY_MARGIN * depth;
+                if (futility_value > best_score) best_score = futility_value;
+            }
             search_pop_move(board, search_state);
             continue;
         }
@@ -1439,6 +1465,7 @@ static int negamax_node(int alpha,
 
         if (limits->stop_search_flag) return STOPPED_SEARCH;
 
+        if (score > best_score) best_score = score;
         if (score > alpha) {
             best_move = mv;
             if (search_state->ply == 0) search_state->best_move_nodes = search_state->nodes - nodes_before_move;
@@ -1477,7 +1504,7 @@ static int negamax_node(int alpha,
                     if (stat_bucket >= 0) search_state->stats.cap_cut_by_history[stat_bucket]++;
                 }
 #endif
-                return beta;
+                return score;
             }
         }
 
@@ -1492,19 +1519,24 @@ static int negamax_node(int alpha,
         if (excluded_move) return alpha;
         return in_check ? -MATE_VALUE + search_state->ply : 0;
     }
-    if (excluded_move) return alpha;
+    /* Every legal move pruned (futility, history, SEE): their scores are taken to be at most alpha, as
+     * the pruning assumed, so alpha is the upper bound. */
+    if (best_score == -INF) best_score = alpha;
+    if (excluded_move) return best_score;
 
-    /* Fail-hard, alpha only moves if a move scored inside the window. */
+    /* An exact score if a move scored inside the window (alpha moved, best_score == alpha), otherwise
+     * an upper bound: best_score, at or below the original alpha. */
     if (alpha > alpha_orig) {
-        tt_save(board->hash, tt_exact, depth, search_state->ply, alpha, best_move, raw_eval);
-        if (!in_check) learn_correction(search_state, board->side, corr_idx, depth, alpha, corrected_eval, tt_exact,
+        tt_save(board->hash, tt_exact, depth, search_state->ply, best_score, best_move, raw_eval);
+        if (!in_check) learn_correction(search_state, board->side, corr_idx, depth, best_score, corrected_eval, tt_exact,
                                         best_move);
     } else {
-        tt_save(board->hash, tt_alpha, depth, search_state->ply, alpha, 0, raw_eval);
-        if (!in_check) learn_correction(search_state, board->side, corr_idx, depth, alpha, corrected_eval, tt_alpha, 0);
+        tt_save(board->hash, tt_alpha, depth, search_state->ply, best_score, 0, raw_eval);
+        if (!in_check) learn_correction(search_state, board->side, corr_idx, depth, best_score, corrected_eval, tt_alpha,
+                                        0);
     }
 
-    return alpha;
+    return best_score;
 }
 
 /* The root's search (a PV node, so not a cut node), also the tests'. Its depth is the root depth

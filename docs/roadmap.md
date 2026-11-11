@@ -12,7 +12,16 @@ together.
   on the same recipe and removed (worse validation, no gain in games). Then pairwise inputs and a hidden layer
   (512 -> 16 -> 1) in 32 layer stacks by piece count × queens (format version 5): +18.3 ± 8.3 Elo over the
   previous network on the same data, despite about 6% lower search speed ([nnue.md](nnue.md#the-current-network)).
-  From here, one change per test: loss power 2.5, more data, a second hidden layer.
+  From here, one change per test: loss power 2.5, more data, a second hidden layer. Loss power 2.5 came out
+  roughly level in short SPRTs (epoch 78 and the average of epochs 77-80); judged later on whether it avoids odd
+  losses rather than on Elo.
+- **Search:** done: fail-soft (scores outside the window returned as found, futility-pruned moves counted at
+  their futility value as Stockfish does), +13.5 ± 8.8 Elo in 1,902 games of a no-worse SPRT [-3, 1], stopped
+  with the whole range above zero; meant mainly as the base for later search changes. Stockfish's deeper/shallower
+  LMR re-search on top of it lost about 30 Elo and was dropped for now: Stockfish reduces expected cut nodes 2-4
+  plies more than tiki, so its extra ply mostly buys back depth tiki never took. Next, one change per test: a
+  TT-PV flag (a spare bit of the TT entry's depth field) with Stockfish's smaller reductions at TT-PV nodes,
+  harder cut-node reductions, reducing more move types; then ProbCut and deeper/shallower again.
 
 ## Next
 

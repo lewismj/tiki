@@ -1132,10 +1132,11 @@ void test_quiescence_stand_pat() {
     search_state_t search_state;
     limits_t limits;
 
-    /* No captures, the static eval: beta when it's at or above beta, otherwise the eval itself. */
+    /* No captures, the static eval whatever the window (fail-soft: a stand pat above beta returns
+     * the eval, not beta). */
     setup_position("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1", &board, &search_state, &limits, 1);
     const int eval = evaluation(&board, &search_state.nnue);
-    TEST_ASSERT_EQUAL_INT(eval - 10, quiescence(eval - 11, eval - 10, &board, &search_state, &limits));
+    TEST_ASSERT_EQUAL_INT(eval, quiescence(eval - 11, eval - 10, &board, &search_state, &limits));
     TEST_ASSERT_EQUAL_INT(eval, quiescence(-INF, INF, &board, &search_state, &limits));
 }
 
@@ -1295,11 +1296,11 @@ void test_excluded_move_search() {
     tt_entry_type type;
 
     /* Rd8# is the only mate in one. Without it the node fails low against a mate in one window,
-     * with it it fails high. */
+     * with it it fails high. Fail-soft: the fail low returns the best score found, at or below alpha. */
     setup_position("6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1", &board, &search_state, &limits, 3);
     const move_t rd8 = parse_move("d1d8", &board);
     search_state.excluded_moves[0] = rd8;
-    TEST_ASSERT_EQUAL_INT(MATE_VALUE - 2, negamax(MATE_VALUE - 2, MATE_VALUE - 1, 3, &board, &search_state, &limits));
+    TEST_ASSERT_LESS_OR_EQUAL_INT(MATE_VALUE - 2, negamax(MATE_VALUE - 2, MATE_VALUE - 1, 3, &board, &search_state, &limits));
     /* A search without a move isn't the node's result, so it leaves nothing in the TT. */
     TEST_ASSERT_FALSE(tt_lookup(board.hash, 0, &mv, &score, &depth, &type));
     search_state.excluded_moves[0] = 0;
@@ -1312,7 +1313,8 @@ void test_excluded_move_search() {
     TEST_ASSERT_EQUAL_INT(-50, negamax(-50, -49, 4, &board, &search_state, &limits));
     TEST_ASSERT_FALSE(tt_lookup(board.hash, 0, &mv, &score, &depth, &type));
     search_state.excluded_moves[0] = 0;
-    TEST_ASSERT_EQUAL_INT(-49, negamax(-50, -49, 4, &board, &search_state, &limits));
+    /* With it, the queen is won (a draw, 0): fail-soft returns that, not beta. */
+    TEST_ASSERT_EQUAL_INT(0, negamax(-50, -49, 4, &board, &search_state, &limits));
 }
 
 void test_tunable_parameters() {

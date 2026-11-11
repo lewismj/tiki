@@ -1,92 +1,89 @@
 #!/usr/bin/env python3
-"""Averages tiki networks (.nnue) into one, weight by weight.
+"""Averages training checkpoints (.pt) weight by weight and exports the result as a tiki network (.nnue).
 
-    python3 scripts/nnue_average.py a.nnue b.nnue [...] -o out.nnue [--weights 2 1 ...]
+    python3 scripts/nnue_average.py a.pt b.pt [...] -o out.nnue [--weights 2 1 ...] [--checkpoint out.pt]
 
-Only nets from the same training lineage average well: checkpoints of one run, or nets fine-tuned from the same
+The weights are averaged in float, before quantisation, so the net is rounded once (as the trainer's own export
+does) rather than averaging already rounded and clipped integers. --checkpoint also saves the averaged weights as a
+checkpoint (model weights only, no optimiser state) for later averaging or exporting.
+
+Only checkpoints from the same training lineage average well: epochs of one run, or nets fine-tuned from the same
 parent. Independently trained nets learn their hidden units in different orders, and their average plays badly.
-
-The format (engine/core/src/nnue/nnue.h, little endian):
-    char magic[8] = "TIKINNUE", uint32 version, uint32 inputs, uint32 hidden,
-    int16 ft_weights[inputs * hidden], int16 ft_bias[hidden], then
-    version 5:    int8 l1_weights[32 * 16 * hidden], int32 l1_bias[32 * 16],
-                  int16 out_weights[32 * 16], int32 out_bias[32]           (32 layer stacks, 16 hidden units)
-    version 4:    the same with l1_weights[32 * 16 * 2 * hidden] (SCReLU inputs, never released)
-    versions 1-2: int16 out_weights[buckets * 2 * hidden], int32 out_bias[buckets]
-                  (8 output buckets in version 2, 1 in version 1)
-The nets averaged must all have the same version, which the output keeps.
+The checkpoints must all have the same architecture (--hidden and --factoriser); the shared factoriser rows are
+averaged like any other weight and folded in on export, which is the same as folding first (it's linear).
+Needs the trainer's environment (PyTorch, numpy).
 """
 
 import argparse
+import os
 import sys
 
-import numpy as np
+import torch
 
-MAGIC = b"TIKINNUE"
-VERSIONS = (1, 2, 4, 5)
-STACKS, L1 = 32, 16         # Versions 4 and 5: layer stacks and hidden layer width.
-HEADER = np.dtype([("magic", "S8"), ("version", "<u4"), ("inputs", "<u4"), ("hidden", "<u4")])
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "training"))
+
+from tiki_nnue.export import export  # noqa: E402
+from tiki_nnue.model import TikiNNUE  # noqa: E402
 
 
-def read_net(path):
-    """Returns ((version, inputs, hidden), [arrays in file order]), exiting on anything that isn't a tiki net."""
-    data = open(path, "rb").read()
-    if len(data) < HEADER.itemsize:
-        sys.exit(f"{path}: too short to be a network")
-    header = np.frombuffer(data, HEADER, count=1)[0]
-    if header["magic"] != MAGIC or int(header["version"]) not in VERSIONS:
-        sys.exit(f"{path}: not a tiki network (versions {', '.join(map(str, VERSIONS))})")
-    version, inputs, hidden = int(header["version"]), int(header["inputs"]), int(header["hidden"])
+def read_state(path):
+    """A checkpoint's model weights (a trainer checkpoint, or one this script saved)."""
+    checkpoint = torch.load(path, map_location="cpu", weights_only=True)
+    state = checkpoint.get("model", checkpoint) if isinstance(checkpoint, dict) else None
+    if not isinstance(state, dict) or "ft.weight" not in state or "l1.weight" not in state:
+        sys.exit(f"{path}: not a checkpoint of this trainer's network (format version 5)")
+    return state
 
-    layout = [("<i2", inputs * hidden), ("<i2", hidden)]
-    if version in (4, 5):
-        inputs_per_unit = 2 * hidden if version == 4 else hidden
-        layout += [("i1", STACKS * L1 * inputs_per_unit), ("<i4", STACKS * L1), ("<i2", STACKS * L1), ("<i4", STACKS)]
-    else:
-        buckets = 8 if version == 2 else 1
-        layout += [("<i2", buckets * 2 * hidden), ("<i4", buckets)]
-    expected = HEADER.itemsize + sum(np.dtype(dtype).itemsize * count for dtype, count in layout)
-    if len(data) != expected:
-        sys.exit(f"{path}: {len(data)} bytes, expected {expected} for {inputs} inputs and {hidden} hidden")
 
-    arrays, at = [], HEADER.itemsize
-    for dtype, count in layout:
-        arrays.append(np.frombuffer(data, dtype, count=count, offset=at))
-        at += np.dtype(dtype).itemsize * count
-    return (version, inputs, hidden), arrays
+def average(states, weights):
+    """The weighted average of state dicts with the same keys and shapes, in float64, returned as float32."""
+    keys = list(states[0])
+    for i, state in enumerate(states[1:], 1):
+        if list(state) != keys:
+            raise ValueError(f"checkpoint {i + 1} has other layers than checkpoint 1 (--factoriser differs?)")
+        for key in keys:
+            if state[key].shape != states[0][key].shape:
+                raise ValueError(f"checkpoint {i + 1}'s {key} is {tuple(state[key].shape)}, "
+                                 f"checkpoint 1's {tuple(states[0][key].shape)} (--hidden differs?)")
+    return {key: sum(w * state[key].double() for w, state in zip(weights, states)).float() for key in keys}
+
+
+def model_from_state(state):
+    """A TikiNNUE holding 'state', its width and factoriser taken from the weights."""
+    model = TikiNNUE(hidden=state["ft.weight"].shape[1], factoriser="factor.weight" in state)
+    model.load_state_dict(state)
+    return model
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Average tiki networks (.nnue) weight by weight.")
-    parser.add_argument("nets", nargs="+", help="the networks to average")
-    parser.add_argument("-o", "--output", required=True, help="the network to write")
+    parser = argparse.ArgumentParser(description="Average training checkpoints (.pt) into a tiki network.")
+    parser.add_argument("checkpoints", nargs="+", help="the checkpoints (.pt) to average")
+    parser.add_argument("-o", "--output", required=True, help="the network (.nnue) to write")
     parser.add_argument("--weights", nargs="+", type=float,
-                        help="a weight per network (default equal), normalised to sum to 1")
+                        help="a weight per checkpoint (default equal), normalised to sum to 1")
+    parser.add_argument("--checkpoint", help="also save the averaged weights to this .pt")
     args = parser.parse_args()
 
-    weights = args.weights or [1.0] * len(args.nets)
-    if len(weights) != len(args.nets):
-        sys.exit(f"{len(weights)} weights for {len(args.nets)} networks")
+    for path in args.checkpoints:
+        if not path.endswith(".pt"):
+            parser.error(f"{path}: expected a training checkpoint (.pt); the .nnue beside it is already quantised")
+    weights = args.weights or [1.0] * len(args.checkpoints)
+    if len(weights) != len(args.checkpoints):
+        parser.error(f"{len(weights)} weights for {len(args.checkpoints)} checkpoints")
     if any(w <= 0 for w in weights):
-        sys.exit("weights must be positive")
-    weights = np.array(weights) / sum(weights)
+        parser.error("weights must be positive")
+    weights = [w / sum(weights) for w in weights]
 
-    nets = [read_net(path) for path in args.nets]
-    shape = nets[0][0]
-    for path, (other, _) in zip(args.nets, nets):
-        if other != shape:
-            sys.exit(f"{path}: version {other[0]}, {other[1]} inputs and {other[2]} hidden, "
-                     f"{args.nets[0]} has version {shape[0]}, {shape[1]} and {shape[2]}")
+    try:
+        state = average([read_state(path) for path in args.checkpoints], weights)
+    except ValueError as error:
+        sys.exit(str(error))
+    model = model_from_state(state)
+    export(model, args.output)
+    if args.checkpoint:
+        torch.save({"model": state}, args.checkpoint)
 
-    # Average in float64 (exact for these integers), round to nearest and clip to the stored type.
-    with open(args.output, "wb") as out:
-        np.array([(MAGIC, *shape)], HEADER).tofile(out)
-        for i, first in enumerate(nets[0][1]):
-            total = sum(w * net[1][i].astype(np.float64) for w, net in zip(weights, nets))
-            limits = np.iinfo(first.dtype)
-            np.clip(np.rint(total), limits.min, limits.max).astype(first.dtype).tofile(out)
-
-    names = ", ".join(f"{path} ({w:.3f})" for path, w in zip(args.nets, weights))
+    names = ", ".join(f"{path} ({w:.3f})" for path, w in zip(args.checkpoints, weights))
     print(f"Wrote {args.output} from {names}")
 
 
