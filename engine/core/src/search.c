@@ -365,11 +365,6 @@ void score_moves(const move_buffer_t* buffer, int* scores, move_t tt_move, board
     search_state->score_pv = false;
 }
 
-/**
- * Selection sort one step at a time: swap the best scored move from i onwards into i and return it.
- * Most nodes cut off after one or two moves, so sorting the whole list up front is wasted work.
- * The scan is branchless (the comparison mispredicts often), ties keep the earlier move.
- */
 /* Removes the quiet moves (not captures, not promotions) from 'from' on, keeping the order of the
  * others (late move pruning, which skips them all once it starts). */
 static inline_always void drop_quiet_moves(move_buffer_t* buffer, int* scores, int from) {
@@ -384,6 +379,11 @@ static inline_always void drop_quiet_moves(move_buffer_t* buffer, int* scores, i
     buffer->index = kept;
 }
 
+/**
+ * Selection sort one step at a time: swap the best scored move from i onwards into i and return it.
+ * Most nodes cut off after one or two moves, so sorting the whole list up front is wasted work.
+ * The scan is branchless (the comparison mispredicts often), ties keep the earlier move.
+ */
 move_t pick_next_move(move_buffer_t* buffer, int* scores, int i) {
     int best = i;
     int best_score = scores[i];
@@ -819,6 +819,7 @@ static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* 
     move_t best_move = 0;
     for (int i=0; i< buffer.index; i++) {
         move_t mv = pick_next_move(&buffer, scores, i);
+        tt_prefetch(hash_after_move(board, mv));
 
         if (!in_check) {
             /* Sorted best first, so from here on every capture loses material (SEE < 0). Quiet queen
@@ -1340,6 +1341,8 @@ static int negamax_node(int alpha,
     move_t mv;
     while ((mv = picker_next(&picker)) != 0) {
         if (mv == excluded_move) continue;
+        /* The child's TT entry starts loading now, before the move is pruned or made (hash_after_move). */
+        tt_prefetch(hash_after_move(board, mv));
         /* At a root in the tablebases, only the moves that keep its best result (syzygy_rank_root). */
         if (search_state->ply == 0 && !syzygy_root_allows(mv)) continue;
         bool is_capture = get_capture_flag(mv);
@@ -1368,6 +1371,23 @@ static int negamax_node(int alpha,
         if (!get_promoted_piece(mv) && can_see_prune(depth, num_moves_searched, alpha, in_check, is_pv_node) &&
             !see_ge(board, mv, see_prune_threshold(depth, is_quiet))) continue;
 
+        /* Futility and history pruning apply to quiet moves that don't give check (below). For a move
+         * of a piece other than the king that's decided here, before the move is made: whether it
+         * gives check (move_gives_check) and, since only a legal move is pruned (an illegal one is
+         * just skipped, as when it's made), whether it's legal (quiet_move_is_legal: the node isn't in
+         * check when either pruning applies). Most quiet moves at these nodes are pruned, and were
+         * made and unmade only to find that out. King moves are still made first. */
+        const bool prune_candidate = (futile && num_moves_searched > 0 && is_quiet) || history_prunable;
+        const bool check_known = prune_candidate && get_piece_moved(mv) != K && get_piece_moved(mv) != k;
+        const bool known_check = check_known && move_gives_check(board, mv);
+        if (check_known && !known_check && quiet_move_is_legal(board, mv)) {
+            if (futile) {
+                const int futility_value = static_eval + FUTILITY_BASE + FUTILITY_MARGIN * depth;
+                if (futility_value > best_score) best_score = futility_value;
+            }
+            continue;
+        }
+
         if (!search_make_move(board, search_state, mv)) {
             pop_move(board);
             continue;
@@ -1378,7 +1398,8 @@ static int negamax_node(int alpha,
         const bool may_prune = (is_quiet || is_bad_capture) && num_moves_searched > 0 &&
                                (futile || history_prunable ||
                                 (num_moves_searched >= LMR_MIN_MOVES && depth >= LMR_MIN_DEPTH && !in_check));
-        const bool gives_check = may_prune && side_in_check(board);
+        const bool gives_check = check_known ? known_check : may_prune && side_in_check(board);
+        assert(!check_known || known_check == side_in_check(board));
 
         /* Futility and history pruning, quiet moves that don't give check. The first move is always
          * searched. */

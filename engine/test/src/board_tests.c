@@ -54,6 +54,151 @@ void test_en_passant_only_when_capturable() {
     TEST_ASSERT_EQUAL_UINT64(compute_hash(&board), board.hash);
 }
 
+/* Positions for the tests of the functions that answer for a move without making it: the test
+ * positions, and ones where the answer depends on castling, en passant or a promotion. */
+static const char* const move_property_positions[] = {
+    "5k2/8/8/8/8/8/8/4K2R w K - 0 1",              /* O-O checks along the f-file. */
+    "3k4/8/8/8/8/8/8/R3K3 w Q - 0 1",              /* O-O-O checks along the d-file. */
+    "r3k3/8/8/8/8/8/8/3K4 b q - 0 1",              /* Black's O-O-O. */
+    "4k3/8/8/3pP3/8/8/8/4RK2 w - d6 0 1",          /* En passant, the capturing pawn uncovers the rook. */
+    "7k/8/8/4pP2/8/8/8/B3K3 w - e6 0 1",           /* En passant, the captured pawn uncovers the bishop. */
+    "8/8/8/8/k2pP2R/8/8/4K3 b - e3 0 1",           /* En passant that would leave the mover's king in check. */
+    "3k4/P7/8/8/8/8/8/4K3 w - - 0 1",              /* Promotions: queen and rook check, bishop and knight don't. */
+    "8/8/8/8/8/2k5/1p6/R3K3 b - - 0 1",            /* Black promotes with and without a capture. */
+    "4k3/8/8/8/4N3/8/8/4RK2 w - - 0 1",            /* Discovered checks by the knight, and a double check. */
+    "4k3/4r3/8/8/8/8/4B3/4K3 w - - 0 1",           /* A pinned bishop: no move of it is legal. */
+    "4k3/8/8/8/1b6/8/3N4/4K3 w - - 0 1",           /* A pinned knight has no legal move. */
+    "4k3/4r3/8/8/8/4R3/8/4K3 w - - 0 1",           /* A pinned rook: only moves along the file are legal. */
+    "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+};
+#define MOVE_PROPERTY_POSITION_COUNT ((int) (sizeof(move_property_positions) / sizeof(move_property_positions[0])))
+
+static const char* move_property_position(int i) {
+    return i < TEST_POSITION_COUNT ? test_positions[i] : move_property_positions[i - TEST_POSITION_COUNT];
+}
+
+/* Whether the side to move is in check. */
+static bool to_move_in_check(board_t* board) {
+    return board->side == white ? is_square_attacked_by_black(board, trailing_zero_count(board->pieces[K]))
+                                : is_square_attacked_by_white(board, trailing_zero_count(board->pieces[k]));
+}
+
+static bool is_special_move(move_t mv) {
+    return get_enpassant_flag(mv) || get_promoted_piece(mv) || get_king_side_castle_flag(mv) ||
+           get_queen_side_castle_flag(mv);
+}
+
+/* move_gives_check against making the move and testing the king, for every legal move of every
+ * position and of the positions a move further on (which adds positions in check and after
+ * captures). */
+void test_move_gives_check_matches_make() {
+    static board_t board;
+    int moves = 0, checks = 0, special_checks = 0;
+    for (int i = 0; i < TEST_POSITION_COUNT + MOVE_PROPERTY_POSITION_COUNT; i++) {
+        parse_fen(move_property_position(i), &board);
+        move_buffer_t buffer;
+        generate_moves(&board, &buffer);
+        for (int m = 0; m < buffer.index; m++) {
+            const move_t mv = buffer.moves[m];
+            const bool predicted = move_gives_check(&board, mv);
+            if (make_move(&board, mv)) {
+                const bool actual = to_move_in_check(&board);
+                TEST_ASSERT_EQUAL_INT_MESSAGE(actual, predicted, move_property_position(i));
+                moves++;
+                checks += actual;
+                special_checks += actual && is_special_move(mv);
+                move_buffer_t replies;
+                generate_moves(&board, &replies);
+                for (int r = 0; r < replies.index; r++) {
+                    const bool reply_predicted = move_gives_check(&board, replies.moves[r]);
+                    if (make_move(&board, replies.moves[r])) {
+                        TEST_ASSERT_EQUAL_INT_MESSAGE(to_move_in_check(&board), reply_predicted,
+                                                      move_property_position(i));
+                        moves++;
+                    }
+                    pop_move(&board);
+                }
+            }
+            pop_move(&board);
+        }
+    }
+    /* The comparison saw the cases it is there for. */
+    TEST_ASSERT_TRUE(moves > 50000);
+    TEST_ASSERT_TRUE(checks > 100);
+    TEST_ASSERT_TRUE(special_checks >= 6);
+}
+
+/* Compares quiet_move_is_legal with make_move over the position's quiet moves of pieces other than
+ * the king (the moves the function is for). The position must not be in check. */
+static void check_quiet_legality(board_t* board, const char* fen, int* moves, int* illegal) {
+    move_buffer_t buffer;
+    generate_moves(board, &buffer);
+    for (int m = 0; m < buffer.index; m++) {
+        const move_t mv = buffer.moves[m];
+        const piece moved = get_piece_moved(mv);
+        if (get_capture_flag(mv) || get_promoted_piece(mv) || moved == K || moved == k) continue;
+        const bool predicted = quiet_move_is_legal(board, mv);
+        const bool legal = make_move(board, mv);
+        pop_move(board);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(legal, predicted, fen);
+        (*moves)++;
+        *illegal += !legal;
+    }
+}
+
+/* quiet_move_is_legal against make_move, in every position that isn't in check and every such
+ * position a move further on. */
+void test_quiet_move_is_legal_matches_make() {
+    static board_t board;
+    int moves = 0, illegal = 0;
+    for (int i = 0; i < TEST_POSITION_COUNT + MOVE_PROPERTY_POSITION_COUNT; i++) {
+        const char* fen = move_property_position(i);
+        parse_fen(fen, &board);
+        if (!to_move_in_check(&board)) check_quiet_legality(&board, fen, &moves, &illegal);
+        move_buffer_t buffer;
+        generate_moves(&board, &buffer);
+        for (int m = 0; m < buffer.index; m++) {
+            if (make_move(&board, buffer.moves[m]) && !to_move_in_check(&board)) {
+                check_quiet_legality(&board, fen, &moves, &illegal);
+            }
+            pop_move(&board);
+        }
+    }
+    TEST_ASSERT_TRUE(moves > 30000);
+    TEST_ASSERT_TRUE(illegal > 20);   /* Pinned pieces leaving the line of the pin. */
+}
+
+/* hash_after_move is the hash make_move gives, for the moves it is exact for: no promotion, castling
+ * or en passant capture, the castling rights unchanged and no en passant square left behind. */
+void test_hash_after_move_matches_make() {
+    static board_t board;
+    int exact = 0, captures = 0, cleared_en_passant = 0;
+    for (int i = 0; i < TEST_POSITION_COUNT + MOVE_PROPERTY_POSITION_COUNT; i++) {
+        parse_fen(move_property_position(i), &board);
+        move_buffer_t buffer;
+        generate_moves(&board, &buffer);
+        for (int m = 0; m < buffer.index; m++) {
+            const move_t mv = buffer.moves[m];
+            const uint64_t predicted = hash_after_move(&board, mv);
+            const int castle_before = board.castle_flag;
+            const bool had_en_passant = board.en_passant != none_sq;
+            const bool legal = make_move(&board, mv);
+            const bool simple = !is_special_move(mv) && board.castle_flag == castle_before &&
+                                board.en_passant == none_sq;
+            if (legal && simple) {
+                TEST_ASSERT_EQUAL_UINT64_MESSAGE(board.hash, predicted, move_property_position(i));
+                exact++;
+                captures += get_capture_flag(mv) != 0;
+                cleared_en_passant += had_en_passant;
+            }
+            pop_move(&board);
+        }
+    }
+    TEST_ASSERT_TRUE(exact > 2000);
+    TEST_ASSERT_TRUE(captures > 100);
+    TEST_ASSERT_TRUE(cleared_en_passant > 0);
+}
+
 void test_parse_fen_fields() {
     board_t board;
     parse_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/Pp2P3/2N2Q1p/1PPBBPPP/R3K2R b KQq a3 12 1", &board);

@@ -323,6 +323,85 @@ static inline_always bool en_passant_capturable(const board_t* board, square sq,
     return (pawn_attack(sq, capturer ^ 1) & board->pieces[capturer == white ? P : p]) != 0;
 }
 
+/**
+ * Whether 'move' (pseudo-legal, by the side to move) gives check, worked out without making it: the
+ * enemy king against the moved piece on its new square (the promoted piece, for a promotion) and
+ * against the mover's sliders through the occupancy after the move, which covers discovered checks,
+ * the pawn an en passant capture removes and the rook's move in castling. The same answer as making
+ * the move and testing the king (for a legal move), without the make and unmake: the search prunes
+ * most quiet moves that don't give check, and no longer makes them to find out.
+ */
+static inline_always bool move_gives_check(const board_t* board, move_t move) {
+    const colour us = board->side;
+    const square source = get_source_square(move);
+    const square target = get_target_square(move);
+    const bitboard king = board->pieces[us == white ? k : K];
+    const square king_sq = trailing_zero_count(king);
+    const piece promoted = get_promoted_piece(move);
+    const int type = (promoted ? promoted : get_piece_moved(move)) % 6;   /* 0 pawn .. 5 king. */
+
+    bitboard occupancy = (board->occupancy[both] ^ (1ULL << source)) | (1ULL << target);
+    bitboard rooks = (board->pieces[us == white ? R : r] | board->pieces[us == white ? Q : q]) & ~(1ULL << source);
+    bitboard bishops = (board->pieces[us == white ? B : b] | board->pieces[us == white ? Q : q]) & ~(1ULL << source);
+    if (get_enpassant_flag(move)) {
+        occupancy ^= 1ULL << (us == white ? target + 8 : target - 8);
+    } else if (get_king_side_castle_flag(move)) {
+        occupancy = (occupancy ^ (1ULL << (target + 1))) | (1ULL << (target - 1));
+        rooks = (rooks ^ (1ULL << (target + 1))) | (1ULL << (target - 1));
+    } else if (get_queen_side_castle_flag(move)) {
+        occupancy = (occupancy ^ (1ULL << (target - 2))) | (1ULL << (target + 1));
+        rooks = (rooks ^ (1ULL << (target - 2))) | (1ULL << (target + 1));
+    }
+    if (type == 3 || type == 4) rooks |= 1ULL << target;
+    if (type == 2 || type == 4) bishops |= 1ULL << target;
+
+    if (type == 1 && (knight_attack(target) & king)) return true;
+    if (type == 0 && (pawn_attack(target, us) & king)) return true;
+    return (rook_attack(king_sq, occupancy) & rooks) != 0 || (bishop_attack(king_sq, occupancy) & bishops) != 0;
+}
+
+/**
+ * Whether a quiet move by a piece other than the king, from a position where the side to move isn't
+ * in check, is legal: it is unless moving the piece off its square opens a line from an enemy slider
+ * to the king (it was pinned and leaves the pin's line). Not for king moves (the target square's
+ * attackers would have to be tested), captures or en passant, nor in check.
+ */
+static inline_always bool quiet_move_is_legal(const board_t* board, move_t move) {
+    const colour us = board->side;
+    const square king_sq = trailing_zero_count(board->pieces[us == white ? K : k]);
+    const bitboard occupancy = (board->occupancy[both] ^ (1ULL << get_source_square(move))) |
+                               (1ULL << get_target_square(move));
+    const bitboard rooks = board->pieces[us == white ? r : R] | board->pieces[us == white ? q : Q];
+    const bitboard bishops = board->pieces[us == white ? b : B] | board->pieces[us == white ? q : Q];
+    return (rook_attack(king_sq, occupancy) & rooks) == 0 && (bishop_attack(king_sq, occupancy) & bishops) == 0;
+}
+
+/**
+ * The hash 'board' will have after 'move', worked out without making it, for prefetching the
+ * transposition table entry early (search.c): by the time the move has been through pruning, made,
+ * and the child probes the table, the entry has had longer to arrive than a prefetch after make_move
+ * gives it. Exact for the common moves; castling, promotions, en passant captures, double pushes that
+ * leave an en passant square and moves that change the castling rights come out different (only a
+ * wasted prefetch, make_move's own hash is what the search uses).
+ */
+static inline_always uint64_t hash_after_move(const board_t* board, move_t move) {
+    const square source = get_source_square(move);
+    const square target = get_target_square(move);
+    const piece moved = get_piece_moved(move);
+    uint64_t hash = board->hash ^ get_side_key() ^ get_piece_key(source, moved) ^ get_piece_key(target, moved);
+    if (board->en_passant != none_sq) hash ^= get_enpassant_key(board->en_passant);
+    if (get_capture_flag(move)) {
+        const int* pieces = board->side == white ? black_pieces : white_pieces;
+        for (int i = 0; i <= 5; i++) {
+            if (is_bit_set(&board->pieces[pieces[i]], target)) {
+                hash ^= get_piece_key(target, pieces[i]);
+                break;
+            }
+        }
+    }
+    return hash;
+}
+
 static inline_always bool make_move(board_t* board, move_t move) {
     /*
      * Put move and associate state onto the stack, put enough

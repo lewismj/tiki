@@ -3,6 +3,9 @@
 
 
 void test_parse_fen_fields();
+void test_move_gives_check_matches_make();
+void test_quiet_move_is_legal_matches_make();
+void test_hash_after_move_matches_make();
 void test_en_passant_only_when_capturable();
 void test_parse_move_promotions();
 void test_move_to_uci();

@@ -68,6 +68,9 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_incremental_corr_keys_match_full);
     RUN_TEST(test_pop_on_empty_stack_is_clamped);
     RUN_TEST(test_parse_fen_fields);
+    RUN_TEST(test_move_gives_check_matches_make);
+    RUN_TEST(test_quiet_move_is_legal_matches_make);
+    RUN_TEST(test_hash_after_move_matches_make);
     RUN_TEST(test_en_passant_only_when_capturable);
     RUN_TEST(test_parse_move_promotions);
     RUN_TEST(test_move_to_uci);
