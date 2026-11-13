@@ -92,8 +92,9 @@ static int8_t* l1_weight(int b, int u, int i) {
 
 /* Small random feature weights (the accumulators stay well inside int16, many within 0..QA), int8
  * hidden weights over their whole range, biases that put the hidden units on both sides of CReLU's
- * range, and output weights of either sign. */
+ * range, and output weights of either sign (the trainer's range, +-127 / 64, at scale QO). */
 static void random_network(uint32_t seed) {
+    const int out_scale = NNUE_QO / NNUE_QW;
     TEST_ASSERT_TRUE(nnue_allocate());
     uint32_t state = seed;
     for (size_t i = 0; i < (size_t) NNUE_INPUTS * NNUE_HIDDEN; i++)
@@ -104,9 +105,9 @@ static void random_network(uint32_t seed) {
         for (int u = 0; u < NNUE_L1; u++) {
             for (int i = 0; i < NNUE_L1_INPUTS; i++) *l1_weight(b, u, i) = (int8_t) ((int) (next_random_32(&state) % 256) - 128);
             nnue_net.l1_bias[b][u] = (int32_t) (next_random_32(&state) % (4 * NNUE_QH)) - 2 * NNUE_QH;
-            nnue_net.out_weights[b][u] = (int16_t) ((int) (next_random_32(&state) % 255) - 127);
+            nnue_net.out_weights[b][u] = (int16_t) (((int) (next_random_32(&state) % 255) - 127) * out_scale);
         }
-        nnue_net.out_bias[b] = (int32_t) (next_random_32(&state) % 200001) - 100000;
+        nnue_net.out_bias[b] = ((int32_t) (next_random_32(&state) % 200001) - 100000) * out_scale;
     }
 }
 
@@ -173,13 +174,13 @@ void test_nnue_evaluate_known_value() {
     const int b = NNUE_OUTPUT_BUCKETS - 1;
     TEST_ASSERT_EQUAL_INT(b, nnue_board_bucket(&board));
 
-    /* Only the output bias, QH * QW is 1.0, which is SCALE centipawns. */
-    nnue_net.out_bias[b] = NNUE_QH * NNUE_QW;
+    /* Only the output bias, QH * QO is 1.0, which is SCALE centipawns. */
+    nnue_net.out_bias[b] = NNUE_QH * NNUE_QO;
     TEST_ASSERT_EQUAL_INT(NNUE_SCALE, nnue_evaluate(&board));
 
-    /* Hidden unit 0 at activation 1.0 (bias QH) with output weight 1.0 (QW): +1.0. */
+    /* Hidden unit 0 at activation 1.0 (bias QH) with output weight 1.0 (QO): +1.0. */
     nnue_net.l1_bias[b][0] = NNUE_QH;
-    nnue_net.out_weights[b][0] = NNUE_QW;
+    nnue_net.out_weights[b][0] = NNUE_QO;
     TEST_ASSERT_EQUAL_INT(2 * NNUE_SCALE, nnue_evaluate(&board));
 
     /* CReLU clamps at 1.0, a larger sum doesn't add more, and at 0 below it. */
@@ -191,12 +192,12 @@ void test_nnue_evaluate_known_value() {
 
     /* From the accumulator: units 0 and its partner 256 both at QA, their product is 1.0, input QI; hidden
      * weight 1.0 (QW) on the side to move's input 0 makes hidden unit 1 exactly QH, 1.0, and its output
-     * weight 1.0 adds SCALE. */
+     * weight 1.0 (QO) adds SCALE. */
     const int partner = NNUE_HIDDEN / 2;
     nnue_net.ft_bias[0] = NNUE_QA;
     nnue_net.ft_bias[partner] = NNUE_QA;
     *l1_weight(b, 1, 0) = NNUE_QW;
-    nnue_net.out_weights[b][1] = NNUE_QW;
+    nnue_net.out_weights[b][1] = NNUE_QO;
     TEST_ASSERT_EQUAL_INT(2 * NNUE_SCALE, nnue_evaluate(&board));
 
     /* The same through the other side's input 0 (the biases are in both accumulators): the same. */
@@ -215,11 +216,11 @@ void test_nnue_evaluate_known_value() {
     TEST_ASSERT_EQUAL_INT(NNUE_SCALE, nnue_evaluate(&board));
 
     /* Half times all: (128 * 255) >> 9 = 63 (rounded down), so hidden unit 1 is 63 * QW of QH, and the
-     * output (QH * QW + 63 * QW * QW) * SCALE / (QH * QW). */
+     * output (QH * QO + 63 * QW * QO) * SCALE / (QH * QO). */
     nnue_net.ft_bias[0] = 128;
     nnue_net.ft_bias[partner] = NNUE_QA;
-    const int64_t out = (int64_t) NNUE_QH * NNUE_QW + 63 * NNUE_QW * NNUE_QW;
-    TEST_ASSERT_EQUAL_INT((int) (out * NNUE_SCALE / ((int64_t) NNUE_QH * NNUE_QW)), nnue_evaluate(&board));
+    const int64_t out = (int64_t) NNUE_QH * NNUE_QO + (int64_t) 63 * NNUE_QW * NNUE_QO;
+    TEST_ASSERT_EQUAL_INT((int) (out * NNUE_SCALE / ((int64_t) NNUE_QH * NNUE_QO)), nnue_evaluate(&board));
     nnue_free();
 }
 
@@ -263,18 +264,18 @@ void test_nnue_output_buckets() {
         const int before = nnue_evaluate(&board);
 
         const int other = (bucket + 1) % NNUE_OUTPUT_BUCKETS;
-        nnue_net.out_bias[other] += NNUE_QH * NNUE_QW;
+        nnue_net.out_bias[other] += NNUE_QH * NNUE_QO;
         nnue_net.l1_bias[other][3] += NNUE_QH;
         *l1_weight(other, 5, 7) ^= 0x55;
         TEST_ASSERT_EQUAL_INT_MESSAGE(before, nnue_evaluate(&board), property_position(i));
         *l1_weight(other, 5, 7) ^= 0x55;
         nnue_net.l1_bias[other][3] -= NNUE_QH;
-        nnue_net.out_bias[other] -= NNUE_QH * NNUE_QW;
+        nnue_net.out_bias[other] -= NNUE_QH * NNUE_QO;
 
         /* +1.0 on its own output bias is +SCALE centipawns (give or take the truncating division). */
-        nnue_net.out_bias[bucket] += NNUE_QH * NNUE_QW;
+        nnue_net.out_bias[bucket] += NNUE_QH * NNUE_QO;
         TEST_ASSERT_INT_WITHIN_MESSAGE(1, before + NNUE_SCALE, nnue_evaluate(&board), property_position(i));
-        nnue_net.out_bias[bucket] -= NNUE_QH * NNUE_QW;
+        nnue_net.out_bias[bucket] -= NNUE_QH * NNUE_QO;
     }
     nnue_free();
 }
@@ -303,13 +304,14 @@ void test_nnue_file_keeps_hidden_weight_order() {
 }
 
 void test_nnue_rejects_other_versions() {
-    /* Versions 1-4 (no hidden layer, PSQT, SCReLU inputs) are another network: a current file with any other
-     * version in its header is rejected, keeping the current network. */
+    /* Versions 1-4 (no hidden layer, PSQT, SCReLU inputs) are another network, and version 5 the same layout
+     * with the output layer at another scale (read as version 6, its evaluations would be 32 times too small): a current file
+     * with any other version in its header is rejected, keeping the current network. */
     random_network(2024);
     size_t size;
     uint8_t* data = saved_network(&size);
     TEST_ASSERT_TRUE(nnue_load_memory(data, size, "current"));
-    for (uint32_t version = 1; version <= 6; version++) {
+    for (uint32_t version = 1; version <= 7; version++) {
         if (version == NNUE_VERSION) continue;
         memcpy(data + 8, &version, sizeof(version));
         TEST_ASSERT_FALSE(nnue_load_memory(data, size, "other version"));
@@ -626,7 +628,7 @@ void test_nnue_output_reference_formula() {
                 h = h < 0 ? 0 : h > NNUE_QH ? NNUE_QH : h;
                 out += h * nnue_net.out_weights[bucket][u];
             }
-            const int expected = (int) (out * NNUE_SCALE / ((int64_t) NNUE_QH * NNUE_QW));
+            const int expected = (int) (out * NNUE_SCALE / ((int64_t) NNUE_QH * NNUE_QO));
             TEST_ASSERT_EQUAL_INT(expected, nnue_output_scalar(&accumulator, side, bucket));
         }
     }

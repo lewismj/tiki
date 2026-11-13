@@ -45,9 +45,12 @@ HalfKAv2_hm (22528) -> 512 per side -> pairwise -> concat (512) -> 16 -> CReLU -
   products (x × y) >> 9 of the clamped (0..255) halves, 0..127 (QI) as uint8; its weights × 64 (QW) as int8 (clipped to
   127 / 64 in training) and biases × QI × QW (QH = 8128, an activation of 1.0) as int32, so the
   engine's AVX2 code multiplies uint8 by int8 with `_mm256_maddubs_epi16` (pairs fit int16). CReLU
-  clamps the sums to 0..QH. Output weights × QW as int16, bias × QH × QW as int32, and eval in
-  centipawns = output × 400 (SCALE) / (QH × QW), the division truncating. `quantised_eval()` in
-  `export.py` is the reference; the engine gives exactly the same.
+  clamps the sums to 0..QH. Output weights × 2048 (QO) as int16 (clipped to 127 / 64 in training, so
+  up to ±4064), bias × QH × QO as int32, and eval in centipawns = output × 400 (SCALE) / (QH × QO), the
+  division truncating. `quantised_eval()` in `export.py` is the reference; the engine gives exactly the
+  same. Format version 5 had the output layer at QW (64), where its rounding was the largest
+  quantisation error (about 4 cp sd of eval, against 1.4 cp for the `>> 9` rounding); `read_network`
+  converts a version 5 file exactly, and re-exporting from the checkpoint gets the finer weights.
 
 ### Pipeline
 

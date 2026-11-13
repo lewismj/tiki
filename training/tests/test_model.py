@@ -15,7 +15,7 @@ from tiki_nnue.data import collate, parse_line
 from tiki_nnue.export import dequantise, export, quantise, quantised_eval, read_network, write_network
 from tiki_nnue.features import (OUTPUT_BUCKETS, bucket_of_features, output_bucket, parse_fen, piece_bucket,
                                 position_bucket)
-from tiki_nnue.model import FT_CLIP, HIDDEN, L1, L1_CLIP, OUT_CLIP, QA, QH, QI, QW, SCALE, TikiNNUE, loss_fn
+from tiki_nnue.model import FT_CLIP, HIDDEN, L1, L1_CLIP, OUT_CLIP, QA, QH, QI, QO, QW, SCALE, TikiNNUE, loss_fn
 
 FENS = [
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -212,11 +212,47 @@ class ModelTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "version 2"):
                 read_network(path)
 
+    def test_version_5_converts_exactly(self):
+        """A version 5 network (the output layer at QW) reads as version 6 with that layer times QO / QW, the
+        same evaluations, and writes back as version 6. Values that wouldn't fit are an error."""
+        import tiki_nnue.export as export_module
+        model = randomise(TikiNNUE(factoriser=True))
+        v5 = dict(quantise(model))
+        v5["out_weights"] = np.rint(model.out.weight.detach().double().numpy() * QW).astype(np.int16)
+        v5["out_bias"] = np.rint(model.out.bias.detach().double().numpy() * QH * QW).astype(np.int32)
+        with tempfile.TemporaryDirectory() as directory:
+            old, new = os.path.join(directory, "v5.nnue"), os.path.join(directory, "v6.nnue")
+            write_network(v5, old)
+            with open(old, "r+b") as file:
+                file.seek(8)
+                file.write(struct.pack("<I", 5))
+            converted = read_network(old)
+            np.testing.assert_array_equal(v5["out_weights"].astype(np.int32) * (QO // QW), converted["out_weights"])
+            np.testing.assert_array_equal(v5["out_bias"].astype(np.int64) * (QO // QW), converted["out_bias"])
+            for key in ("ft_weights", "ft_bias", "l1_weights", "l1_bias"):
+                np.testing.assert_array_equal(v5[key], converted[key])
+            with mock.patch.object(export_module, "QO", QW):     # Version 5's formula.
+                before = [quantised_eval(v5, fen) for fen in FENS + FLIPPED]
+            self.assertEqual(before, [quantised_eval(converted, fen) for fen in FENS + FLIPPED])
+
+            write_network(converted, new)
+            with open(new, "rb") as file:
+                self.assertEqual(6, struct.unpack_from("<I", file.read(12), 8)[0])
+            np.testing.assert_array_equal(converted["out_weights"], read_network(new)["out_weights"])
+
+            v5["out_weights"][0, 0] = 1024          # 1024 * 32 is past int16.
+            write_network(v5, old)
+            with open(old, "r+b") as file:
+                file.seek(8)
+                file.write(struct.pack("<I", 5))
+            with self.assertRaisesRegex(ValueError, "doesn't fit"):
+                read_network(old)
+
     def test_quantised_matches_float(self):
         """The integer evaluation is the float model's on the quantised weights: exactly the same
         computation once the hidden layer inputs are rounded as the engine rounds them (only the final
         division truncates, under 1cp), and close to the float model without that rounding. Catches
-        QA / QI / QW / QH / SCALE mistakes."""
+        QA / QI / QW / QH / QO / SCALE mistakes."""
         for factoriser in (False, True):
             network = quantise(randomise(TikiNNUE(factoriser=factoriser)))
             float_model = dequantise(network)
@@ -229,7 +265,7 @@ class ModelTests(unittest.TestCase):
                 self.assertLess(abs(integer - b), 15, fen)
 
     def test_quantised_close_to_trained_model(self):
-        """Quantising (weights to 1/64, the pairwise inputs to 1/127) keeps the evaluation in the same
+        """Quantising (hidden weights to 1/64, output weights to 1/2048, the pairwise inputs to 1/127) keeps the evaluation in the same
         place: a check for gross mistakes only, as these random hidden weights (std 0.05) are small
         next to the 1/64 step (test_quantised_matches_float is the exact check)."""
         model = randomise(TikiNNUE(factoriser=True))
@@ -346,7 +382,7 @@ class ModelTests(unittest.TestCase):
             export(self.model, path)
             with open(path, "rb") as file:
                 self.assertEqual(b"TIKINNUE", file.read(8))
-                self.assertEqual((5, 22528, HIDDEN), struct.unpack("<III", file.read(12)))
+                self.assertEqual((6, 22528, HIDDEN), struct.unpack("<III", file.read(12)))
             self.assertEqual(file_size(HIDDEN), os.path.getsize(path))
 
 

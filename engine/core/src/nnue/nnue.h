@@ -36,17 +36,21 @@
  *           to move's 256 then the other side's (as Stockfish's pairwise CReLU).
  *   h[j] = clamp(l1_bias[b][j] + sum(in[i] * l1_w[b][j][i]), 0, QH) (CReLU, int8 weights scale QW = 64,
  *          QH = QI * QW = 8128 is 1.0).
- *   eval = (out_bias[b] + sum(h[j] * out_w[b][j])) * SCALE / (QH * QW). The division truncates (C).
+ *   eval = (out_bias[b] + sum(h[j] * out_w[b][j])) * SCALE / (QH * QO). The division truncates (C).
+ *          Output weights are int16 at scale QO = 2048 (the trainer clips them to 127 / 64, so they
+ *          use up to +-4064): their rounding was the largest quantisation error at QW = 64.
  *   Float model: a = pairwise_f(acc / QA), h = CReLU_f(W1 a + b1), y = w2 . h + b2, eval = y * SCALE,
- *   with W1 = l1_w / QW, b1 = l1_bias / QH, w2 = out_w / QW, b2 = out_bias / (QH * QW).
+ *   with W1 = l1_w / QW, b1 = l1_bias / QH, w2 = out_w / QO, b2 = out_bias / (QH * QO).
  *
- * File format (little endian), version 5:
+ * File format (little endian), version 6:
  *   char magic[8] = "TIKINNUE", uint32 version, uint32 inputs, uint32 hidden,
  *   int16 ft_weights[inputs][hidden] (row per feature), int16 ft_bias[hidden],
  *   int8 l1_weights[32][16][hidden] (per bucket and hidden unit, the side to move's inputs first),
  *   int32 l1_bias[32][16], int16 out_weights[32][16], int32 out_bias[32].
- * Earlier versions (1, 2: an output layer straight from the accumulator; 3: PSQT; 4: a hidden layer on
- * SCReLU inputs, never released) are a different network and aren't loaded.
+ * Version 5 is the same layout with the output layer at scale QW (out_w / 64, out_bias / (QH * 64));
+ * the trainer's read_network converts one exactly (x 32). Earlier versions (1, 2: an output layer
+ * straight from the accumulator; 3: PSQT; 4: a hidden layer on SCReLU inputs, never released) are a
+ * different network. Only version 6 is loaded.
  */
 
 #define NNUE_KING_BUCKETS 32
@@ -62,12 +66,13 @@
 
 #define NNUE_QA 255
 #define NNUE_QI 127                                             /* Hidden layer inputs, 0..127. */
-#define NNUE_QW 64                                              /* Hidden and output weights. */
+#define NNUE_QW 64                                              /* Hidden layer weights. */
 #define NNUE_QH (NNUE_QI * NNUE_QW)                             /* Hidden activation 1.0, 8128. */
+#define NNUE_QO 2048                                            /* Output layer weights. */
 #define NNUE_SCALE 400
 
 #define NNUE_MAGIC "TIKINNUE"
-#define NNUE_VERSION 5
+#define NNUE_VERSION 6
 
 /* The weights and accumulators are 64 byte aligned (align, rows of 512 bytes), so no SIMD load
  * splits a cache line. */

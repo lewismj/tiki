@@ -17,14 +17,14 @@
  *   minus inputs of each kind, the other side's kinds the negative, with 2 s w = 128 * pawns per piece:
  *   h = QH / 2 + 128 * (material difference in pawns), linear while it stays within 0..QH (a
  *   difference of up to 31.75 pawns).
- * - Output: weight 1016 on unit 0, bias -1016 * QH / 2, so eval = 1016 * 128 * pawns * 400 / (QH * QW)
- *   = 100 * pawns. The same in every bucket.
+ * - Output: weight 1016 * 32 = 32512 on unit 0 (within int16), bias -32512 * QH / 2, so
+ *   eval = 32512 * 128 * pawns * 400 / (QH * QO) = 100 * pawns. The same in every bucket.
  *
  * Steps and weights per kind (P N B R Q): s = 2 2 2 4 8, w = 32 96 96 80 72, exact up to 15 pawns,
  * knights or bishops, 7 rooks and 3 queens of a side.
  */
 #define UNIT_BIAS 128
-#define OUT_WEIGHT 1016
+#define OUT_WEIGHT (1016 * (NNUE_QO / NNUE_QW))
 
 void load_material_network(void) {
     static const int step[5] = { 2, 2, 2, 4, 8 };          /* P N B R Q */

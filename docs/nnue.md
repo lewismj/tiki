@@ -5,9 +5,11 @@ HalfKAv2_hm (22528) -> 512 per side -> pairwise -> concat (512) -> 16 -> CReLU -
                                                    \__ one of 32 layer stacks: piece count x queens __/
 ```
 
-Network format version 5. The networks in `models/` up to `tiki-2026-11-07.nnue` are version 2 (an output layer
-straight from the accumulator, 8 buckets by piece count) and need an engine from before the hidden layer; builds
-that embed a network pass them over (CMake reads each file's version).
+Network format version 6. Version 5 (`tiki-2026-11-08.nnue`) is the same network with the output layer at a
+coarser scale; the trainer converts it exactly (`write_network(read_network(...))`). The networks in `models/` up
+to `tiki-2026-11-07.nnue` are version 2 (an output layer straight from the accumulator, 8 buckets by piece count)
+and need an engine from before the hidden layer; builds that embed a network pass over every other version
+(CMake reads each file's version).
 
 - **Inputs (HalfKAv2_hm):** for each side, every piece is a feature indexed by (king bucket, piece kind, square),
   with the board mirrored so the king is on files a-d: 32 king buckets × 11 kinds × 64 squares. The kinds are
@@ -20,7 +22,8 @@ that embed a network pass them over (CMake reads each file's version).
   own stack is evaluated. The network after the accumulator takes about 116 ns against 52 ns before, about 6% of
   search speed (AVX2).
 - **Quantisation:** accumulator × 255 as int16; pairwise products 0..127 as uint8, weights × 64 as int8 (`maddubs`, or
-  one VNNI `vpdpbusd` where the CPU has it), CReLU at 8128; output weights × 64 as int16; eval = output × 400 cp. All integer, so every build
+  one VNNI `vpdpbusd` where the CPU has it), CReLU at 8128; output weights × 2048 as int16 (× 64 in version 5, whose rounding was the largest
+  quantisation error, about 4 cp sd); eval = output × 400 cp. All integer, so every build
   (any CPU level) gives the same evaluation and bench.
 
 The engine side is `engine/core/src/nnue/` (`nnue.h` defines the features, quantisation and file format). The

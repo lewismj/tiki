@@ -209,12 +209,13 @@ bool nnue_load(const char* path) {
     const bool ok = size == NNUE_FILE_SIZE && nnue_load_memory(data, size, path);
 
     /* A tiki network of another version (the networks before the hidden layer are version 2): say so,
-     * rather than leave only "could not load". */
+     * rather than leave only "could not load". Version 5 differs only in the output layer's scale. */
     uint32_t version;
     if (!ok && size >= 12 && memcmp(data, NNUE_MAGIC, 8) == 0 &&
         (memcpy(&version, data + 8, sizeof(version)), version != NNUE_VERSION)) {
-        fprintf(stderr, "%s is a version %u network, this build of tiki reads version %d.\n",
-                path, (unsigned) version, NNUE_VERSION);
+        fprintf(stderr, "%s is a version %u network, this build of tiki reads version %d.%s\n",
+                path, (unsigned) version, NNUE_VERSION,
+                version == 5 ? " Convert it with the trainer (read_network, then write_network)." : "");
     }
     free(data);
     return ok;
@@ -532,7 +533,8 @@ static inline void hidden_sums(int32_t* sums, const uint8_t* in, int bucket) {
 #endif
 
 /* The rest of bucket 'bucket's layer stack from the hidden layer sums: bias, CReLU, the output layer,
- * in centipawns (nnue.h). int64: a clamped activation (up to QH) times an int16 weight, 16 of them. */
+ * in centipawns (nnue.h). int64: a clamped activation (up to QH) times an int16 weight, 16 of them (at
+ * most 16 * 8128 * 32768 + 2^31, times SCALE, well inside int64). */
 static inline int stack_output(const int32_t* sums, int bucket) {
     int64_t out = nnue_net.out_bias[bucket];
     for (int u = 0; u < NNUE_L1; u++) {
@@ -540,7 +542,7 @@ static inline int stack_output(const int32_t* sums, int bucket) {
         h = h < 0 ? 0 : h > NNUE_QH ? NNUE_QH : h;
         out += h * nnue_net.out_weights[bucket][u];
     }
-    return (int) (out * NNUE_SCALE / ((int64_t) NNUE_QH * NNUE_QW));
+    return (int) (out * NNUE_SCALE / ((int64_t) NNUE_QH * NNUE_QO));
 }
 
 int nnue_output(const nnue_accumulator_t* accumulator, colour side, int bucket) {

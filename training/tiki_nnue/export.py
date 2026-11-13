@@ -1,14 +1,18 @@
-"""Quantisation and the network file format (engine/core/src/nnue/nnue.h), version 5:
+"""Quantisation and the network file format (engine/core/src/nnue/nnue.h), version 6:
 
     char magic[8] = "TIKINNUE", uint32 version, uint32 inputs, uint32 hidden,
     int16 ft_weights[inputs][hidden], int16 ft_bias[hidden],
     int8  l1_weights[OUTPUT_BUCKETS][L1][hidden], int32 l1_bias[OUTPUT_BUCKETS][L1],
     int16 out_weights[OUTPUT_BUCKETS][L1], int32 out_bias[OUTPUT_BUCKETS]
 
-all little endian. Earlier versions (1, 2: an output layer straight from the accumulator; 3: PSQT;
-4: a hidden layer on SCReLU inputs, never released) are a different network and aren't read. quantised_eval() is a reference for what the engine
-computes, integer arithmetic included, so the export can be checked against tiki
-(tests/test_cross_check.py).
+all little endian, the output layer at scale QO (weights) and QH * QO (bias). Version 5 is the same
+layout with the output layer at QW and QH * QW: read_network converts it exactly (both times
+QO / QW = 32), so writing it back gives a version 6 network with the same evaluations
+(write_network(read_network("v5.nnue"), "v6.nnue")). Re-exporting from the checkpoint (.pt) instead
+keeps the output weights' finer precision. Earlier versions (1, 2: an output layer straight from the
+accumulator; 3: PSQT; 4: a hidden layer on SCReLU inputs, never released) are a different network
+and aren't read. quantised_eval() is a reference for what the engine computes, integer arithmetic
+included, so the export can be checked against tiki (tests/test_cross_check.py).
 """
 
 import struct
@@ -16,10 +20,11 @@ import struct
 import numpy as np
 
 from .features import INPUTS, OUTPUT_BUCKETS, active_features, parse_fen, position_bucket
-from .model import L1, QA, QH, QW, SCALE
+from .model import L1, QA, QH, QO, QW, SCALE
 
 MAGIC = b"TIKINNUE"
-VERSION = 5
+VERSION = 6
+OLD_OUTPUT_VERSION = 5      # The same network with the output layer at QW: converted on reading.
 
 
 def quantise(model):
@@ -36,8 +41,8 @@ def quantise(model):
         "ft_bias": to_int(model.ft_bias, QA, np.int16),                   # [hidden]
         "l1_weights": to_int(model.l1_weights(), QW, np.int8),            # [OUTPUT_BUCKETS, L1, hidden]
         "l1_bias": to_int(model.l1_biases(), QH, np.int32),               # [OUTPUT_BUCKETS, L1]
-        "out_weights": to_int(model.out.weight, QW, np.int16),            # [OUTPUT_BUCKETS, L1]
-        "out_bias": to_int(model.out.bias, QH * QW, np.int32),            # [OUTPUT_BUCKETS]
+        "out_weights": to_int(model.out.weight, QO, np.int16),            # [OUTPUT_BUCKETS, L1]
+        "out_bias": to_int(model.out.bias, QH * QO, np.int32),            # [OUTPUT_BUCKETS]
     }
 
 
@@ -55,13 +60,16 @@ def write_network(network, path):
 
 
 def read_network(path):
+    """The network at 'path' as numpy arrays, at this version's scales: a version 5 network's output
+    layer is converted exactly (times QO / QW)."""
     with open(path, "rb") as file:
         data = file.read()
     if data[:8] != MAGIC:
         raise ValueError("not a tiki network")
     version, inputs, hidden = struct.unpack_from("<III", data, 8)
-    if version != VERSION or inputs != INPUTS:
-        raise ValueError(f"unsupported network: version {version}, {inputs} inputs (this trainer reads version {VERSION})")
+    if version not in (VERSION, OLD_OUTPUT_VERSION) or inputs != INPUTS:
+        raise ValueError(f"unsupported network: version {version}, {inputs} inputs "
+                         f"(this trainer reads versions {OLD_OUTPUT_VERSION} and {VERSION})")
     offset = 20
 
     def take(shape, dtype):
@@ -81,7 +89,20 @@ def read_network(path):
     }
     if offset != len(data):
         raise ValueError("trailing data after the network")
+    if version == OLD_OUTPUT_VERSION:
+        network["out_weights"] = _rescaled(network["out_weights"], QO // QW, np.int16)
+        network["out_bias"] = _rescaled(network["out_bias"], QO // QW, np.int32)
     return network
+
+
+def _rescaled(values, factor, dtype):
+    """'values' times 'factor' as 'dtype', an error rather than wrapping if they don't fit."""
+    scaled = values.astype(np.int64) * factor
+    info = np.iinfo(dtype)
+    if scaled.min() < info.min or scaled.max() > info.max:
+        raise ValueError(f"a version {OLD_OUTPUT_VERSION} network's output layer doesn't fit {np.dtype(dtype).name} "
+                         f"at version {VERSION}'s scale")
+    return scaled.astype(dtype)
 
 
 def dequantise(network):
@@ -103,8 +124,8 @@ def dequantise(network):
         model.l1.bias.copy_(f64(network["l1_bias"], QH).reshape(OUTPUT_BUCKETS * L1))
         model.l1_shared.weight.zero_()
         model.l1_shared.bias.zero_()
-        model.out.weight.copy_(f64(network["out_weights"], QW))
-        model.out.bias.copy_(f64(network["out_bias"], QH * QW))
+        model.out.weight.copy_(f64(network["out_weights"], QO))
+        model.out.bias.copy_(f64(network["out_bias"], QH * QO))
     return model
 
 
@@ -140,7 +161,7 @@ def quantised_eval(network, fen):
     h = network["l1_weights"][bucket].astype(np.int64) @ a + network["l1_bias"][bucket].astype(np.int64)
     h = np.clip(h, 0, QH)
     output = int(h @ network["out_weights"][bucket].astype(np.int64)) + int(network["out_bias"][bucket])
-    return _trunc_div(output * SCALE, QH * QW)
+    return _trunc_div(output * SCALE, QH * QO)
 
 
 def export(model, path):

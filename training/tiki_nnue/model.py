@@ -36,8 +36,9 @@ HIDDEN = 512    # Feature transformer width per perspective.
 L1 = 16         # Hidden layer width, per bucket.
 QA = 255        # Accumulator scale (an activation of 1.0 is QA).
 QI = 127        # Hidden layer input scale: (x * y) >> 9 of two clamped (0..QA) values is 0..127.
-QW = 64         # Hidden and output layer weight scale.
+QW = 64         # Hidden layer weight scale.
 QH = QI * QW    # Hidden layer sum (and bias) scale, 8128: an activation of 1.0 is QH.
+QO = 2048       # Output layer weight scale (int16; the output bias is at QH * QO).
 SCALE = 400     # Network output to centipawns, also the scale of the score -> win probability sigmoid.
 
 # Feature transformer weights are clipped so QA * w fits easily in int16 and 32 features plus the
@@ -46,9 +47,10 @@ FT_CLIP = 1.98
 # Hidden layer weights fit int8 (u8 input x int8 weight pairs sum in int16 in the engine's SIMD). The
 # output weights are int16 in the file and summed in int64, so they could be larger; they're clipped to
 # the same range on purpose, as Stockfish's trainer clips its output layer, which keeps the output a
-# moderate sum of the 16 units and leaves room for an int8 SIMD output layer later.
+# moderate sum of the 16 units. At QO they use +-4064 of int16 (at QW = 64 only +-127, and their
+# rounding was then the largest quantisation error, about 4 cp sd of eval).
 L1_CLIP = 127 / QW
-OUT_CLIP = 127 / QW
+OUT_CLIP = 127 / 64
 
 
 def pairwise(acc):
