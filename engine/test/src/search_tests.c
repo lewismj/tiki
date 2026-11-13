@@ -423,18 +423,20 @@ void test_history_bonus_and_bound() {
     init_search_state(&search_state);
     const move_t mv = encode_move(g1, f3, N, 0, 0, 0, 0, 0, 0);
     const int32_t* h = &search_state.history_moves[N][f3];
+    const int bonus_3 = HIST_BONUS_SCALE * 9;
+    const int bonus_10 = HIST_BONUS_SCALE * 100 < HIST_BONUS_MAX ? HIST_BONUS_SCALE * 100 : HIST_BONUS_MAX;
 
-    /* From zero the bonus is 16 * depth^2... */
+    /* From zero the bonus is HIST_BONUS_SCALE * depth^2... */
     update_history(&search_state, mv, 3);
-    TEST_ASSERT_EQUAL_INT(144, *h);
+    TEST_ASSERT_EQUAL_INT(bonus_3, *h);
 
-    /* ...capped at 1600 from depth 10. */
+    /* ...capped at HIST_BONUS_MAX (bonus_10: the bonus at depth 10, capped or not). */
     search_state.history_moves[N][f3] = 0;
     update_history(&search_state, mv, 10);
-    TEST_ASSERT_EQUAL_INT(1600, *h);
+    TEST_ASSERT_EQUAL_INT(bonus_10, *h);
     search_state.history_moves[N][f3] = 0;
     update_history(&search_state, mv, 40);
-    TEST_ASSERT_EQUAL_INT(1600, *h);
+    TEST_ASSERT_EQUAL_INT(HIST_BONUS_MAX, *h);
 
     /* Deep, long searches saturate at HISTORY_MAX instead of growing without bound. */
     for (int i = 0; i < 100000; i++) update_history(&search_state, mv, 40);
@@ -444,7 +446,7 @@ void test_history_bonus_and_bound() {
     /* Near the bound the same bonus adds less than it did from zero. */
     search_state.history_moves[N][f3] = HISTORY_MAX / 2;
     update_history(&search_state, mv, 10);
-    TEST_ASSERT_EQUAL_INT(HISTORY_MAX / 2 + 1600 - (HISTORY_MAX / 2) * 1600 / HISTORY_MAX, *h);
+    TEST_ASSERT_EQUAL_INT(HISTORY_MAX / 2 + bonus_10 - (HISTORY_MAX / 2) * bonus_10 / HISTORY_MAX, *h);
 }
 
 void test_history_malus_and_bound() {
@@ -452,13 +454,15 @@ void test_history_malus_and_bound() {
     init_search_state(&search_state);
     const move_t mv = encode_move(g1, f3, N, 0, 0, 0, 0, 0, 0);
     const int32_t* h = &search_state.history_moves[N][f3];
+    const int bonus_3 = HIST_BONUS_SCALE * 9;
+    const int bonus_10 = HIST_BONUS_SCALE * 100 < HIST_BONUS_MAX ? HIST_BONUS_SCALE * 100 : HIST_BONUS_MAX;
 
-    /* From zero the malus is 16 * depth^2, and a bonus of the same depth from there lands back
-     * near zero (gravity adds 144 * 144 / HISTORY_MAX = 2 as it pulls toward the opposite sign). */
+    /* From zero the malus is HIST_BONUS_SCALE * depth^2, and a bonus of the same depth from there lands back
+     * near zero (gravity adds bonus^2 / HISTORY_MAX, 2 or so, as it pulls toward the opposite sign). */
     penalise_history(&search_state, mv, 3);
-    TEST_ASSERT_EQUAL_INT(-144, *h);
+    TEST_ASSERT_EQUAL_INT(-bonus_3, *h);
     update_history(&search_state, mv, 3);
-    TEST_ASSERT_EQUAL_INT(144 * 144 / HISTORY_MAX, *h);
+    TEST_ASSERT_EQUAL_INT(bonus_3 * bonus_3 / HISTORY_MAX, *h);
 
     /* Saturates at -HISTORY_MAX. */
     for (int i = 0; i < 100000; i++) penalise_history(&search_state, mv, 40);
@@ -468,7 +472,7 @@ void test_history_malus_and_bound() {
     /* Near the bound the same malus takes off less than it did from zero. */
     search_state.history_moves[N][f3] = -HISTORY_MAX / 2;
     penalise_history(&search_state, mv, 10);
-    TEST_ASSERT_EQUAL_INT(-HISTORY_MAX / 2 - 1600 + (HISTORY_MAX / 2) * 1600 / HISTORY_MAX, *h);
+    TEST_ASSERT_EQUAL_INT(-HISTORY_MAX / 2 - bonus_10 + (HISTORY_MAX / 2) * bonus_10 / HISTORY_MAX, *h);
 }
 
 void test_penalised_quiet_stays_above_losing_captures() {
@@ -779,7 +783,8 @@ void test_lmr_reduction() {
     TEST_ASSERT_EQUAL_INT(r + 1, lmr_reduction(12, 20, false, -LMR_HISTORY_DIVISOR, false, true));
     /* Still within [0, depth - 2] at the history bounds. */
     TEST_ASSERT_EQUAL_INT(0, lmr_reduction(12, 20, false, HISTORY_MAX, false, true));
-    TEST_ASSERT_EQUAL_INT(10, lmr_reduction(12, 20, false, -HISTORY_MAX, false, true));
+    const int worst = r + HISTORY_MAX / LMR_HISTORY_DIVISOR;
+    TEST_ASSERT_EQUAL_INT(worst < 10 ? worst : 10, lmr_reduction(12, 20, false, -HISTORY_MAX, false, true));
 }
 
 void test_lmr_cut_node_and_improving() {
@@ -1369,8 +1374,8 @@ void test_correction_history_learns_without_overshoot() {
     update_correction(&search_state, &board, CORR_DEPTH_MAX, 100);
     TEST_ASSERT_TRUE(shallow > 0);
     TEST_ASSERT_TRUE(eval_correction(&board, &search_state) > shallow);
-    /* At most half the error with the defaults. */
-    TEST_ASSERT_TRUE(eval_correction(&board, &search_state) <= 50);
+    /* 2 * CORR_DEPTH_MAX / CORR_RATE of the error (about half), rounding aside. */
+    TEST_ASSERT_TRUE(eval_correction(&board, &search_state) <= 100 * 2 * CORR_DEPTH_MAX / CORR_RATE + 1);
 
     /* However large the errors, within +-CORR_MAX. */
     for (int i = 0; i < 200; i++) update_correction(&search_state, &board, CORR_DEPTH_MAX, 10000);

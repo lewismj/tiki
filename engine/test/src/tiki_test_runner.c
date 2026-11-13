@@ -68,6 +68,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_incremental_corr_keys_match_full);
     RUN_TEST(test_pop_on_empty_stack_is_clamped);
     RUN_TEST(test_parse_fen_fields);
+    RUN_TEST(test_en_passant_only_when_capturable);
     RUN_TEST(test_parse_move_promotions);
     RUN_TEST(test_move_to_uci);
     RUN_TEST(test_parse_move_castling);
@@ -188,6 +189,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_position_records_root);
     RUN_TEST(test_position_irreversible_move_clears_history);
     RUN_TEST(test_position_detects_game_repetition);
+    RUN_TEST(test_repetition_after_double_push);
     RUN_TEST(test_repetition_inside_search_is_draw);
     RUN_TEST(test_repetition_before_root_needs_two);
     RUN_TEST(test_position_long_history);

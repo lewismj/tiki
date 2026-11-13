@@ -13,6 +13,47 @@
 #include "test_positions.h"
 
 
+/* The en passant square is kept only when a pawn could take there (en_passant_capturable), by
+ * make_move and by parse_fen, so the same position always has the same hash. */
+void test_en_passant_only_when_capturable() {
+    board_t board, plain;
+    search_state_t search_state;
+    init_search_state(&search_state);
+
+    /* 1. e4: no black pawn beside it, no en passant square, and the hash is the position's own. */
+    parse_position("position startpos moves e2e4", &board, &search_state);
+    TEST_ASSERT_EQUAL_INT(none_sq, board.en_passant);
+    TEST_ASSERT_EQUAL_UINT64(compute_hash(&board), board.hash);
+    parse_fen("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1", &plain);
+    TEST_ASSERT_EQUAL_UINT64(plain.hash, board.hash);
+    /* A FEN that names the square anyway is read as the same position. */
+    parse_fen("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1", &plain);
+    TEST_ASSERT_EQUAL_INT(none_sq, plain.en_passant);
+    TEST_ASSERT_EQUAL_UINT64(board.hash, plain.hash);
+
+    /* With a black pawn on d4 the square is kept (and by a FEN), and undone with the move. */
+    parse_fen("rnbqkbnr/ppp1pppp/8/8/3p4/8/PPPPPPPP/RNBQKBNR w KQkq - 0 3", &board);
+    const uint64_t before = board.hash;
+    TEST_ASSERT_TRUE(make_move(&board, parse_move("e2e4", &board)));
+    TEST_ASSERT_EQUAL_INT(e3, board.en_passant);
+    TEST_ASSERT_EQUAL_UINT64(compute_hash(&board), board.hash);
+    parse_fen("rnbqkbnr/ppp1pppp/8/8/3pP3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 3", &plain);
+    TEST_ASSERT_EQUAL_INT(e3, plain.en_passant);
+    TEST_ASSERT_EQUAL_UINT64(plain.hash, board.hash);
+    pop_move(&board);
+    TEST_ASSERT_EQUAL_INT(none_sq, board.en_passant);
+    TEST_ASSERT_EQUAL_UINT64(before, board.hash);
+
+    /* Black's double push, a white pawn on e5 beside it. */
+    parse_fen("rnbqkbnr/pppppppp/8/4P3/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2", &board);
+    TEST_ASSERT_TRUE(make_move(&board, parse_move("d7d5", &board)));
+    TEST_ASSERT_EQUAL_INT(d6, board.en_passant);
+    pop_move(&board);
+    TEST_ASSERT_TRUE(make_move(&board, parse_move("a7a5", &board)));
+    TEST_ASSERT_EQUAL_INT(none_sq, board.en_passant);
+    TEST_ASSERT_EQUAL_UINT64(compute_hash(&board), board.hash);
+}
+
 void test_parse_fen_fields() {
     board_t board;
     parse_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/Pp2P3/2N2Q1p/1PPBBPPP/R3K2R b KQq a3 12 1", &board);

@@ -40,6 +40,12 @@ together.
   - `--loss-power 2.5` (Stockfish's exponent), on its own run;
   - fine-tuning on Leela's positions (the Stockfish binpacks, scored by Leela), from the Lichess network;
   - more data: self-play written directly in the binary format, more months, endgame-heavy samples.
+- **En passant in the position hash, first after the SPRT of the tuned values:** the en passant square is set and
+  hashed after every double pawn push, even when no pawn can capture there, so the position after a double push
+  never matches its later repeats and a threefold whose first occurrence followed one is missed (fastchess:
+  "PV continues after threefold repetition"). The old repetition rule hid it. Set and hash the square only when
+  an enemy pawn attacks it, in `make_move` and the FEN parser; the bench changes (such positions now share
+  transposition table entries).
 - **Repetitions:** Stockfish's rule (a draw on a repetition inside the search, or a third occurrence; one earlier
   occurrence in the game no longer counts). Written, in the working tree; after the SPSA: tests, unchanged
   bench, a 1,000-game match against `main` for gross bugs and a look at the repetition games.

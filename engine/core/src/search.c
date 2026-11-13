@@ -38,7 +38,7 @@ int eval_correction(const board_t* board, const search_state_t* search_state) {
  * Moves the position's entries towards 'error', the search's score less the corrected eval (so the
  * correction learns what's still missing): each entry by the same step, with gravity so it stays
  * within +-CORR_ENTRY_MAX. The step is scaled by the weights so that the correction itself moves by
- * 2 * error * min(depth, CORR_DEPTH_MAX) / CORR_RATE, whatever the weights: at most half the error
+ * 2 * error * min(depth, CORR_DEPTH_MAX) / CORR_RATE, whatever the weights: about half the error
  * with the defaults, never more than all of it (CORR_RATE >= 2 * CORR_DEPTH_MAX), so it can't
  * overshoot and oscillate.
  */
@@ -51,7 +51,7 @@ static inline_always void update_correction_at(search_state_t* search_state, int
     if (total_weight < 1) total_weight = 1;
     int bonus = error * CORR_GRAIN * weight * 200 / (CORR_RATE * total_weight);
     /* A step past an entry's bound means nothing (very small weights in a tuning run): capped, which
-     * also keeps *entry * magnitude below int's range. With the defaults it's at most half of it. */
+     * also keeps *entry * magnitude below int's range. With the defaults it's about half of it. */
     if (bonus > CORR_ENTRY_MAX) bonus = CORR_ENTRY_MAX;
     if (bonus < -CORR_ENTRY_MAX) bonus = -CORR_ENTRY_MAX;
     const int magnitude = bonus < 0 ? -bonus : bonus;
@@ -320,14 +320,14 @@ static inline_always int history_bonus(int depth) {
     return bonus < HIST_BONUS_MAX ? bonus : HIST_BONUS_MAX;
 }
 
-/* Quiet move raised alpha, bonus min(16 * depth^2, 1600). */
+/* Quiet move raised alpha, bonus min(HIST_BONUS_SCALE * depth^2, HIST_BONUS_MAX) (history_bonus). */
 void update_history(search_state_t* search_state, move_t mv, int depth) {
     add_history_bonus(search_state, mv, history_bonus(depth));
 }
 
 /**
  * History malus: a quiet move searched before the quiet move that caused a cutoff didn't cut, so
- * its history is lowered by min(16 * depth^2, 1600). Without it history only rises, and a move that's often tried
+ * its history is lowered by the same amount (history_bonus). Without it history only rises, and a move that's often tried
  * but rarely good keeps a high score.
  */
 void penalise_history(search_state_t* search_state, move_t mv, int depth) {
@@ -335,7 +335,7 @@ void penalise_history(search_state_t* search_state, move_t mv, int depth) {
 }
 
 /* A capture caused a beta cutoff ('board' is the position it was made from): the quiet history's
- * bonus, min(16 * depth^2, 1600). */
+ * bonus (history_bonus). */
 void update_capture_history(search_state_t* search_state, const board_t* board, move_t mv, int depth) {
     add_capture_history_bonus(search_state, board, mv, history_bonus(depth));
 }

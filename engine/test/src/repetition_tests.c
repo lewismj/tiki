@@ -54,6 +54,24 @@ void test_position_irreversible_move_clears_history() {
     TEST_ASSERT_EQUAL_UINT64(board.hash, search_state.repetition_check[0]);
 }
 
+/* A position first reached by a double pawn push repeats like any other: the push leaves no en
+ * passant square in the hash when no pawn can take (en_passant_capturable). It used to, so the first
+ * occurrence never matched and the threefold was missed. */
+void test_repetition_after_double_push() {
+    board_t board;
+    search_state_t search_state;
+    init_search_state(&search_state);
+
+    /* After a2a4 (first occurrence), the knights go back and out twice. */
+    parse_position("position startpos moves g1f3 g8f6 a2a4 f6g8 f3g1 g8f6 g1f3", &board, &search_state);
+    TEST_ASSERT_EQUAL_INT(4, search_state.repetition_distance[search_state.repetition_index]);
+    TEST_ASSERT_FALSE(is_draw(&board, &search_state));
+    parse_position("position startpos moves g1f3 g8f6 a2a4 f6g8 f3g1 g8f6 g1f3 f6g8 f3g1 g8f6 g1f3", &board,
+                   &search_state);
+    TEST_ASSERT_EQUAL_INT(-4, search_state.repetition_distance[search_state.repetition_index]);
+    TEST_ASSERT_TRUE(is_draw(&board, &search_state));
+}
+
 void test_position_detects_game_repetition() {
     board_t board;
     search_state_t search_state;

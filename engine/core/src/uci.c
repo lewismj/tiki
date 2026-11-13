@@ -104,6 +104,8 @@ void parse_fen(const char* fen, board_t* board) {
         int ep_file = ptr[0] - 'a';
         int ep_rank = 8 - (ptr[1] - '0');
         board->en_passant = ep_rank * 8 + ep_file;
+        /* Kept only if the side to move has a pawn that could take there, as make_move does. */
+        if (!en_passant_capturable(board, board->en_passant, board->side)) board->en_passant = none_sq;
         ptr++;
     }
     else {

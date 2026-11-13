@@ -310,6 +310,19 @@ static inline_always void pop_move(board_t* board) {
     board->side ^= 1;
 }
 
+/**
+ * Whether a pawn of 'capturer' stands where it could take en passant on 'sq' (beside the pawn that
+ * has just moved two squares). Only then is the square kept as the position's en passant square
+ * (make_move, and parse_fen for a FEN that names one): otherwise it changes nothing about the
+ * position, and keeping it would give the position a different hash from its later repeats, so a
+ * threefold repetition whose first occurrence followed a double push would be missed, and the
+ * transposition table would treat the two as different positions. Whether the capture is legal (the
+ * pawn may be pinned) isn't checked.
+ */
+static inline_always bool en_passant_capturable(const board_t* board, square sq, colour capturer) {
+    return (pawn_attack(sq, capturer ^ 1) & board->pieces[capturer == white ? P : p]) != 0;
+}
+
 static inline_always bool make_move(board_t* board, move_t move) {
     /*
      * Put move and associate state onto the stack, put enough
@@ -369,11 +382,14 @@ static inline_always bool make_move(board_t* board, move_t move) {
         }
     }
 
-    /* Double push of pawn. */
+    /* Double push of pawn: the square behind it is en passant only if a pawn can take there
+     * (en_passant_capturable), so the position's hash matches the same position reached otherwise. */
     if (double_push_flag) {
         square sq = board->side == white ? target + 8 : target - 8;
-        board->en_passant = sq;
-        board->hash ^= get_enpassant_key(sq);
+        if (en_passant_capturable(board, sq, opponent)) {
+            board->en_passant = sq;
+            board->hash ^= get_enpassant_key(sq);
+        }
     }
     else if (enpassant_flag) {
         /*

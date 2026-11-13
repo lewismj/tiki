@@ -3,6 +3,7 @@
 
 
 void test_parse_fen_fields();
+void test_en_passant_only_when_capturable();
 void test_parse_move_promotions();
 void test_move_to_uci();
 void test_parse_move_castling();
