@@ -59,14 +59,75 @@ void test_position_detects_game_repetition() {
     search_state_t search_state;
     init_search_state(&search_state);
 
-    /* Knights out and back, the start position has occurred before. */
+    /* Knights out and back, the start position has occurred once before: recorded 4 plies back,
+     * but not a draw (the other side doesn't have to repeat it again). */
     parse_position("position startpos moves g1f3 g8f6 f3g1 f6g8", &board, &search_state);
     TEST_ASSERT_EQUAL_UINT64(start_hash(), board.hash);
-    TEST_ASSERT_TRUE(contains_repetition(&search_state, board.hash, board.fifty_move));
+    TEST_ASSERT_EQUAL_INT(4, search_state.repetition_distance[search_state.repetition_index]);
+    TEST_ASSERT_FALSE(is_draw(&board, &search_state));
+
+    /* Out and back again: the third occurrence is a draw (negative distance). */
+    parse_position("position startpos moves g1f3 g8f6 f3g1 f6g8 g1f3 g8f6 f3g1 f6g8", &board, &search_state);
+    TEST_ASSERT_EQUAL_INT(-4, search_state.repetition_distance[search_state.repetition_index]);
     TEST_ASSERT_TRUE(is_draw(&board, &search_state));
 
     parse_position("position startpos moves g1f3 g8f6", &board, &search_state);
     TEST_ASSERT_FALSE(is_draw(&board, &search_state));
+}
+
+/* Plays 'moves' (UCI, space separated) as the search would, recording each position a ply further on. */
+static void search_path(board_t* board, search_state_t* search_state, const char* moves) {
+    char buffer[256];
+    strcpy(buffer, moves);
+    for (char* token = strtok(buffer, " "); token != NULL; token = strtok(NULL, " ")) {
+        const move_t move = parse_move(token, board);
+        TEST_ASSERT_NOT_EQUAL(0, move);
+        TEST_ASSERT_TRUE(make_move(board, move));
+        ++search_state->ply;
+        ++search_state->repetition_index;
+        record_position(search_state, search_state->repetition_index, board->hash, board->fifty_move);
+    }
+}
+
+void test_repetition_inside_search_is_draw() {
+    board_t board;
+    search_state_t search_state;
+    init_search_state(&search_state);
+
+    /* Back to the root position: it occurred once, at the root, not a draw yet. */
+    parse_position("position startpos", &board, &search_state);
+    search_path(&board, &search_state, "g1f3 g8f6 f3g1 f6g8");
+    TEST_ASSERT_EQUAL_INT(4, search_state.ply);
+    TEST_ASSERT_FALSE(is_draw(&board, &search_state));
+
+    /* Nf3 Nf6 again: that position first occurred at ply 2, after the root, so its one repetition
+     * (positive distance, not a third occurrence) is already a draw. */
+    search_path(&board, &search_state, "g1f3 g8f6");
+    TEST_ASSERT_EQUAL_INT(4, search_state.repetition_distance[search_state.repetition_index]);
+    TEST_ASSERT_EQUAL_INT(6, search_state.ply);
+    TEST_ASSERT_TRUE(is_draw(&board, &search_state));
+}
+
+void test_repetition_before_root_needs_two() {
+    board_t board;
+    search_state_t search_state;
+    init_search_state(&search_state);
+
+    /* The start position occurred once before the root (the game went Nf3 Nf6, the root). The search
+     * returning to it with Ng1 Ng8 isn't a draw: the other side could still avoid repeating it (the
+     * old rule scored this 0). */
+    parse_position("position startpos moves g1f3 g8f6", &board, &search_state);
+    search_path(&board, &search_state, "f3g1 f6g8");
+    TEST_ASSERT_EQUAL_UINT64(start_hash(), board.hash);
+    TEST_ASSERT_EQUAL_INT(4, search_state.repetition_distance[search_state.repetition_index]);
+    TEST_ASSERT_FALSE(is_draw(&board, &search_state));
+
+    /* Twice before the root (start position, Nf3 Nf6 Ng1 Ng8, start position, Nf3 Nf6 = the root): the
+     * search returning to it again is its third occurrence, a draw. */
+    parse_position("position startpos moves g1f3 g8f6 f3g1 f6g8 g1f3 g8f6", &board, &search_state);
+    search_path(&board, &search_state, "f3g1 f6g8");
+    TEST_ASSERT_EQUAL_INT(-4, search_state.repetition_distance[search_state.repetition_index]);
+    TEST_ASSERT_TRUE(is_draw(&board, &search_state));
 }
 
 void test_position_long_history() {
@@ -128,16 +189,24 @@ void test_position_history_overflow() {
     parse_position(command, &board, &search_state);
     TEST_ASSERT_TRUE(search_state.repetition_index < MAX_MOVES - MAX_PLY);
     TEST_ASSERT_EQUAL_UINT64(board.hash, search_state.repetition_check[search_state.repetition_index]);
-    TEST_ASSERT_TRUE(contains_repetition(&search_state, board.hash, board.fifty_move));
+    /* Hundreds of occurrences of the start position: a draw (its distance survives the move of the
+     * last 100 entries to the front, it's relative). */
+    TEST_ASSERT_TRUE(search_state.repetition_distance[search_state.repetition_index] < 0);
+    TEST_ASSERT_TRUE(is_draw(&board, &search_state));
 }
 
 #define H 0x1234ULL
 
-/* History of hashes, the last entry is the current position. */
+/* History of hashes, the last entry is the current position (recorded without irreversible moves). */
 static void set_history(search_state_t* search_state, const uint64_t* hashes, int n) {
     init_search_state(search_state);
-    for (int i = 0; i < n; i++) search_state->repetition_check[i] = hashes[i];
+    for (int i = 0; i < n; i++) record_position(search_state, i, hashes[i], 100);
     search_state->repetition_index = (uint16_t) (n - 1);
+}
+
+/* find_repetition of the current position with 'fifty_move' plies since the last irreversible move. */
+static int repeats(search_state_t* search_state, int fifty_move) {
+    return find_repetition(search_state, search_state->repetition_index, fifty_move);
 }
 
 void test_repetition_same_side_to_move() {
@@ -146,17 +215,22 @@ void test_repetition_same_side_to_move() {
     /* Four plies back, same side to move. */
     const uint64_t four_back[] = { H, 1, 2, 3, H };
     set_history(&search_state, four_back, 5);
-    TEST_ASSERT_TRUE(contains_repetition(&search_state, H, 50));
+    TEST_ASSERT_EQUAL_INT(4, repeats(&search_state, 50));
 
     /* An odd distance is the other side to move, never a repetition. */
     const uint64_t odd[] = { 1, H, 2, 3, H };
     set_history(&search_state, odd, 5);
-    TEST_ASSERT_FALSE(contains_repetition(&search_state, H, 50));
+    TEST_ASSERT_EQUAL_INT(0, repeats(&search_state, 50));
 
     /* Two plies back can't repeat (each side made one move), so it isn't checked. */
     const uint64_t two_back[] = { 1, 2, H, 3, H };
     set_history(&search_state, two_back, 5);
-    TEST_ASSERT_FALSE(contains_repetition(&search_state, H, 50));
+    TEST_ASSERT_EQUAL_INT(0, repeats(&search_state, 50));
+
+    /* A third occurrence: the earlier one was itself a repetition, so the distance is negative. */
+    const uint64_t three[] = { H, 1, 2, 3, H, 4, 5, 6, H };
+    set_history(&search_state, three, 9);
+    TEST_ASSERT_EQUAL_INT(-4, repeats(&search_state, 50));
 }
 
 void test_repetition_limited_by_fifty_move() {
@@ -165,8 +239,8 @@ void test_repetition_limited_by_fifty_move() {
     set_history(&search_state, history, 7);
 
     /* The match is 6 plies back, only found if there's no irreversible move since. */
-    TEST_ASSERT_TRUE(contains_repetition(&search_state, H, 6));
-    TEST_ASSERT_FALSE(contains_repetition(&search_state, H, 5));
+    TEST_ASSERT_EQUAL_INT(6, repeats(&search_state, 6));
+    TEST_ASSERT_EQUAL_INT(0, repeats(&search_state, 5));
 }
 
 void test_repetition_limited_by_null_move() {
@@ -176,10 +250,10 @@ void test_repetition_limited_by_null_move() {
 
     /* A null move after the match, the repetition would span it. */
     search_state.null_move_index = 2;
-    TEST_ASSERT_FALSE(contains_repetition(&search_state, H, 50));
+    TEST_ASSERT_EQUAL_INT(0, repeats(&search_state, 50));
 
     search_state.null_move_index = 0;
-    TEST_ASSERT_TRUE(contains_repetition(&search_state, H, 50));
+    TEST_ASSERT_EQUAL_INT(6, repeats(&search_state, 50));
 }
 
 void test_insufficient_material() {
@@ -229,7 +303,8 @@ void test_search_scores_insufficient_material_as_draw() {
     TEST_ASSERT_TRUE(is_insufficient_material(&board));
 
     /* Searched from the child, a draw is detected at once (ply > 0). */
-    search_state.repetition_check[++search_state.repetition_index] = board.hash;
+    ++search_state.repetition_index;
+    record_position(&search_state, search_state.repetition_index, board.hash, board.fifty_move);
     search_state.ply = 1;
     TEST_ASSERT_EQUAL_INT(0, negamax(-INF, INF, 4, &board, &search_state, &limits));
 }

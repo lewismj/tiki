@@ -739,7 +739,7 @@ static bool is_fifty_move_draw(board_t* board) {
 bool is_draw(board_t* board, search_state_t* search_state) {
     return is_fifty_move_draw(board) ||
            is_insufficient_material(board) ||
-           contains_repetition(search_state, board->hash, board->fifty_move);
+           is_repetition(search_state, search_state->ply);
 }
 
 /**
@@ -1236,6 +1236,7 @@ static int negamax_node(int alpha,
         search_state->path_moves[search_state->ply] = 0;
         make_null_move(board);
         search_state->repetition_check[++search_state->repetition_index] = board->hash;
+        search_state->repetition_distance[search_state->repetition_index] = 0; /* Nothing repeats across it. */
         /* Repetitions can't span the null move, it isn't a real move. */
         const uint16_t null_move_index = search_state->null_move_index;
         search_state->null_move_index = search_state->repetition_index;
@@ -1425,7 +1426,8 @@ static int negamax_node(int alpha,
         const bool child_on_pv = pv_move != 0 && mv == pv_move;
         search_state->path_moves[search_state->ply] = mv;
         ++search_state->ply;
-        search_state->repetition_check[++search_state->repetition_index] = board->hash;
+        ++search_state->repetition_index;
+        record_position(search_state, search_state->repetition_index, board->hash, board->fifty_move);
 
         search_state->follow_pv = child_on_pv;
         /* The child's node type (negamax_node): the first move's child is a PV node in a PV node,
@@ -1751,6 +1753,8 @@ static int start_helpers(board_t* board, search_state_t* search_state, limits_t*
         search_state_t* state = &helper->search_state;
         memcpy(state->repetition_check, search_state->repetition_check,
                (search_state->repetition_index + 1) * sizeof(search_state->repetition_check[0]));
+        memcpy(state->repetition_distance, search_state->repetition_distance,
+               (search_state->repetition_index + 1) * sizeof(search_state->repetition_distance[0]));
         state->repetition_index = search_state->repetition_index;
         state->null_move_index = search_state->null_move_index;
         state->nmp_min_ply = 0;

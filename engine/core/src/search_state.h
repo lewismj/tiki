@@ -118,6 +118,7 @@ typedef struct align {
      * is simplified using a matrix.
      */
     uint64_t repetition_check[MAX_MOVES];
+    int16_t repetition_distance[MAX_MOVES]; /* Per entry of repetition_check, see find_repetition. */
     uint32_t pv_table[MAX_PLY][MAX_PLY];
     int32_t history_moves[12][64];
     int32_t capture_history[12][64][6]; /* [moving piece][target square][captured piece type], see score_move. */
@@ -192,6 +193,7 @@ static inline_always void init_search_state_with(search_state_t* search_state, c
     atomic_init(&search_state->shared_nodes, 0);
     search_state->ply = 0;
     search_state->repetition_index = 0;
+    memset(search_state->repetition_distance, 0, sizeof(search_state->repetition_distance));
     search_state->null_move_index = 0;
     search_state->score = 0;
     search_state->score_pv = false;
@@ -228,18 +230,43 @@ static inline_always void clear_pv_table(search_state_t* search_state) {
  * repetition_check[repetition_index] holds the current position, entries below it are the
  * earlier positions (game history from 'position', then the search path).
  *
- * Only positions with the same side to move (every second entry) since the last irreversible
- * move ('fifty_move' plies back) and the last null move can repeat. The position two plies back
- * can't, as each side has only made one move, so the scan starts four plies back.
+ * The position at 'index' (its hash already stored) against the earlier ones, as Stockfish's
+ * StateInfo::repetition: the distance in plies back to its last earlier occurrence, negated if that
+ * occurrence was itself a repetition (so this is the position's third occurrence), 0 if none. Only
+ * positions with the same side to move (every second entry) since the last irreversible move
+ * ('fifty_move' plies back) and the last null move can repeat. The position two plies back can't,
+ * as each side has only made one move, so the scan starts four plies back. Worked out once, when
+ * the position is recorded (record_position); is_repetition then only reads it.
  */
-static inline_always bool contains_repetition(search_state_t* search_state, const uint64_t position_hash, int fifty_move) {
-    int oldest = search_state->repetition_index - fifty_move;
+static inline_always int find_repetition(const search_state_t* search_state, int index, int fifty_move) {
+    int oldest = index - fifty_move;
     if (oldest < search_state->null_move_index) oldest = search_state->null_move_index;
 
-    for (int i = search_state->repetition_index - 4; i >= oldest; i -= 2) {
-        if (search_state->repetition_check[i] == position_hash) return true;
+    const uint64_t position_hash = search_state->repetition_check[index];
+    for (int i = index - 4; i >= oldest; i -= 2) {
+        if (search_state->repetition_check[i] == position_hash) {
+            return search_state->repetition_distance[i] != 0 ? -(index - i) : index - i;
+        }
     }
-    return false;
+    return 0;
+}
+
+/* Stores the position at 'index' of the history with its repetition distance (find_repetition). */
+static inline_always void record_position(search_state_t* search_state, int index, uint64_t position_hash,
+                                          int fifty_move) {
+    search_state->repetition_check[index] = position_hash;
+    search_state->repetition_distance[index] = (int16_t) find_repetition(search_state, index, fifty_move);
+}
+
+/**
+ * Whether the current position, 'ply' plies from the root, is a draw by repetition. As Stockfish:
+ * if it repeats once a position after the root (a side that can repeat once can keep repeating),
+ * or for the third time anywhere (a negative distance). A single earlier occurrence at or before
+ * the root isn't a draw, the other side doesn't have to repeat it again.
+ */
+static inline_always bool is_repetition(const search_state_t* search_state, int ply) {
+    const int distance = search_state->repetition_distance[search_state->repetition_index];
+    return distance != 0 && distance < ply;
 }
 
 

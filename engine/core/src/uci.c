@@ -211,7 +211,8 @@ void parse_position(const char* position, board_t* board, search_state_t* search
         while (*ptr) {
             move_t move = parse_move(ptr, board);
             if (move == 0) break;
-            search_state->repetition_check[search_state->repetition_index++] = board->hash;
+            record_position(search_state, search_state->repetition_index, board->hash, board->fifty_move);
+            search_state->repetition_index++;
             make_move(board, move);
             /* Positions before an irreversible move (pawn move or capture) can't repeat. */
             if (board->fifty_move == 0) search_state->repetition_index = 0;
@@ -220,6 +221,10 @@ void parse_position(const char* position, board_t* board, search_state_t* search
                 memmove(search_state->repetition_check,
                         search_state->repetition_check + search_state->repetition_index - 100,
                         100 * sizeof(search_state->repetition_check[0]));
+                /* The distances are relative, they stay valid. */
+                memmove(search_state->repetition_distance,
+                        search_state->repetition_distance + search_state->repetition_index - 100,
+                        100 * sizeof(search_state->repetition_distance[0]));
                 search_state->repetition_index = 100;
             }
             while (*ptr && *ptr != ' ') ptr++;
@@ -229,7 +234,7 @@ void parse_position(const char* position, board_t* board, search_state_t* search
 
 
     /* Root position, the search stores each child at the next index. */
-    search_state->repetition_check[search_state->repetition_index] = board->hash;
+    record_position(search_state, search_state->repetition_index, board->hash, board->fifty_move);
 
     board->stack_ptr = 0; /* Reset the stack pointer for undo state. */
 }

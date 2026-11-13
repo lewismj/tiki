@@ -6,6 +6,8 @@ void test_position_resets_history();
 void test_position_records_root();
 void test_position_irreversible_move_clears_history();
 void test_position_detects_game_repetition();
+void test_repetition_inside_search_is_draw();
+void test_repetition_before_root_needs_two();
 void test_position_long_history();
 void test_go_preserves_history();
 void test_fifty_move_draw();

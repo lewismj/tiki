@@ -188,6 +188,8 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_position_records_root);
     RUN_TEST(test_position_irreversible_move_clears_history);
     RUN_TEST(test_position_detects_game_repetition);
+    RUN_TEST(test_repetition_inside_search_is_draw);
+    RUN_TEST(test_repetition_before_root_needs_two);
     RUN_TEST(test_position_long_history);
     RUN_TEST(test_go_preserves_history);
     RUN_TEST(test_fifty_move_draw);
