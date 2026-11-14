@@ -85,7 +85,10 @@ enum {
     IIR_MIN_DEPTH_DEFAULT = IIR_MIN_DEPTH,
     ASPIRATION_WINDOW_DEFAULT = ASPIRATION_WINDOW,
     DELTA_MARGIN_DEFAULT = DELTA_MARGIN,
-    CAPTURE_HISTORY_DIVISOR_DEFAULT = CAPTURE_HISTORY_DIVISOR
+    CAPTURE_HISTORY_DIVISOR_DEFAULT = CAPTURE_HISTORY_DIVISOR,
+    PROBCUT_MIN_DEPTH_DEFAULT = PROBCUT_MIN_DEPTH,
+    PROBCUT_MARGIN_DEFAULT = PROBCUT_MARGIN,
+    PROBCUT_IMPROVING_DEFAULT = PROBCUT_IMPROVING
 };
 
 extern int tune_rfp_margin;
@@ -135,6 +138,9 @@ extern int tune_iir_min_depth;
 extern int tune_aspiration_window;
 extern int tune_delta_margin;
 extern int tune_capture_history_divisor;
+extern int tune_probcut_min_depth;
+extern int tune_probcut_margin;
+extern int tune_probcut_improving;
 
 #undef RFP_MARGIN
 #undef RFP_MAX_DEPTH
@@ -183,6 +189,9 @@ extern int tune_capture_history_divisor;
 #undef ASPIRATION_WINDOW
 #undef DELTA_MARGIN
 #undef CAPTURE_HISTORY_DIVISOR
+#undef PROBCUT_MIN_DEPTH
+#undef PROBCUT_MARGIN
+#undef PROBCUT_IMPROVING
 #define RFP_MARGIN tune_rfp_margin
 #define RFP_MAX_DEPTH tune_rfp_max_depth
 #define FUTILITY_MARGIN tune_futility_margin
@@ -230,6 +239,9 @@ extern int tune_capture_history_divisor;
 #define ASPIRATION_WINDOW tune_aspiration_window
 #define DELTA_MARGIN tune_delta_margin
 #define CAPTURE_HISTORY_DIVISOR tune_capture_history_divisor
+#define PROBCUT_MIN_DEPTH tune_probcut_min_depth
+#define PROBCUT_MARGIN tune_probcut_margin
+#define PROBCUT_IMPROVING tune_probcut_improving
 #endif
 
 #endif

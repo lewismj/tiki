@@ -100,6 +100,9 @@ int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history, b
 int eval_correction(const board_t* board, const search_state_t* search_state);
 void update_correction(search_state_t* search_state, const board_t* board, int depth, int error);
 int iir_reduction(int depth, move_t tt_move);
+int probcut_beta(int beta, bool improving);
+bool can_probcut(int depth, int ply, int beta, bool in_check, bool is_pv_node, bool tt_hit, int tt_depth,
+                 tt_entry_type tt_type, int tt_score, int pc_beta);
 bool can_singular_extend(int depth, int ply, int root_depth, move_t tt_move, int tt_depth, tt_entry_type tt_type,
                          int tt_score);
 int singular_beta(int tt_score, int depth);

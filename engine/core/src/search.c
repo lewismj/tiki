@@ -677,6 +677,24 @@ int iir_reduction(int depth, move_t tt_move) {
     return (depth >= IIR_MIN_DEPTH && tt_move == 0) ? 1 : 0;
 }
 
+/* ProbCut's bound: beta plus the margin, less when the position is improving. */
+int probcut_beta(int beta, bool improving) {
+    return beta + PROBCUT_MARGIN - (improving ? PROBCUT_IMPROVING : 0);
+}
+
+/**
+ * ProbCut (as Stockfish's): at a node deep enough that isn't the root, a PV node or in check, a
+ * capture or promotion that beats pc_beta (probcut_beta) in a search PROBCUT_REDUCTION plies
+ * shallower is taken to beat beta at full depth, and the node is cut off without searching it. Not
+ * when beta is a mate score, and not when the TT already says the node is below pc_beta from a
+ * search at least as deep as the entry ProbCut would save (PROBCUT_TT_DEPTH): the try would only fail.
+ */
+bool can_probcut(int depth, int ply, int beta, bool in_check, bool is_pv_node, bool tt_hit, int tt_depth,
+                 tt_entry_type tt_type, int tt_score, int pc_beta) {
+    if (ply == 0 || in_check || is_pv_node || depth < PROBCUT_MIN_DEPTH || is_mate_score(beta)) return false;
+    return !(tt_hit && tt_type != tt_none && tt_depth >= PROBCUT_TT_DEPTH(depth) && tt_score < pc_beta);
+}
+
 /**
  * Singular extensions: whether the TT move is worth testing for being much better than every
  * other move. The entry must be deep enough and a lower bound or exact (an upper bound says
@@ -1263,6 +1281,52 @@ static int negamax_node(int alpha,
             search_state->nmp_min_ply = 0;
             if (limits->stop_search_flag) return STOPPED_SEARCH;
             if (verified >= beta) return is_mate_score(verified) ? beta : verified;
+        }
+    }
+
+    /* ProbCut (can_probcut). The captures and promotions whose exchange alone brings the eval up to
+     * pc_beta (SEE), best first, the TT move ahead of them: qsearch first, and only if that holds
+     * the reduced search. A cutoff is saved as a lower bound at PROBCUT_TT_DEPTH (the reduced search plus
+     * the move), and returned less the margin (fail-soft, as Stockfish; a mate score as it is). */
+    const int pc_beta = probcut_beta(beta, improving);
+    if (!excluded_move && can_probcut(depth, search_state->ply, beta, in_check, is_pv_node, tt_hit,
+                                      tt_hit ? tt.depth : 0, tt_hit ? tt.type : tt_none, tt_hit ? tt.score : 0,
+                                      pc_beta)) {
+        move_buffer_t pc_buffer;
+        int pc_scores[MOVE_BUFFER_SIZE];
+        cont_rows_t pc_rows;
+        pc_rows.row[0] = NULL;
+        generate_noisy(board, &pc_buffer);
+        for (int i = 0; i < pc_buffer.index; i++) {
+            pc_scores[i] = score_move_with(pc_buffer.moves[i], tt_move, board, search_state, &pc_rows);
+        }
+        const int pc_depth = depth - PROBCUT_REDUCTION;
+        for (int i = 0; i < pc_buffer.index; i++) {
+            pick_best(&pc_buffer, pc_scores, i, pc_buffer.index);
+            const move_t mv = pc_buffer.moves[i];
+            if (!see_ge(board, mv, pc_beta - static_eval)) continue;
+            if (!search_make_move(board, search_state, mv)) {
+                pop_move(board);
+                continue;
+            }
+            search_state->path_moves[search_state->ply] = mv;
+            ++search_state->ply;
+            ++search_state->repetition_index;
+            record_position(search_state, search_state->repetition_index, board->hash, board->fifty_move);
+            search_state->follow_pv = false;
+            int pc_score = -quiescence(-pc_beta, -pc_beta + 1, board, search_state, limits);
+            if (pc_score >= pc_beta && pc_depth > 0 && !limits->stop_search_flag) {
+                search_state->follow_pv = false;
+                pc_score = -negamax_node(-pc_beta, -pc_beta + 1, pc_depth, !cut_node, board, search_state, limits);
+            }
+            --search_state->ply;
+            --search_state->repetition_index;
+            search_pop_move(board, search_state);
+            if (limits->stop_search_flag) return STOPPED_SEARCH;
+            if (pc_score >= pc_beta) {
+                tt_save(board->hash, tt_beta, PROBCUT_TT_DEPTH(depth), search_state->ply, pc_score, mv, raw_eval);
+                return is_mate_score(pc_score) ? pc_score : pc_score - (pc_beta - beta);
+            }
         }
     }
 

@@ -85,6 +85,12 @@ void init_lmr_table();
 #define SEE_PRUNE_MAX_DEPTH 8    /* SEE pruning in the main search up to this depth, skipping...             */
 #define SEE_QUIET_MARGIN 60      /* ...quiet moves with SEE < -margin * depth...                             */
 #define SEE_CAPTURE_MARGIN 20    /* ...and captures with SEE < -margin * depth^2.                            */
+#define PROBCUT_MIN_DEPTH 5      /* ProbCut from this depth: a capture that still beats beta + margin...     */
+#define PROBCUT_MARGIN 200       /* ...(this much less when the position is improving)...                    */
+#define PROBCUT_IMPROVING 50
+#define PROBCUT_REDUCTION 4      /* ...in a search this much shallower cuts the node off (can_probcut).      */
+/* The depth a ProbCut cutoff is worth in the TT: the reduced search plus the move made before it. */
+#define PROBCUT_TT_DEPTH(depth) ((depth) - PROBCUT_REDUCTION + 1)
 #define SE_MIN_DEPTH 6           /* Singular extensions from this depth, with a TT entry at least...         */
 #define SE_TT_DEPTH_MARGIN 3     /* ...this much shallower than the node, if every other move scores below...*/
 #define SE_REDUCTION 1           /* A TT move that isn't singular but beat beta is searched this much        */

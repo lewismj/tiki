@@ -62,6 +62,7 @@ void test_tt_lookup();
 void test_singular_extension_conditions();
 void test_singular_result();
 void test_tunable_parameters();
+void test_probcut_conditions();
 void test_excluded_move_search();
 void test_iir_reduction();
 void test_aspiration_search();

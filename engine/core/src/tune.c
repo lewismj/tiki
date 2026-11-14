@@ -52,6 +52,9 @@ int tune_iir_min_depth = IIR_MIN_DEPTH_DEFAULT;
 int tune_aspiration_window = ASPIRATION_WINDOW_DEFAULT;
 int tune_delta_margin = DELTA_MARGIN_DEFAULT;
 int tune_capture_history_divisor = CAPTURE_HISTORY_DIVISOR_DEFAULT;
+int tune_probcut_min_depth = PROBCUT_MIN_DEPTH_DEFAULT;
+int tune_probcut_margin = PROBCUT_MARGIN_DEFAULT;
+int tune_probcut_improving = PROBCUT_IMPROVING_DEFAULT;
 
 /* name, variable, min, max, c_end, r_end. c_end is about a twentieth of the range, at least 0.5
  * (OpenBench's minimum for integers); r_end is OpenBench's usual 0.002. */
@@ -106,6 +109,10 @@ const tunable_t tunables[] = {
     { "ASPIRATION_WINDOW",   &tune_aspiration_window,    8,   80,    3.6, 0.002 },
     { "DELTA_MARGIN",        &tune_delta_margin,   50,  400,   17.5, 0.002 },
     { "CAPTURE_HISTORY_DIVISOR", &tune_capture_history_divisor,    8,   64,    2.8, 0.002 },
+    /* The minimum depth stays above PROBCUT_REDUCTION (4), so the reduced search has a depth. */
+    { "PROBCUT_MIN_DEPTH",   &tune_probcut_min_depth,    5,   10,    0.5, 0.002 },
+    { "PROBCUT_MARGIN",      &tune_probcut_margin,  150,  400,   12.5, 0.002 },
+    { "PROBCUT_IMPROVING",   &tune_probcut_improving,    0,  140,    7.0, 0.002 },
 };
 const int tunable_count = (int) (sizeof(tunables) / sizeof(tunables[0]));
 #else

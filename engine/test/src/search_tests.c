@@ -1322,10 +1322,43 @@ void test_excluded_move_search() {
     TEST_ASSERT_EQUAL_INT(0, negamax(-50, -49, 4, &board, &search_state, &limits));
 }
 
+void test_probcut_conditions() {
+    /* The bound: beta plus the margin, less when improving. */
+    TEST_ASSERT_EQUAL_INT(30 + PROBCUT_MARGIN, probcut_beta(30, false));
+    TEST_ASSERT_EQUAL_INT(30 + PROBCUT_MARGIN - PROBCUT_IMPROVING, probcut_beta(30, true));
+    TEST_ASSERT_TRUE(PROBCUT_IMPROVING < PROBCUT_MARGIN);
+    /* The reduced search has a depth. */
+    TEST_ASSERT_TRUE(PROBCUT_MIN_DEPTH > PROBCUT_REDUCTION);
+
+    const int d = PROBCUT_MIN_DEPTH;
+    const int pc_beta = probcut_beta(0, false);
+    /* From the minimum depth, at a node that isn't the root, a PV node or in check, without a TT entry. */
+    TEST_ASSERT_TRUE(can_probcut(d, 1, 0, false, false, false, 0, tt_none, 0, pc_beta));
+    TEST_ASSERT_FALSE(can_probcut(d - 1, 1, 0, false, false, false, 0, tt_none, 0, pc_beta));
+    TEST_ASSERT_FALSE(can_probcut(d, 0, 0, false, false, false, 0, tt_none, 0, pc_beta));
+    TEST_ASSERT_FALSE(can_probcut(d, 1, 0, true, false, false, 0, tt_none, 0, pc_beta));
+    TEST_ASSERT_FALSE(can_probcut(d, 1, 0, false, true, false, 0, tt_none, 0, pc_beta));
+    /* Not when beta is a mate score. */
+    TEST_ASSERT_FALSE(can_probcut(d, 1, MATE_VALUE - 10, false, false, false, 0, tt_none, 0, MATE_VALUE));
+    TEST_ASSERT_FALSE(can_probcut(d, 1, -MATE_VALUE + 10, false, false, false, 0, tt_none, 0, pc_beta));
+
+    /* A cutoff is worth the reduced search plus the move made before it. */
+    const int saved = PROBCUT_TT_DEPTH(d);
+    TEST_ASSERT_EQUAL_INT(d - PROBCUT_REDUCTION + 1, saved);
+
+    /* A TT entry at least that deep with a score below the bound: the try would fail. */
+    TEST_ASSERT_FALSE(can_probcut(d, 1, 0, false, false, true, saved, tt_alpha, pc_beta - 1, pc_beta));
+    TEST_ASSERT_FALSE(can_probcut(d, 1, 0, false, false, true, d, tt_exact, pc_beta - 1, pc_beta));
+    /* A score at the bound, a shallower entry, or one holding only the eval doesn't stop it. */
+    TEST_ASSERT_TRUE(can_probcut(d, 1, 0, false, false, true, saved, tt_beta, pc_beta, pc_beta));
+    TEST_ASSERT_TRUE(can_probcut(d, 1, 0, false, false, true, saved - 1, tt_alpha, pc_beta - 1, pc_beta));
+    TEST_ASSERT_TRUE(can_probcut(d, 1, 0, false, false, true, saved, tt_none, 0, pc_beta));
+}
+
 void test_tunable_parameters() {
 #ifdef TIKI_TUNE
     /* A tuning build: the parameters are variables, set by name (any case) and kept in range. */
-    TEST_ASSERT_EQUAL_INT(47, tunable_count);
+    TEST_ASSERT_EQUAL_INT(50, tunable_count);
     const int saved = RFP_MARGIN;
     TEST_ASSERT_TRUE(set_tunable("rfp_margin", 10, 120));
     TEST_ASSERT_EQUAL_INT(120, RFP_MARGIN);

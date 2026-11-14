@@ -63,6 +63,44 @@ HalfKAv2_hm (22528) -> 512 per side -> pairwise -> concat (512) -> 16 -> CReLU -
 | 5. [Test it in games](#5-test-it-in-games) | `scripts/match.bat`, `scripts/match.sh` | Elo against the current net |
 | 6. [Promote it](#6-promote-it) | copy into `models/` | the engine's default network |
 
+The data and training steps (2 and 3) can also be run from a terminal interface, `tui.py`:
+
+```bash
+pip install textual          # once; the interface's only extra dependency
+python3 training/tui.py      # Linux, WSL, macOS
+python training\tui.py       # Windows (PowerShell or cmd)
+```
+
+On Windows the interface runs natively and each job runs in WSL (through `wsl.exe`), where the tools and PyTorch
+are, so the paths in its settings are WSL paths (`/mnt/f/lichess2`; a Windows path such as `F:\lichess2` is
+understood and converted). The Windows and WSL interfaces keep separate settings and jobs (each its own home
+directory).
+
+| Stage | Runs |
+|---|---|
+| Prepare data | the next four in order, for the months that aren't in the rescaled directory yet |
+| Download | `lichess_download.py` |
+| Convert | `lichess_convert`, one month at a time, skipping months already converted |
+| Relabel | `syzygy_relabel`, by month, or the whole directory without months |
+| Rescale | `rescale.py` (or `--fit-only`), by month, or the whole directory without months |
+| Train | `train_streaming.py` |
+| Tests | the trainer's tests |
+
+- **Running:** pick a stage on the left, set its options, and press F5 (F8 stops it; again to insist). The
+  commands a stage will run are shown under its options before it runs, and its output and progress below.
+- **Shared settings:** the months and the directories are the same fields on every stage that uses them.
+  Everything is remembered in `~/.config/tiki-training-tui` (or `TIKI_TUI_DIR`), with each job's log.
+- **Jobs are detached:** each stage runs as its own job (a download can run beside a conversion), stopping at
+  the first command that fails. Closing the interface (Ctrl+Q) leaves the jobs running, and opening it again
+  shows them.
+- **Training graphs:** the Train stage plots the run in its *Output* directory, read from its `train.log` every
+  few seconds: the training and validation loss by epoch, and the validation loss's improvement over the first
+  epoch in percent, with the latest and best epochs in a line above. It works for any run, started from the
+  interface or not, so pointing *Output* at a run in progress or a finished one shows its curves.
+- **Training never overwrites a run:** if the output directory already has checkpoints, Train asks for a
+  resume (tick *Resume latest*, or name a checkpoint) or another directory.
+- The C tools are built with `make` first if they aren't there. `pipeline.py` has the stages and their commands.
+
 ### 1. Build the engine
 
 See the top-level README.
@@ -479,6 +517,7 @@ TIKI_APP=../build/engine/app/tiki python3 -m unittest discover -s tests
 | `test_stream.py` | training and validation cover every record of every file once, and validation stays the same when files are added; a pass yields every training record once, mixed across files, and the next pass reorders them; epochs of a fixed number of batches, and the validation limit; a small `train_streaming.py` run that trains and exports |
 | `test_lc0.py` | lc0 records built as lc0 encodes them decode to the real position's features, for either side to move; the policy move table against lc0's published one; the quiet-position filter (captures, en passant, promotions, check) and the other filters; rejecting records that aren't positions or V6; scores on the trainer's scale; downloading, resuming, and a server that ignores the resume request |
 | `test_score_scale.py` | fitting the scale recovers a known one; sampling across files in proportion to their sizes |
+| `test_pipeline.py` | `tui.py`'s stages (`pipeline.py`): month ranges; Windows paths to WSL paths and back; each stage's commands from the settings; Prepare doing only the months that are missing; Train refusing to overwrite a run, and resuming from the last checkpoint; jobs running their steps in order, stopping at a failure, skipping outputs that exist, and reporting after a stop; reading progress from a job's log and from `train.log`; a run's losses by epoch from `train.log` (a new run or a resume in the same directory replacing the old epochs); the braille chart (`chart.py`: size, axis labels, a fixed x range, no data); and a headless run of the interface (skipped without `textual`). Runs on Linux and on Windows (jobs in WSL) |
 | `test_rescale.py` | rounding and clamping; files on different scales all fit 400 afterwards with only their scores changed; `.part` files left out; existing outputs skipped, the source never overwritten; `--fit-only` writes nothing |
 
 ### Next steps
