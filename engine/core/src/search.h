@@ -18,11 +18,36 @@
  * or 0 when there are no legal moves.
  *
  * With limits->threads > 1 the search is Lazy SMP: helper threads search the same position on
- * their own board and search state, sharing only the TT. The main thread (this one) checks the
- * clock, prints 'info' with the total nodes and returns the move. When it finishes the helpers
- * are stopped by setting stop_search_flag, except with 'go infinite' where they run until 'stop'.
+ * their own board and search state, sharing the TT and the correction history. The main thread
+ * (this one) checks the clock and prints 'info' with the total nodes. When it finishes the helpers
+ * are stopped by setting stop_search_flag, except with 'go infinite' where they run until 'stop',
+ * and the move is chosen by a vote of every thread's last completed depth (vote_best_thread).
  */
 move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* limits);
+
+/* A thread's last completed depth, for the Lazy SMP vote: its best move (0 if no depth completed),
+ * score and depth. */
+typedef struct {
+    move_t move;
+    int score;
+    int depth;
+} thread_result_t;
+
+/* Added to each thread's score above the lowest in the vote (cp), so the lowest still counts. */
+#define VOTE_SCORE_OFFSET 5
+
+/**
+ * Lazy SMP: which thread's move to play, from each thread's last completed depth ('results', the
+ * main thread first). Returns its index, or -1 if no thread completed a depth.
+ *
+ * Each thread votes for its move with weight (score - lowest score + VOTE_SCORE_OFFSET) * depth,
+ * so deeper and better scored results count for more, and the move with the most votes wins (on
+ * a tie, the thread with the higher weight). Decisive scores come first: a thread that has found
+ * a win is chosen over any that hasn't, the fastest win among them; a thread that sees itself lost
+ * is chosen only if every thread does, the slowest loss among them. Starts from the main thread,
+ * which keeps its move unless another thread is strictly better by those rules.
+ */
+int vote_best_thread(const thread_result_t* results, int count);
 
 /**
  * The factor on the soft time limit after a completed depth (see limits.h): from how many depths

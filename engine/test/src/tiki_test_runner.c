@@ -162,6 +162,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_lmr_cut_node_and_improving);
     RUN_TEST(test_correction_history_learns_without_overshoot);
     RUN_TEST(test_correction_history_keys);
+    RUN_TEST(test_vote_best_thread);
     RUN_TEST(test_tt_lookup);
     RUN_TEST(test_singular_extension_conditions);
     RUN_TEST(test_singular_result);

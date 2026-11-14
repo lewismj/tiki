@@ -22,8 +22,11 @@ static inline_always void corr_indices(const board_t* board, int indices[CORR_TA
 /* The correction from the position's entries (side to move): (pawn entry * CORR_PAWN_WEIGHT + the
  * other two * CORR_NONPAWN_WEIGHT) / 100, in cp, within +-CORR_MAX. */
 static inline_always int correction_at(const search_state_t* search_state, int side, const int indices[CORR_TABLES]) {
-    const int16_t (*t)[CORR_SIZE] = (*search_state->corr_history)[side];
-    const int sum = t[0][indices[0]] * CORR_PAWN_WEIGHT + (t[1][indices[1]] + t[2][indices[2]]) * CORR_NONPAWN_WEIGHT;
+    _Atomic int16_t (*t)[CORR_SIZE] = (*search_state->corr_history)[side];
+    const int pawn = atomic_load_explicit(&t[0][indices[0]], memory_order_relaxed);
+    const int white = atomic_load_explicit(&t[1][indices[1]], memory_order_relaxed);
+    const int black = atomic_load_explicit(&t[2][indices[2]], memory_order_relaxed);
+    const int sum = pawn * CORR_PAWN_WEIGHT + (white + black) * CORR_NONPAWN_WEIGHT;
     const int correction = sum / (100 * CORR_GRAIN);
     return correction > CORR_MAX ? CORR_MAX : (correction < -CORR_MAX ? -CORR_MAX : correction);
 }
@@ -56,11 +59,12 @@ static inline_always void update_correction_at(search_state_t* search_state, int
     if (bonus < -CORR_ENTRY_MAX) bonus = -CORR_ENTRY_MAX;
     const int magnitude = bonus < 0 ? -bonus : bonus;
     for (int i = 0; i < CORR_TABLES; i++) {
-        int16_t* entry = &(*search_state->corr_history)[side][i][indices[i]];
-        int v = *entry + bonus - *entry * magnitude / CORR_ENTRY_MAX;
+        _Atomic int16_t* entry = &(*search_state->corr_history)[side][i][indices[i]];
+        const int old = atomic_load_explicit(entry, memory_order_relaxed);
+        int v = old + bonus - old * magnitude / CORR_ENTRY_MAX;
         if (v > CORR_ENTRY_MAX) v = CORR_ENTRY_MAX;
         if (v < -CORR_ENTRY_MAX) v = -CORR_ENTRY_MAX;
-        *entry = (int16_t) v;
+        atomic_store_explicit(entry, (int16_t) v, memory_order_relaxed);
     }
 }
 
@@ -1123,12 +1127,18 @@ static move_t picker_next(move_picker_t* picker) {
  * Not after a capture or promotion (the score is the tactic's), not mate scores, and a bound only
  * on the side that shows an error: a fail high above the eval, a fail low below it. The caller
  * leaves out nodes in check (no eval) and singular extension searches (not the node's result).
+ *
+ * The error is against the correction the node used ('corrected_eval'). When other threads share
+ * the table (Lazy SMP) it's against the correction as it is now instead: several threads finishing
+ * the same positions would otherwise each add a step for the same error and overshoot. With one
+ * thread the search is unchanged (the step size is tuned for it).
  */
 static inline_always void learn_correction(search_state_t* search_state, int side, const int indices[CORR_TABLES],
-                                           int depth, int score, int corrected_eval, tt_entry_type bound,
-                                           move_t best_move) {
+                                           int depth, int score, int raw_eval, int corrected_eval,
+                                           tt_entry_type bound, move_t best_move) {
     if (is_mate_score(score)) return;
     if (best_move && (get_capture_flag(best_move) || get_promoted_piece(best_move))) return;
+    if (search_state->corr_shared) corrected_eval = raw_eval + correction_at(search_state, side, indices);
     if (bound == tt_beta && score <= corrected_eval) return;
     if (bound == tt_alpha && score >= corrected_eval) return;
     update_correction_at(search_state, side, indices, depth, score - corrected_eval);
@@ -1572,8 +1582,8 @@ static int negamax_node(int alpha,
                              mv == tt_move);
                 if (!excluded_move) {
                     tt_save(board->hash, tt_beta, depth, search_state->ply, score, mv, raw_eval);
-                    if (!in_check) learn_correction(search_state, board->side, corr_idx, depth, score, corrected_eval,
-                                                    tt_beta, mv);
+                    if (!in_check) learn_correction(search_state, board->side, corr_idx, depth, score, raw_eval,
+                                                    corrected_eval, tt_beta, mv);
                 }
                 if (!is_capture) store_killer(search_state, mv);
                 if (is_quiet) {
@@ -1615,12 +1625,12 @@ static int negamax_node(int alpha,
      * an upper bound: best_score, at or below the original alpha. */
     if (alpha > alpha_orig) {
         tt_save(board->hash, tt_exact, depth, search_state->ply, best_score, best_move, raw_eval);
-        if (!in_check) learn_correction(search_state, board->side, corr_idx, depth, best_score, corrected_eval, tt_exact,
-                                        best_move);
+        if (!in_check) learn_correction(search_state, board->side, corr_idx, depth, best_score, raw_eval,
+                                        corrected_eval, tt_exact, best_move);
     } else {
         tt_save(board->hash, tt_alpha, depth, search_state->ply, best_score, 0, raw_eval);
-        if (!in_check) learn_correction(search_state, board->side, corr_idx, depth, best_score, corrected_eval, tt_alpha,
-                                        0);
+        if (!in_check) learn_correction(search_state, board->side, corr_idx, depth, best_score, raw_eval,
+                                        corrected_eval, tt_alpha, 0);
     }
 
     return best_score;
@@ -1697,7 +1707,8 @@ int aspiration_search(board_t* board, search_state_t* search_state, limits_t* li
 
 /**
  * Lazy SMP helper: its own board and search state, the TT is shared. It searches the same root
- * as the main thread and its results reach the main thread only through the TT. Odd helpers
+ * as the main thread and its results reach the main thread through the TT and the shared
+ * correction history (corr_history_t). Odd helpers
  * search one ply deeper, so the threads spread over more of the tree.
  */
 typedef struct {
@@ -1705,6 +1716,9 @@ typedef struct {
     search_state_t search_state;
     limits_t* limits;
     pthread_t thread;
+    thread_result_t result;        /* Its last completed depth, for the vote (read after it's joined). */
+    uint32_t pv[MAX_PLY];          /* That depth's PV, printed if its move is chosen. */
+    uint8_t pv_length;
 } search_helper_t;
 
 /**
@@ -1724,13 +1738,10 @@ static search_helper_t* allocate_helpers(int count) {
 #endif
 }
 
-/* Frees 'count' helpers and their continuation history tables. */
+/* Frees 'count' helpers and their continuation history tables (the correction history is shared). */
 static void free_helpers(search_helper_t* helpers, int count) {
     if (helpers == NULL) return;
-    for (int i = 0; i < count; i++) {
-        free(helpers[i].search_state.cont_history);
-        free(helpers[i].search_state.corr_history);
-    }
+    for (int i = 0; i < count; i++) free(helpers[i].search_state.cont_history);
 #if defined(_WIN32)
     _aligned_free(helpers);
 #else
@@ -1753,6 +1764,12 @@ static void* helper_search(void* arg) {
     for (int i = 1; i <= limits->depth && !limits->stop_search_flag; i++) {
         const int depth = i + extra <= limits->depth ? i + extra : limits->depth;
         score = aspiration_search(&helper->board, &helper->search_state, limits, depth, score);
+        /* A stopped depth is incomplete (its PV partly overwritten): the vote takes the last one before. */
+        const search_state_t* state = &helper->search_state;
+        if (limits->stop_search_flag || !state->pv_length[0]) continue;
+        helper->result = (thread_result_t) { state->pv_table[0][0], score, depth };
+        helper->pv_length = state->pv_length[0];
+        memcpy(helper->pv, state->pv_table[0], helper->pv_length * sizeof(helper->pv[0]));
     }
     atomic_store_explicit(&helper->search_state.shared_nodes, helper->search_state.nodes, memory_order_relaxed);
     return NULL;
@@ -1766,7 +1783,7 @@ static uint64_t total_nodes(const search_state_t* search_state, const search_hel
     return nodes;
 }
 
-static void print_info(int score, int depth, uint64_t nodes, const search_state_t* search_state, const limits_t* limits) {
+static void print_info(int score, int depth, uint64_t nodes, const uint32_t* pv, int pv_length, const limits_t* limits) {
     const uint64_t time = clock_time_ms() - limits->start_time;
     if (score > -MATE_VALUE && score < -MATE_SCORE) {
         printf("info score mate %d depth %d nodes %" PRIu64 " time %" PRIu64 " nps %" PRIu64 " pv ",
@@ -1784,8 +1801,8 @@ static void print_info(int score, int depth, uint64_t nodes, const search_state_
                score, depth, nodes, time, nodes * 1000 / (time ? time : 1));
     }
 
-    for (int count = 0; count < search_state->pv_length[0]; count++) {
-        print_move(search_state->pv_table[0][count], min);
+    for (int count = 0; count < pv_length; count++) {
+        print_move(pv[count], min);
         printf(" ");
     }
     printf("\n");
@@ -1800,24 +1817,20 @@ static void print_info(int score, int depth, uint64_t nodes, const search_state_
 static int start_helpers(board_t* board, search_state_t* search_state, limits_t* limits, search_helper_t** helpers) {
     int count = limits->threads - 1;
     *helpers = helpers_kept;
+    search_state->corr_shared = false; /* Set below once a helper shares the correction history. */
     if (count <= 0) return 0;
 
     /* Nothing in a helper carries over between searches (history is the main thread's), so a larger
      * set starts afresh. */
     if (count > helpers_allocated) {
         search_helper_t* grown = allocate_helpers(count);
-        /* Each helper has its own continuation and correction history (cont_history_t, 3.5 MB,
-         * corr_history_t, 192 KB). */
+        /* Each helper has its own continuation history (cont_history_t, 3.5 MB); the correction
+         * history is the main thread's, shared (set for each search below). */
         int tables = 0;
         while (grown != NULL && tables < count) {
             cont_history_t* table = malloc(sizeof(cont_history_t));
-            corr_history_t* corrections = malloc(sizeof(corr_history_t));
-            if (table == NULL || corrections == NULL) {
-                free(table);
-                free(corrections);
-                break;
-            }
-            init_search_state_with(&grown[tables].search_state, table, corrections);
+            if (table == NULL) break;
+            init_search_state_with(&grown[tables].search_state, table, search_state->corr_history);
             tables++;
         }
         if (grown == NULL || tables < count) {
@@ -1853,11 +1866,15 @@ static int start_helpers(board_t* board, search_state_t* search_state, limits_t*
         memcpy(state->history_moves, search_state->history_moves, sizeof(state->history_moves));
         memcpy(state->capture_history, search_state->capture_history, sizeof(state->capture_history));
         memcpy(*state->cont_history, *search_state->cont_history, sizeof(cont_history_t));
-        memcpy(*state->corr_history, *search_state->corr_history, sizeof(corr_history_t));
+        state->corr_history = search_state->corr_history; /* Shared, see corr_history_t. */
+        state->corr_shared = true;
+        helper->result.move = 0; /* No depth completed yet. */
+        helper->pv_length = 0;
         atomic_init(&state->shared_nodes, 0);
         helper->limits = limits;
         if (pthread_create(&helper->thread, NULL, helper_search, helper) != 0) break;
     }
+    search_state->corr_shared = started > 0;
     return started;
 }
 
@@ -1883,6 +1900,74 @@ double tm_scale(int stability, uint64_t best_move_nodes, uint64_t root_nodes) {
     return stability_scale * nodes_scale;
 }
 
+int vote_best_thread(const thread_result_t* results, int count) {
+    int best = -1;
+    int min_score = INF;
+    for (int i = 0; i < count; i++) {
+        if (!results[i].move) continue;
+        if (best < 0) best = i;
+        if (results[i].score < min_score) min_score = results[i].score;
+    }
+    if (best < 0) return -1;
+
+    int64_t weights[MAX_SEARCH_THREADS];
+    int64_t votes[MAX_SEARCH_THREADS];
+    for (int i = 0; i < count; i++) {
+        weights[i] = results[i].move
+                   ? (int64_t) (results[i].score - min_score + VOTE_SCORE_OFFSET) * results[i].depth : 0;
+    }
+    for (int i = 0; i < count; i++) {
+        votes[i] = 0;
+        for (int j = 0; j < count; j++) {
+            if (results[j].move == results[i].move) votes[i] += weights[j];
+        }
+    }
+
+    for (int i = 0; i < count; i++) {
+        if (!results[i].move || i == best) continue;
+        const int score = results[i].score;
+        const int best_score = results[best].score;
+        const bool win = score >= TB_WIN_MIN;
+        const bool loss = score <= -TB_WIN_MIN;
+        const bool best_win = best_score >= TB_WIN_MIN;
+        const bool best_loss = best_score <= -TB_WIN_MIN;
+        if (best_win || win) {
+            /* A win beats anything that isn't one, a faster win a slower one. */
+            if (win && (!best_win || score > best_score)) best = i;
+        } else if (best_loss) {
+            /* Out of a loss by anything that isn't one, a slower loss beats a faster one. */
+            if (score > best_score) best = i;
+        } else if (!loss && (votes[i] > votes[best] || (votes[i] == votes[best] && weights[i] > weights[best]))) {
+            best = i;
+        }
+    }
+    return best;
+}
+
+/*
+ * Lazy SMP: after the helpers have stopped, the vote's choice between the main thread's last
+ * completed depth ('main_result') and theirs. Prints the chosen thread's 'info' line if it isn't the
+ * main thread (whose line was the last printed), and returns its move.
+ */
+static move_t vote_move(search_state_t* search_state, const limits_t* limits, const search_helper_t* helpers,
+                        int helper_count, thread_result_t main_result) {
+    thread_result_t results[MAX_SEARCH_THREADS];
+    int count = 0;
+    results[count++] = main_result;
+    for (int i = 0; i < helper_count && count < MAX_SEARCH_THREADS; i++) results[count++] = helpers[i].result;
+
+    const int best = vote_best_thread(results, count);
+    if (best <= 0) return main_result.move;
+
+    const search_helper_t* winner = &helpers[best - 1];
+    search_state->score = winner->result.score;
+    if (!limits->quiet) {
+        print_info(winner->result.score, winner->result.depth, total_nodes(search_state, helpers, helper_count),
+                   winner->pv, winner->pv_length, limits);
+    }
+    return winner->result.move;
+}
+
 move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* limits) {
     int score = 0;
 
@@ -1890,6 +1975,7 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
     move_t move = 0;
     move_t previous_move = 0;
     int stability = 0;
+    int completed_depth = 0;
 
     search_state->thread_id = 0;
     /* Before the helpers start: they read the root restriction it sets. */
@@ -1907,9 +1993,11 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
 
         move = search_state->pv_table[0][0];
         search_state->score = score;
+        completed_depth = i;
 
         if (search_state->pv_length[0] && !limits->quiet) {
-            print_info(score, i, total_nodes(search_state, helpers, helper_count), search_state, limits);
+            print_info(score, i, total_nodes(search_state, helpers, helper_count), search_state->pv_table[0],
+                       search_state->pv_length[0], limits);
         }
 
         stability = move == previous_move ? stability + 1 : 0;
@@ -1931,6 +2019,11 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
     }
 
     stop_helpers(limits, helpers, helper_count);
+    /* With helpers the threads vote on the move (vote_best_thread); one thread plays its own. */
+    if (helper_count > 0) {
+        const thread_result_t main_result = { move, search_state->score, completed_depth };
+        move = vote_move(search_state, limits, helpers, helper_count, main_result);
+    }
     if (!move) move = first_root_move(board);
     syzygy_end_search();
     return move;

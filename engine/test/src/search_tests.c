@@ -1437,3 +1437,39 @@ void test_correction_history_keys() {
     /* A bishop instead of the knight: white's piece entry differs, the pawns and black's are shared. */
     TEST_ASSERT_TRUE(eval_correction(&other_piece, &search_state) < eval_correction(&board, &search_state));
 }
+
+/* The Lazy SMP vote (vote_best_thread) on made-up thread results: moves 1, 2, 3 stand for real ones. */
+void test_vote_best_thread() {
+    /* No thread completed a depth; one that did is chosen. */
+    const thread_result_t none[2] = { { 0, 0, 0 }, { 0, 0, 0 } };
+    TEST_ASSERT_EQUAL_INT(-1, vote_best_thread(none, 2));
+    const thread_result_t only_helper[2] = { { 0, 0, 0 }, { 2, 10, 5 } };
+    TEST_ASSERT_EQUAL_INT(1, vote_best_thread(only_helper, 2));
+
+    /* Two deeper, better scored helpers outvote the main thread and its agreeing helper. */
+    const thread_result_t outvoted[4] = { { 1, 30, 14 }, { 2, 45, 15 }, { 1, 28, 14 }, { 2, 40, 15 } };
+    TEST_ASSERT_EQUAL_INT(1, vote_best_thread(outvoted, 4));
+    /* The same scores at the same depth: the main thread's move has more votes. */
+    const thread_result_t agreed[4] = { { 1, 30, 14 }, { 2, 32, 14 }, { 1, 30, 14 }, { 1, 30, 14 } };
+    TEST_ASSERT_EQUAL_INT(0, vote_best_thread(agreed, 4));
+    /* A tie in votes and weight keeps the main thread's move. */
+    const thread_result_t tie[2] = { { 1, 20, 10 }, { 2, 20, 10 } };
+    TEST_ASSERT_EQUAL_INT(0, vote_best_thread(tie, 2));
+    /* On a tie in votes, the thread with the higher weight: move 2's single deeper vote beats it. */
+    const thread_result_t tie_votes[3] = { { 1, 0, 10 }, { 1, 0, 10 }, { 2, 0, 20 } };
+    TEST_ASSERT_EQUAL_INT(2, vote_best_thread(tie_votes, 3));
+
+    /* A win beats any number of votes, the fastest win among them. */
+    const thread_result_t win[4] = { { 1, 50, 20 }, { 1, 50, 20 }, { 2, MATE_VALUE - 9, 12 }, { 3, MATE_VALUE - 5, 10 } };
+    TEST_ASSERT_EQUAL_INT(3, vote_best_thread(win, 4));
+    /* A thread that sees itself lost isn't chosen over one that doesn't, however it votes... */
+    const thread_result_t lost_helper[3] = { { 1, 0, 10 }, { 2, -(MATE_VALUE - 7), 30 }, { 2, -(MATE_VALUE - 7), 30 } };
+    TEST_ASSERT_EQUAL_INT(0, vote_best_thread(lost_helper, 3));
+    /* ...a lost main thread gives way to one that isn't... */
+    const thread_result_t lost_main[2] = { { 1, -(MATE_VALUE - 7), 30 }, { 2, -40, 10 } };
+    TEST_ASSERT_EQUAL_INT(1, vote_best_thread(lost_main, 2));
+    /* ...and when every thread is lost, the slowest loss. */
+    const thread_result_t all_lost[3] = { { 1, -(MATE_VALUE - 5), 10 }, { 2, -(MATE_VALUE - 11), 12 },
+                                          { 3, -(MATE_VALUE - 9), 12 } };
+    TEST_ASSERT_EQUAL_INT(1, vote_best_thread(all_lost, 3));
+}

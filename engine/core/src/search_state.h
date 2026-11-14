@@ -102,13 +102,15 @@ static_assert((CONT_PLIES + 1) * HISTORY_MAX / QUIET_ORDER_DIVISOR <= HISTORY_MA
  * sharing a feature, used to correct the eval (search.c, eval_correction). Per side to move, three
  * tables: the pawn structure (each colour's pawns), white's other pieces and black's other pieces
  * (each piece type's squares), indexed by a hash of those squares. Entries in 1/CORR_GRAIN cp.
- * Kept for the game (cleared by 'ucinewgame'). 192 KB, kept outside the search state like the
- * continuation history: main_corr_history for the main search, each Lazy SMP helper its own.
+ * Kept for the game (cleared by 'ucinewgame'). 192 KB, kept outside the search state: one table,
+ * main_corr_history, shared by the main search and every Lazy SMP helper, so each thread learns from
+ * the others' searches. Entries are loaded and stored atomically (relaxed: plain moves on x86); two
+ * threads updating one entry at once can lose an update, which only costs a little learning.
  */
 #define CORR_BITS 14
 #define CORR_SIZE (1 << CORR_BITS)
 #define CORR_TABLES 3
-typedef int16_t corr_history_t[2][CORR_TABLES][CORR_SIZE];
+typedef _Atomic int16_t corr_history_t[2][CORR_TABLES][CORR_SIZE];
 extern corr_history_t main_corr_history;
 
 typedef struct align {
@@ -143,6 +145,7 @@ typedef struct align {
     uint16_t null_move_index;  /* repetition_check index of the position after the last null move (0 if none). */
     bool follow_pv;
     bool score_pv;
+    bool corr_shared;          /* Other threads update the correction history during this search (learn_correction). */
     int score;                 /* Score of the last completed iteration (side to move). */
     int thread_id;             /* 0 for the main thread, which checks the clock and reports. */
     _Atomic uint64_t shared_nodes; /* Helper threads publish 'nodes' here for the main thread. */
@@ -175,14 +178,14 @@ static inline_always void age_history(search_state_t* search_state) {
     for (size_t i = 0; i < sizeof(search_state->capture_history) / sizeof(*c); i++) c[i] /= 2;
 }
 
-/* A new search state (as 'ucinewgame') using 'table' for its continuation history and
- * 'corrections' for its correction history, both cleared. */
+/* A new search state (as 'ucinewgame') using 'table' for its continuation history, cleared, and the
+ * shared correction history, 'corrections', as it is (shared, so init_search_state clears it). */
 static inline_always void init_search_state_with(search_state_t* search_state, cont_history_t* table,
                                                  corr_history_t* corrections) {
     search_state->cont_history = table;
     memset(*table, 0, sizeof(cont_history_t));
     search_state->corr_history = corrections;
-    memset(*corrections, 0, sizeof(corr_history_t));
+    search_state->corr_shared = false;
     search_state->nodes = 0;
     search_state->pv_nodes = 0;
     search_state->best_move_nodes = 0;
@@ -205,8 +208,10 @@ static inline_always void init_search_state_with(search_state_t* search_state, c
     nnue_stack_init(&search_state->nnue);
 }
 
-/* A new search state (as 'ucinewgame'), with the main continuation and correction history tables. */
+/* A new search state (as 'ucinewgame'), with the main continuation and correction history tables,
+ * both cleared. */
 static inline_always void init_search_state(search_state_t* search_state) {
+    memset(main_corr_history, 0, sizeof(corr_history_t));
     init_search_state_with(search_state, &main_cont_history, &main_corr_history);
 }
 

@@ -67,9 +67,11 @@ shallowest, entries from earlier searches counting less). Entries hold the best 
 static eval. The child's bucket is prefetched after each move. The table is kept between moves and cleared on
 `ucinewgame`.
 
-**Lazy SMP:** with `Threads` > 1, helper threads search the same root with their own board and histories,
-sharing only the TT. Odd-numbered helpers search one ply deeper. The main thread checks the clock, reports the
-total nodes and picks the move.
+**Lazy SMP:** with `Threads` > 1, helper threads search the same root with their own board and move histories,
+sharing the TT and the correction history. Odd-numbered helpers search one ply deeper. The main thread checks the clock and reports the
+total nodes. The move is chosen by a vote of each thread's last completed depth, weighted by
+(score − lowest score + 5) × depth, with found wins first and lost threads last; the chosen thread's line is
+reported. With one thread none of this runs.
 
 **Draws:** repetition (game history and search path), the fifty-move rule and insufficient material.
 
