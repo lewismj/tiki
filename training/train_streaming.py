@@ -27,8 +27,8 @@ from tiki_nnue.export import export
 from tiki_nnue.model import TikiNNUE
 from tiki_nnue.stream import Epoch, StreamData, TrainingStream, ValidationBatches, data_files
 from train import (Log, add_loss_arguments, add_model_arguments, add_schedule_arguments, binary_files,
-                   check_loss_arguments, console, epoch_result, load_model, load_scheduler, make_scheduler,
-                   run_epoch)
+                   check_loss_arguments, console, epoch_result, init_model, load_model, load_scheduler,
+                   make_scheduler, run_epoch)
 
 
 def main():
@@ -48,7 +48,10 @@ def main():
     parser.add_argument("--validation-max", type=int, default=2_000_000,
                         help="positions validated after each epoch, at most (0: all held out)")
     parser.add_argument("--workers", type=int, default=4, help="processes for converting .txt data to .bin")
-    parser.add_argument("--resume", help="checkpoint (.pt) to continue from")
+    start = parser.add_mutually_exclusive_group()
+    start.add_argument("--resume", help="checkpoint (.pt) to continue from (its optimiser, schedule and epoch too)")
+    start.add_argument("--init", help="checkpoint (.pt) whose weights to start from, with a new optimiser and "
+                                      "schedule from epoch 1 (fine-tuning)")
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--seed", type=int, default=1)
     args = parser.parse_args()
@@ -89,6 +92,10 @@ def main():
         first_epoch = checkpoint["epoch"] + 1
         console.print(f"Resuming from {args.resume} at epoch {first_epoch}")
         log(f"resumed from {args.resume} at epoch {first_epoch}")
+    elif args.init:
+        from_epoch = init_model(model, args.init, args, parser, args.device)
+        console.print(f"Starting from the weights of {args.init} (its epoch {from_epoch}), lr {args.lr:g}")
+        log(f"initialised from {args.init} (its epoch {from_epoch})")
 
     # A new data order when resuming, rather than repeating the first epochs' order.
     stream = TrainingStream(data, args.batch_size, args.device, args.buffer,

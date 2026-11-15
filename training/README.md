@@ -279,6 +279,25 @@ own fitted `s`, so a new month never needs the others redone. Check the new mont
 table: a jump like 2026-08's (395-429, against about 335 before) means Lichess's Stockfish scores changed
 scale, which the rescale corrects, but it's worth knowing about. The relabeller maps the tables into
 memory, so don't cap it with `ulimit -v`.
+
+#### Decisive positions (`--decisive-only`)
+
+The normal conversion leaves out every position Lichess scores as a mate or beyond `--max-score`, which
+removes most won endings: in a sample of 2026-05, 43% of the positions with 6 pieces or fewer, 16% with
+7-10. `lichess_convert --decisive-only N` writes only those positions, as a separate file, with made-up
+scores: N for an eval beyond `--max-score`, and N + `--mate-step` (default 10) for each move a mate is
+closer than 20, so the score rises as the mate nears (mate in 1: N + 190). Without the option the output
+is unchanged (byte for byte). The scores are final, so these files are relabelled but not rescaled
+(`rescale.py`'s fit needs ordinary evals):
+
+```bash
+lichess_convert/lichess_convert --min-elo 2000 --decisive-only 1000 \
+        /mnt/f/lichess2/lichess_db_standard_rated_$M.pgn.zst /mnt/f/lichess2/decisive-2000/lichess-$M.bin
+syzygy_relabel/syzygy_relabel --tb /mnt/f/syzygy/wdl /mnt/f/lichess2/decisive-2000 /mnt/f/lichess2/decisive-2000-tb
+```
+
+A month gives about a twentieth as many positions as its normal conversion: about a third of them with 6
+pieces or fewer, and a quarter with 15 or more (mostly mating attacks).
 - **Downloads:** with `--download-dir`, each tar is downloaded first (with a progress bar, resuming
   a partial `.part` file) and kept, so it can be converted again later with other options.
 - **Re-running:** tars already converted are skipped, so you can run the same command again.
@@ -369,6 +388,7 @@ It takes the trainer options above, and:
 | `--buffer` | 8,000,000 | positions shuffled together (about 0.5 GB; two buffers are in memory) |
 | `--epoch-positions` | 0 (a whole pass) | positions per epoch, for data too large to pass over often |
 | `--validation-max` | 2,000,000 | positions validated after each epoch, at most (0: all held out) |
+| `--init` | | a checkpoint (`.pt`) whose weights to start from, with a new optimiser and `--lr` schedule from epoch 1: fine-tuning (not with `--resume`, which continues the checkpoint's own schedule) |
 
 - `--data` takes files or directories (their `.bin` and `.txt` files; `.part` files of a
   conversion still running are left out).

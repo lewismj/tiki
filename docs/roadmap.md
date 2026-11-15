@@ -20,6 +20,15 @@ parts of one mechanism together.
 - **Search:** ProbCut; a faster search with the same results (the TT entry prefetched when a move is picked,
   and pruned quiet moves no longer made first); Lazy SMP with a shared correction history and a vote between
   threads for the move.
+- **Decisive endgame data (tried, parked):** the Lichess conversion drops every position scored as a mate or
+  beyond 3000 cp, which removes most won endings (43% of the positions with 6 pieces or fewer).
+  `lichess_convert --decisive-only` writes those positions with made-up scores rising as the mate nears; 6
+  months (16.3M positions, about 5% of the mix) were added to a 10-epoch fine-tune of `tiki-2026-11-14.nnue`
+  (`train_streaming.py --init`, F:\tiki\nets\finetune-decisive-6m). It fixed the network's backwards
+  bare-king evals (defending king in a corner minus the centre: K+Q v K -124 -> +21, K+R v K -12 -> +142,
+  K+B+N v K -29 -> +77), but replaying the 22 endgame turning points of the gauntlets (none of them bare-king
+  endings) gave no gain: 51.0 against 53.0 of 88, with fewer losses saved (2.5 against 6.0 of 16, few games).
+  Not SPRT'd.
 - **Strength:** gauntlets at 8+0.08 with `tiki-2026-11-14.nnue`: +24 ± 25 against Eleanor 4.1 and +108 ± 27
   against Leorik 3.2.1 (300 games each).
 - **Fail-soft and Stockfish's LMR pieces:** fail-soft (scores outside the window returned as found,

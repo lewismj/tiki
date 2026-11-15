@@ -14,9 +14,15 @@
  *     --seed N          sampling seed (default 1)
  *     --max-positions N stop after the game that reaches this many (default 0: all)
  *     --threads N       worker threads (default: the CPUs less one)
+ *     --decisive-only N write only the positions the default leaves out for their eval, with made-up scores:
+ *                       an eval beyond --max-score scores N, a mate N + S x (20 - moves to mate), at least N
+ *                       (default 0: off, the normal output). For won endings, which Lichess scores as mates.
+ *                       The scores are final: don't put these files through rescale.py, whose fit needs
+ *                       ordinary evals (syzygy_relabel is fine).
+ *     --mate-step S     with --decisive-only, the score per move closer to mate (default 10)
  *
  * Positions kept, as lichess.py: mainline positions after ply 'skip-plies' with a Lichess '[%eval]' that isn't
- * a mate and is within 'max-score', not in check, and whose next move is neither a capture nor a promotion.
+ * a mate and is within 'max-score' (with --decisive-only: the other evals), not in check, and whose next move is neither a capture nor a promotion.
  * Records: the pieces in square order (a8 first, tiki's index) as piece * 64 + square, padded with 0xFFFF to 32,
  * the score and result for the side to move, and the side.
  *
@@ -61,6 +67,8 @@ const char* ZSTD_getErrorName(size_t code);
 static int opt_min_elo = 0;
 static int opt_skip_plies = 16;
 static int opt_max_score = 3000;
+static int opt_decisive = 0;        /* --decisive-only: 0 for the normal output. */
+static int opt_mate_step = 10;
 static double opt_sample = 1.0;
 static uint64_t opt_seed = 1;
 static uint64_t opt_max_positions = 0;
@@ -323,10 +331,15 @@ static int find_eval(const char* s, const char* end, int64_t* cp) {
         q++;
         if (q < end && *q == '#') {
             q++;
-            if (q < end && (*q == '+' || *q == '-')) q++;
+            bool negative = false;
+            if (q < end && (*q == '+' || *q == '-')) { negative = *q == '-'; q++; }
             const char* d = q;
-            while (q < end && is_digit(*q)) q++;
-            if (q != d && eval_tail(q, end)) return EVAL_MATE;
+            int64_t moves = 0;
+            while (q < end && is_digit(*q)) { if (q - d < 6) moves = moves * 10 + (*q - '0'); q++; }
+            if (q != d && eval_tail(q, end)) {
+                *cp = negative ? -moves : moves;   /* Moves to mate, White's view (+ White mates). */
+                return EVAL_MATE;
+            }
             continue;
         }
         bool negative = false;
@@ -463,6 +476,34 @@ static int result_x2(const char* s, size_t n) {       /* White's result * 2, -1 
     if (n == 3 && !memcmp(s, "0-1", 3)) return 0;
     if (n == 7 && !memcmp(s, "1/2-1/2", 7)) return 1;
     return -1;
+}
+
+/*
+ * The score a position is written with (White's view), or false to skip it, from its [%eval]. By default a
+ * centipawn eval within --max-score as it is, and nothing else. With --decisive-only N, only what the default
+ * leaves out: an eval beyond --max-score scores N, and a mate N plus --mate-step for each move it is closer
+ * than MATE_RAMP_MOVES (mate in 1: N + 19 steps), so the score rises as the mate nears. '#0' (no moves) is skipped.
+ */
+enum { MATE_RAMP_MOVES = 20 };
+
+static bool eval_score(int eval_kind, int64_t eval_cp, int64_t* score) {
+    const int64_t magnitude = eval_cp < 0 ? -eval_cp : eval_cp;
+    const int64_t sign = eval_cp < 0 ? -1 : 1;
+    if (!opt_decisive) {
+        if (eval_kind != EVAL_CP || magnitude > opt_max_score) return false;
+        *score = eval_cp;
+        return true;
+    }
+    if (eval_kind == EVAL_CP && magnitude > opt_max_score) {
+        *score = sign * opt_decisive;
+        return true;
+    }
+    if (eval_kind == EVAL_MATE && magnitude > 0) {
+        const int64_t closer = magnitude < MATE_RAMP_MOVES ? MATE_RAMP_MOVES - magnitude : 0;
+        *score = sign * (opt_decisive + opt_mate_step * closer);
+        return true;
+    }
+    return false;
 }
 
 static void emit(output_t* out, board_t* board, int64_t cp, uint64_t game_key, int ply) {
@@ -651,9 +692,11 @@ static bool convert_game(worker_t* w, const char* text, const char* end) {
 
             if (node_depth == 0) {
                 /* The mainline node 'ply' has its next move: keep its position if it qualifies. */
-                if (ply > opt_skip_plies && eval_kind == EVAL_CP && (eval_cp < 0 ? -eval_cp : eval_cp) <= opt_max_score &&
-                    !side_in_check(&cur->board) && !(mv && (get_capture_flag(mv) || get_promoted_piece(mv))))
-                    emit(out, &cur->board, eval_cp, game_key, ply);
+                if (ply > opt_skip_plies && !side_in_check(&cur->board) &&
+                    !(mv && (get_capture_flag(mv) || get_promoted_piece(mv)))) {
+                    int64_t score;
+                    if (eval_score(eval_kind, eval_cp, &score)) emit(out, &cur->board, score, game_key, ply);
+                }
                 ply++;
                 eval_kind = EVAL_NONE;
             }
@@ -822,7 +865,8 @@ static double now_seconds(void) {
 
 static void usage(void) {
     fprintf(stderr, "usage: lichess_convert [--min-elo N] [--skip-plies N] [--max-score N] [--sample F] [--seed N]\n"
-                    "                       [--max-positions N] [--threads N] <dump.pgn.zst|dump.pgn> <out.bin>\n");
+                    "                       [--max-positions N] [--threads N]\n"
+                    "                       [--decisive-only N [--mate-step S]] <dump.pgn.zst|dump.pgn> <out.bin>\n");
     exit(2);
 }
 
@@ -841,13 +885,16 @@ int main(int argc, char** argv) {
             else if (!strcmp(a, "--seed")) opt_seed = strtoull(v, NULL, 10);
             else if (!strcmp(a, "--max-positions")) opt_max_positions = strtoull(v, NULL, 10);
             else if (!strcmp(a, "--threads")) opt_threads = atoi(v);
+            else if (!strcmp(a, "--decisive-only")) opt_decisive = atoi(v);
+            else if (!strcmp(a, "--mate-step")) opt_mate_step = atoi(v);
             else usage();
         } else if (!in_path) in_path = a;
         else if (!out_path) out_path = a;
         else usage();
     }
     if (!in_path || !out_path || opt_skip_plies < 0 || opt_min_elo < 0 || opt_max_score < 0 ||
-        opt_sample < 0.0 || opt_sample > 1.0)
+        opt_sample < 0.0 || opt_sample > 1.0 || opt_decisive < 0 || opt_mate_step < 0 ||
+        (int64_t) opt_decisive + (int64_t) opt_mate_step * (MATE_RAMP_MOVES - 1) > 32767)
         usage();
     if (opt_threads <= 0) {
         const long cpus = sysconf(_SC_NPROCESSORS_ONLN);

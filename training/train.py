@@ -106,6 +106,14 @@ def load_model(model, state, args, parser):
     model.load_state_dict(state)
 
 
+def init_model(model, path, args, parser, device="cpu"):
+    """Starts from a checkpoint's weights only (--init, for fine-tuning): the optimiser, schedule and epoch
+    start afresh, with this run's --lr and schedule. The same checks as load_model."""
+    checkpoint = torch.load(path, map_location=device)
+    load_model(model, checkpoint["model"], args, parser)
+    return checkpoint.get("epoch")
+
+
 def load_scheduler(scheduler, state, args, parser):
     """Restores a checkpoint's schedule, which must be the same kind as --lr-schedule. A resumed
     cosine schedule keeps the checkpoint's length, a resumed step schedule its --lr-drop."""

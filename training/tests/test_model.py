@@ -504,6 +504,26 @@ class FactoriserTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "hidden layer has 1024 inputs"):
             load_model(TikiNNUE(), wider, parser.parse_args([]), parser)
 
+    def test_init_takes_only_the_weights(self):
+        """--init starts from a checkpoint's weights (its optimiser and schedule are left out), with the
+        same checks as resuming."""
+        from train import add_model_arguments, init_model
+        import argparse
+        import tempfile
+
+        parser = argparse.ArgumentParser()
+        add_model_arguments(parser)
+        parser.error = lambda message: (_ for _ in ()).throw(ValueError(message))
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "tiki-7.pt")
+            torch.save({"model": self.model.state_dict(), "optimiser": {}, "scheduler": {}, "epoch": 7}, path)
+            model = TikiNNUE(factoriser=True)
+            self.assertEqual(7, init_model(model, path, parser.parse_args(["--factoriser"]), parser))
+            for name, value in self.model.state_dict().items():
+                self.assertTrue(torch.equal(value, model.state_dict()[name]), name)
+            with self.assertRaisesRegex(ValueError, "with --factoriser"):
+                init_model(TikiNNUE(), path, parser.parse_args([]), parser)
+
 
 if __name__ == "__main__":
     unittest.main()
