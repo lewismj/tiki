@@ -1900,6 +1900,14 @@ double tm_scale(int stability, uint64_t best_move_nodes, uint64_t root_nodes) {
     return stability_scale * nodes_scale;
 }
 
+double tm_falling_scale(int score, bool has_previous, int previous, bool has_earlier, int earlier) {
+    if (is_mate_score(score)) return 1.0;
+    int percent = 100;
+    if (has_previous && !is_mate_score(previous) && previous > score) percent += TM_FALLING_PREV * (previous - score) / 10;
+    if (has_earlier && !is_mate_score(earlier) && earlier > score) percent += TM_FALLING_ITER * (earlier - score) / 10;
+    return (percent > TM_FALLING_MAX ? TM_FALLING_MAX : percent) / 100.0;
+}
+
 int vote_best_thread(const thread_result_t* results, int count) {
     int best = -1;
     int min_score = INF;
@@ -1976,6 +1984,9 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
     move_t previous_move = 0;
     int stability = 0;
     int completed_depth = 0;
+    int depth_scores[MAX_PLY + 1];   /* Each completed depth's score, for tm_falling_scale. */
+    /* The last search's score, if it was for this side (a search for the previous move, normally). */
+    const bool has_previous = search_state->previous_side == (int) board->side;
 
     search_state->thread_id = 0;
     /* Before the helpers start: they read the root restriction it sets. */
@@ -1994,6 +2005,7 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
         move = search_state->pv_table[0][0];
         search_state->score = score;
         completed_depth = i;
+        depth_scores[i] = score;
 
         if (search_state->pv_length[0] && !limits->quiet) {
             print_info(score, i, total_nodes(search_state, helpers, helper_count), search_state->pv_table[0],
@@ -2008,8 +2020,11 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
         if (limits->time_set) {
             uint64_t soft_stop = limits->soft_stop_time;
             if (limits->adaptive && i >= TM_SCALE_MIN_DEPTH) {
+                const bool has_earlier = i > TM_FALLING_DEPTHS;
                 const double scale = tm_scale(stability, search_state->best_move_nodes,
-                                              search_state->nodes - nodes_before);
+                                              search_state->nodes - nodes_before) *
+                                     tm_falling_scale(score, has_previous, search_state->previous_score, has_earlier,
+                                                      has_earlier ? depth_scores[i - TM_FALLING_DEPTHS] : 0);
                 soft_stop = limits->start_time +
                             (uint64_t) ((double) (limits->soft_stop_time - limits->start_time) * scale);
                 if (soft_stop > limits->stop_time) soft_stop = limits->stop_time;
@@ -2025,6 +2040,10 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
         move = vote_move(search_state, limits, helpers, helper_count, main_result);
     }
     if (!move) move = first_root_move(board);
+    if (completed_depth > 0) {
+        search_state->previous_score = search_state->score;
+        search_state->previous_side = board->side;
+    }
     syzygy_end_search();
     return move;
 }

@@ -1,22 +1,29 @@
 # Roadmap
 
-As of November 2026. Each change is tested with an SPRT ([testing.md](testing.md#matches)), related changes
-together.
+As of 15 November 2026. Each change is tested on its own with an SPRT ([testing.md](testing.md#matches)), the
+parts of one mechanism together.
 
-## In progress
+## Done recently
 
-- **Search tuning:** an SPSA run of the 47 search and time management parameters on OpenBench (8+0.08), then
-  its values SPRT'd against `main`.
-- **Network:** done: trained on Syzygy-relabelled, rescaled data (38 months, 2023-09 to 2026-10) with the
-  factoriser, +13.1 ± 6.8 Elo over the previous network ([nnue.md](nnue.md#the-current-network)). PSQT was tried
-  on the same recipe and removed (worse validation, no gain in games). Then pairwise inputs and a hidden layer
-  (512 -> 16 -> 1) in 32 layer stacks by piece count × queens (format version 5): +18.3 ± 8.3 Elo over the
-  previous network on the same data, despite about 6% lower search speed ([nnue.md](nnue.md#the-current-network)).
-  From here, one change per test: loss power 2.5, more data, a second hidden layer. Loss power 2.5 came out
-  roughly level in short SPRTs (epoch 78 and the average of epochs 77-80); judged later on whether it avoids odd
-  losses rather than on Elo.
-- **Search:** done: fail-soft (scores outside the window returned as found, futility-pruned moves counted at
-  their futility value as Stockfish does), +13.5 ± 8.8 Elo in 1,902 games of a no-worse SPRT [-3, 1], stopped
+- **Search tuning:** an SPSA run of the search parameters on OpenBench (8+0.08, about 19,500 games). Its values
+  came out level against `main` (-0.7 ± 16.4 after 520 games) and weren't taken; they're kept as a patch, the
+  starting point of a later tune.
+- **Network:** trained on Syzygy-relabelled, rescaled data with the factoriser (+13.1 ± 6.8 Elo), then pairwise
+  inputs and a hidden layer (512 -> 16 -> 1) in 32 layer stacks by piece count × queens (+18.3 ± 8.3, despite
+  about 6% lower search speed), then a finer output-layer scale (format version 6: +4.5 ± 9.1 after 1,780
+  games, kept), then 46 months of data (2.34B positions, 100 epochs: `tiki-2026-11-14.nnue`,
+  [nnue.md](nnue.md#the-current-network)). PSQT was tried and removed (worse validation, no gain in games).
+  Loss power 2.5 came out roughly level in short SPRTs; judged later on whether it avoids odd losses.
+- **Repetitions and en passant:** Stockfish's repetition rule (a draw on a repetition inside the search, or a
+  third occurrence), and the en passant square set and hashed only when a pawn can capture there (before, a
+  threefold whose first occurrence followed a double push was missed).
+- **Search:** ProbCut; a faster search with the same results (the TT entry prefetched when a move is picked,
+  and pruned quiet moves no longer made first); Lazy SMP with a shared correction history and a vote between
+  threads for the move.
+- **Strength:** gauntlets at 8+0.08 with `tiki-2026-11-14.nnue`: +24 ± 25 against Eleanor 4.1 and +108 ± 27
+  against Leorik 3.2.1 (300 games each).
+- **Fail-soft and Stockfish's LMR pieces:** fail-soft (scores outside the window returned as found,
+  futility-pruned moves counted at their futility value as Stockfish does), +13.5 ± 8.8 Elo in 1,902 games of a no-worse SPRT [-3, 1], stopped
   with the whole range above zero; meant mainly as the base for later search changes. Stockfish's deeper/shallower
   LMR re-search on top of it lost about 30 Elo and was dropped for now: Stockfish reduces expected cut nodes 2-4
   plies more than tiki, so its extra ply mostly buys back depth tiki never took. Tested since, each stopped early
@@ -26,20 +33,28 @@ together.
   games the TT-PV term costs about 0.4 ply at equal time and still came out level, so it buys accuracy near the
   PV that nothing pays for (the second cut-node ply bought back 0.02 ply); damping cost no depth (0.05 ply).
 
+## In progress
+
+- **Network:** PP_3Wide (Pawn_SN) and a second hidden layer.
+- **Time on a falling score** (Stockfish's "falling eval", which tiki and Eleanor lack): the soft limit grows by
+  `TM_FALLING_PREV` % per 10 cp the score is below the previous search's and `TM_FALLING_ITER` % per 10 cp below
+  the score four depths before, up to `TM_FALLING_MAX` (10, 5, 200 to start, tunable). Prompted by the loss
+  analysis (`training/analyse_games.py`) of the net95 gauntlets: about 45% of the turning points of the openings
+  tiki lost against Leorik and Eleanor were "unreproduced", where a fresh search at the game's depth finds a
+  saving move. Searched alone, the bad move scores 60-210 cp worse than the good one, but in the game's search
+  the refutation was reduced or pruned (weakening any of six pruning techniques finds it, no one of them is the
+  cause). A blunder suite (65 such positions replayed warm at the games' times, 10 runs each: 42% blunders
+  for the gauntlet build) can only show the gain, not the time taken from later moves, so it's tested with a
+  no-worse SPRT [-3, 1] against `main`; the three percentages are left to a later SPSA.
+
 ## Next
 
 - **Network:**
-  - a finer output-layer scale: `out_weights` are int16 but quantised at QW = 64 (largest |w| × 64 is 88), and
-    their rounding is the largest quantisation error (4.1 cp sd of 5.3 between the float and engine evals of
-    the current network; the `>> 9` rounding down is 1.4 cp sd with no bias). A scale of about 2048 costs
-    nothing at runtime; needs a format version bump, the exporter, a re-export and an SPRT;
   - reorder the accumulator after training so zero inputs share groups of 4, then skip them (Stockfish's sparse
     first layer; without reordering over 80% of groups have a non-zero input, and skipping was slower);
-  - AVX-512 VNNI / AVX-VNNI for the hidden layer (one instruction for maddubs + madd + add);
-  - a longer training schedule (100 epochs), checked by the validation loss first;
   - `--loss-power 2.5` (Stockfish's exponent), on its own run;
   - fine-tuning on Leela's positions (the Stockfish binpacks, scored by Leela), from the Lichess network;
-  - more data: self-play written directly in the binary format, more months, endgame-heavy samples;
+  - more data: self-play written directly in the binary format, endgame-heavy samples;
   - endgame training data that teaches progress, not just the result: the network knows K+R v K, K+Q v K and
     K+B+N v K are won but not how to win them. Over 300 random positions each (defender to move), its static
     eval falls as the defending king nears a corner (K+Q v K: 754 with the king in the centre, 542 in a corner;
@@ -47,15 +62,6 @@ together.
     tablebases tiki drew 4 tablebase-won endings in the net95 gauntlets against Leorik and Eleanor (3 by the
     fifty-move rule). Positions from these endings scored by distance to mate or to a zeroing
     move (Syzygy DTZ), oversampled so the network sees enough of them.
-- **En passant in the position hash, first after the SPRT of the tuned values:** the en passant square is set and
-  hashed after every double pawn push, even when no pawn can capture there, so the position after a double push
-  never matches its later repeats and a threefold whose first occurrence followed one is missed (fastchess:
-  "PV continues after threefold repetition"). The old repetition rule hid it. Set and hash the square only when
-  an enemy pawn attacks it, in `make_move` and the FEN parser; the bench changes (such positions now share
-  transposition table entries).
-- **Repetitions:** Stockfish's rule (a draw on a repetition inside the search, or a third occurrence; one earlier
-  occurrence in the game no longer counts). Written, in the working tree; after the SPSA: tests, unchanged
-  bench, a 1,000-game match against `main` for gross bugs and a look at the repetition games.
 - **Mop-up evaluation: written and parked, not to be committed.** The fix for bare-king endings is endgame
   training data (Network, above); with Syzygy DTZ tables (as on CCRL) tiki's root ranking already wins them. The
   stopgap is kept as a patch, `tiki-analysis\mop-up.patch` (applies to 27ef41b): a bare king against queen,
@@ -68,13 +74,13 @@ together.
 - **Razoring** (tiki has none; Stockfish, Eleanor and Leorik all do): at a non-PV, expected fail-low node of
   depth 1-3 whose corrected eval is far below alpha (a tunable margin per ply, about 200 cp to start), return
   the qsearch score instead of searching the node. Futility pruning already skips the quiet moves there, but
-  the node still generates moves and searches every capture a ply deeper. After the SPSA, as its own SPRT.
-- **Aspiration windows** (`aspiration_search`), each as its own SPRT after the SPSA has set `ASPIRATION_WINDOW`:
+  the node still generates moves and searches every capture a ply deeper. As its own SPRT.
+- **Aspiration windows** (`aspiration_search`), each as its own SPRT:
   - widen from the score the search returned: on a fail the failing bound moves by delta from where it was,
     though the fail-soft score now says how far outside the window the value lies;
   - on a fail low, bring beta in to (alpha + beta) / 2, as Stockfish does;
   - grow delta by about 1.5× per fail rather than doubling it.
-- **Stockfish's LMR pieces again**, after the SPSA:
+- **Stockfish's LMR pieces again:**
   - damping together with the deeper/shallower re-search, as one SPRT: Stockfish's re-search margins compare
     damped scores, and tiki tried the re-search on undamped ones (a reduced search's fail high then looks better
     than it is and asks for the extra ply too often) and damping alone, never both;
@@ -84,10 +90,9 @@ together.
   - before the TT-PV term returns, a statistics build's count of the reduced searches at TT-PV nodes outside the
     PV, by depth: whether the flag marks more of the tree than intended;
   - what would pay for less reduction near the PV: reducing more move types (good captures, killers, earlier
-    moves), then ProbCut. The SPSA wants slightly less reduction of late quiet moves, not more.
-- **Search:** a second, shorter SPSA run at a longer time control (about 40+0.4), since the first tunes the margins
-  for shallow searches.
-- **Strength:** a 300-game gauntlet against Eleanor 4.1 (CCRL Blitz top 100) as the next yardstick, and
-  submitting tiki to a rating list.
-- **Lazy SMP:** measure the gain at 2, 4 and 8 threads.
+    moves). The SPSA wants slightly less reduction of late quiet moves, not more.
+- **Search:** another SPSA run from the first one's values, after the current changes, and a shorter one at a
+  longer time control (about 40+0.4), since 8+0.08 tunes the margins for shallow searches.
+- **Strength:** submitting tiki to a rating list.
+- **Lazy SMP:** measure the gain at 2, 4 and 8 threads, and SPRT the thread vote at 4 threads.
 - **UCI:** MultiPV and pondering.

@@ -28,18 +28,18 @@ So, at bullet, currently (as of 14-Nov-26) Tiki is, very roughly, about level wi
 HalfKAv2_hm (22528) -> 512 x 2 -> pairwise products (256 x 2) -> [16 -> CReLU -> 1] x 32 layer stacks
 ```
 
-The accumulator's halves are multiplied pairwise into 512 inputs for a small hidden layer, one of 32 layer stacks chosen by the number of pieces and which sides have a queen. Trained with tiki's own PyTorch trainer on 1.95B positions from Lichess games between players rated 2000+, labelled with Lichess's Stockfish evaluations and the game results. There's no hand-crafted evaluation. See
+The accumulator's halves are multiplied pairwise into 512 inputs for a small hidden layer, one of 32 layer stacks chosen by the number of pieces and which sides have a queen. Trained with tiki's own PyTorch trainer on 2.34B positions from Lichess games between players rated 2000+, labelled with Lichess's Stockfish evaluations and the game results. There's no hand-crafted evaluation. See
 [docs/nnue.md](docs/nnue.md).
 
 ## Features
 
 - **Search:** PVS with aspiration windows, a staged move picker, history, capture and continuation histories,
-  correction history, null move, futility, late move and SEE pruning, late move reductions, singular
+  correction history, null move, ProbCut, futility, late move and SEE pruning, late move reductions, singular
   extensions, and a shared bucketed transposition table with Lazy SMP.
 - **Tablebases:** Syzygy probing in the search and at the root (through Fathom).
 - **Evaluation:** NNUE with incremental, lazy accumulator updates, a refresh cache per king square, and SIMD
   code for each CPU level (SSE2 to AVX-512 VNNI).
-- **Time management:** soft and hard limits, scaled by how stable the best move is.
+- **Time management:** soft and hard limits, scaled by how stable the best move is and by a falling score.
 - **Move generation:** bitboards with PEXT or magic lookups, tested against 6K+ perft positions.
 
 Details in [docs/engine.md](docs/engine.md).

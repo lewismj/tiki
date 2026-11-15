@@ -19,7 +19,9 @@
  * ('movestogo n' divides by n instead). Then two limits:
  *   - soft = base * TM_SOFT_PERCENT / 100, checked between depths: no new depth once the time used
  *     passes soft * scale, where the scale (search.c, tm_scale) is larger when the best move just
- *     changed or got few of the root's nodes, and smaller when it has been stable and took most;
+ *     changed or got few of the root's nodes, and smaller when it has been stable and took most,
+ *     and larger again when the score is falling (tm_falling_scale): against the previous search's
+ *     score and against the score TM_FALLING_DEPTHS depths before, as Stockfish does;
  *   - hard = base * TM_HARD_PERCENT / 100, never more than half of what's left, stops the search
  *     wherever it is.
  */
@@ -31,6 +33,10 @@
 #define TM_STABILITY_MAX 4       /* Depths of an unchanged best move counted towards the scale.           */
 #define TM_UNSTABLE_PERCENT 250  /* tm_scale's stability factor (%) when the best move just changed.        */
 #define TM_NODES_PERCENT 135     /* tm_scale's node factor: (1.5 - best move's share of nodes) * this / 100. */
+#define TM_FALLING_PREV 10       /* tm_falling_scale: more time (%) per 10 cp the score is below the previous */
+#define TM_FALLING_ITER 5        /* search's, and per 10 cp it is below TM_FALLING_DEPTHS depths before...    */
+#define TM_FALLING_MAX 200       /* ...within 100% (a rising score takes no less) and this (%).               */
+#define TM_FALLING_DEPTHS 4
 
 
 typedef struct align {

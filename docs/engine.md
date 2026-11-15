@@ -7,7 +7,7 @@ The search parameters below are the defaults in `engine/core/src/search_constant
 
 - Commands: `uci`, `isready`, `ucinewgame`, `position` (startpos / fen, with moves), `go` (`wtime`/`btime`/`winc`/
   `binc`, `movestogo`, `movetime`, `depth`, `nodes`, `infinite`), `stop`, `quit`, `setoption`, and `bench`.
-- Options: `Hash`, `Threads`, `Move Overhead`, `EvalFile`, `SyzygyPath` and `SyzygyProbeDepth` (see the
+- Options: `Hash`, `Threads`, `Move Overhead`, `EvalFile`, `SyzygyPath`, `SyzygyProbeDepth` and `SyzygyProbeLimit` (see the
   [README](../README.md#usage)). Names are case insensitive. Resizing `Hash` clears the table, `Threads` takes
   effect from the next `go`.
 - Input is read on its own thread. `stop`, `quit` and `isready` are handled during a search, and other commands
@@ -47,6 +47,7 @@ moves are generated and scored at once.
 |---|---|
 | Reverse futility | depth ≤ 6, eval − 100 × depth ≥ beta (margin 50 smaller when improving) |
 | Null move | from depth 2, R = 3 + depth / 3 + min((eval − beta) / 200, 3); verified by a normal search from depth 14 |
+| ProbCut | non-PV nodes from depth 5: a capture or promotion (TT move first, then those whose SEE brings the eval up to the bound) that beats beta + 200 (150 when improving) in a qsearch and then in a search 4 plies shallower cuts the node off |
 | Futility | quiet moves, depth ≤ 8, eval + 50 + 100 × depth ≤ alpha |
 | Late move pruning | quiet moves, depth ≤ 6, after 3 + depth² moves (two thirds of that when not improving) |
 | SEE pruning | depth ≤ 8: quiets with SEE < −60 × depth, captures with SEE < −20 × depth² |
@@ -73,7 +74,9 @@ total nodes. The move is chosen by a vote of each thread's last completed depth,
 (score − lowest score + 5) × depth, with found wins first and lost threads last; the chosen thread's line is
 reported. With one thread none of this runs.
 
-**Draws:** repetition (game history and search path), the fifty-move rule and insufficient material.
+**Draws:** repetition, as Stockfish counts it (a position repeated once inside the search, or for the third time
+counting the game history), the fifty-move rule and insufficient material. The en passant square is set and
+hashed only when an enemy pawn can capture there, so a position after a double push matches its repeats.
 
 ## Syzygy tablebases
 
@@ -102,7 +105,10 @@ increment (`movestogo n` divides by n instead of 20). Two limits:
 - **Soft:** 60% of the base, checked after each depth: no new depth once it has passed. From depth 5 it's
   scaled by how settled the search is (never past the hard limit):
   - the best move's stability: ×2.5 when it has just changed, down to ×0.75 after four unchanged depths;
-  - the best move's share of the root's nodes: ×0.675 when it took them all, up to ×2.0 when it took few.
+  - the best move's share of the root's nodes: ×0.675 when it took them all, up to ×2.0 when it took few;
+  - a falling score (Stockfish's "falling eval"): +10% per 10 cp below the previous search's score (for the
+    same side) and +5% per 10 cp below the score four depths before, up to ×2.0; a rising score takes no less,
+    and mate or tablebase scores don't count.
 
 `movetime` uses all its time; `depth`, `nodes` and `infinite` aren't timed.
 

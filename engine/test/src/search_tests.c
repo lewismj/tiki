@@ -236,6 +236,70 @@ void test_time_limit_stops_at_first_check() {
     TEST_ASSERT_TRUE(make_move(&board, mv));
 }
 
+void test_tm_falling_scale() {
+    /* Nothing to compare with, or a rising score: the usual time. */
+    TEST_ASSERT_TRUE(tm_falling_scale(0, false, 0, false, 0) == 1.0);
+    TEST_ASSERT_TRUE(tm_falling_scale(50, true, 0, true, 20) == 1.0);
+    /* Below the previous search's score, below the score some depths ago, and both: more, adding up. */
+    const double previous = tm_falling_scale(0, true, 50, false, 0);
+    const double earlier = tm_falling_scale(0, false, 0, true, 50);
+    const double both = tm_falling_scale(0, true, 50, true, 50);
+    TEST_ASSERT_TRUE(previous == (100 + TM_FALLING_PREV * 5 > TM_FALLING_MAX ? TM_FALLING_MAX
+                                                                              : 100 + TM_FALLING_PREV * 5) / 100.0);
+    TEST_ASSERT_TRUE(earlier == (100 + TM_FALLING_ITER * 5 > TM_FALLING_MAX ? TM_FALLING_MAX
+                                                                             : 100 + TM_FALLING_ITER * 5) / 100.0);
+    TEST_ASSERT_TRUE(both >= previous && both >= earlier);
+    /* A larger fall never gives less, and never more than TM_FALLING_MAX. */
+    for (int fall = 0; fall < 1000; fall += 50) {
+        TEST_ASSERT_TRUE(tm_falling_scale(0, true, fall + 50, true, fall + 50) >=
+                         tm_falling_scale(0, true, fall, true, fall));
+    }
+    TEST_ASSERT_TRUE(tm_falling_scale(0, true, 5000, true, 5000) == TM_FALLING_MAX / 100.0);
+    /* Mate and tablebase scores are no estimate: ignored. */
+    TEST_ASSERT_TRUE(tm_falling_scale(-(MATE_VALUE - 10), true, 0, true, 0) == 1.0);
+    TEST_ASSERT_TRUE(tm_falling_scale(0, true, MATE_VALUE - 10, true, TB_WIN_SCORE) == 1.0);
+}
+
+void test_tm_falling_previous_kept_between_searches() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+
+    /* A new game has no previous score. */
+    tt_clear();
+    init_search_state(&search_state);
+    TEST_ASSERT_EQUAL_INT(-1, search_state.previous_side);
+
+    /* A search keeps its final score and side to move... */
+    parse_position("position startpos", &board, &search_state);
+    reset_time_control(&limits);
+    limits.depth = 4;
+    limits.quiet = true;
+    find_best_move(&board, &search_state, &limits);
+    TEST_ASSERT_EQUAL_INT(white, search_state.previous_side);
+    TEST_ASSERT_EQUAL_INT(search_state.score, search_state.previous_score);
+    const int white_score = search_state.previous_score;
+
+    /* ...through 'position' (the next 'go' for white compares with it)... */
+    parse_position("position startpos moves e2e4 e7e5", &board, &search_state);
+    TEST_ASSERT_EQUAL_INT(white, search_state.previous_side);
+    TEST_ASSERT_EQUAL_INT(white_score, search_state.previous_score);
+
+    /* ...until the next search, for either side... */
+    parse_position("position startpos moves e2e4", &board, &search_state);
+    reset_time_control(&limits);
+    limits.depth = 4;
+    limits.quiet = true;
+    find_best_move(&board, &search_state, &limits);
+    TEST_ASSERT_EQUAL_INT(black, search_state.previous_side);
+    TEST_ASSERT_EQUAL_INT(search_state.score, search_state.previous_score);
+
+    /* ...and 'ucinewgame' clears it. */
+    TEST_ASSERT_TRUE(handle_uci_command("ucinewgame", &board, &search_state, &limits));
+    TEST_ASSERT_EQUAL_INT(-1, search_state.previous_side);
+    TEST_ASSERT_EQUAL_INT(0, search_state.previous_score);
+}
+
 void test_tm_scale() {
     /* Just changed and the moves close (30% of the nodes): more than the soft time. */
     TEST_ASSERT_TRUE(tm_scale(0, 30, 100) > 2.0);
@@ -1358,7 +1422,7 @@ void test_probcut_conditions() {
 void test_tunable_parameters() {
 #ifdef TIKI_TUNE
     /* A tuning build: the parameters are variables, set by name (any case) and kept in range. */
-    TEST_ASSERT_EQUAL_INT(50, tunable_count);
+    TEST_ASSERT_EQUAL_INT(53, tunable_count);
     const int saved = RFP_MARGIN;
     TEST_ASSERT_TRUE(set_tunable("rfp_margin", 10, 120));
     TEST_ASSERT_EQUAL_INT(120, RFP_MARGIN);

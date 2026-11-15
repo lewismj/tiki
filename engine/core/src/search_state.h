@@ -147,6 +147,8 @@ typedef struct align {
     bool score_pv;
     bool corr_shared;          /* Other threads update the correction history during this search (learn_correction). */
     int score;                 /* Score of the last completed iteration (side to move). */
+    int previous_score;        /* The last search's final score and its side to move, kept from search */
+    int previous_side;         /* to search (time management, tm_falling_scale): -1 if there's none.    */
     int thread_id;             /* 0 for the main thread, which checks the clock and reports. */
     _Atomic uint64_t shared_nodes; /* Helper threads publish 'nodes' here for the main thread. */
     nnue_stack_t nnue;         /* Accumulators along the search path (when a network is loaded). */
@@ -199,6 +201,8 @@ static inline_always void init_search_state_with(search_state_t* search_state, c
     memset(search_state->repetition_distance, 0, sizeof(search_state->repetition_distance));
     search_state->null_move_index = 0;
     search_state->score = 0;
+    search_state->previous_score = 0;
+    search_state->previous_side = -1;
     search_state->score_pv = false;
     search_state->follow_pv = true;
     clear_search_tables(search_state);

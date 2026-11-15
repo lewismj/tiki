@@ -6,7 +6,7 @@
 a 16 MB TT cleared before each, and prints the total nodes and nodes per second.
 
 - The node count changes only when the search or the network does, so it's a signature for changes that shouldn't
-  change behaviour. With `models/tiki-2026-11-13.nnue` it's **1,119,910** (network format version 6), the same
+  change behaviour. With `models/tiki-2026-11-14.nnue` it's **920,348** (network format version 6), the same
   at every CPU level.
 - Timings vary between runs, so only compare times from back-to-back runs on an idle machine.
 - `build/engine/benchmark/tiki_benchmark` runs Google Benchmark micro-benchmarks of evaluation, move generation,
@@ -24,8 +24,8 @@ scripts/match.sh gauntlet build/engine/app/tiki /path/to/engine1 /path/to/engine
 ```
 
 - **`sprt`** plays until a sequential probability ratio test decides whether the new build gains (bounds `[0, 5]`
-  normalised Elo), usually a few thousand games at 8+0.08. Test search changes this way, several related ones
-  together rather than each alone.
+  normalised Elo), usually a few thousand games at 8+0.08. Test one change at a time, though the parts of one
+  mechanism go together. A change wanted for what it enables (or a fix) only has to be no worse: `ELO0=-3 ELO1=1`.
 - **`gauntlet`** plays a fixed number of games (200) against each engine and reports the Elo differences.
 - Settings come from the environment: `TC`, `CONCURRENCY`, `GAMES`, `ELO0`/`ELO1`, `HASH`, `BOOK`, and
   `NEW_EVALFILE`/`BASE_EVALFILE` to test networks (see the top of either script). Games and results go to

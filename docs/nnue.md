@@ -31,16 +31,19 @@ trainer's tests check that both sides compute the same features and integer eval
 
 ## The current network
 
-`models/tiki-2026-11-13.nnue` (format version 6; the same training run as `tiki-2026-11-08.nnue`, the first of
-this architecture, exported again with the finer output scale): 1.95B positions from 38 months
-of Lichess games (2023-09 to 2026-10) between players rated 2000+, labelled with Lichess's Stockfish evaluations
-(70%) and the game results (30%). The results of positions with 6 pieces or fewer were corrected with the Syzygy
-tables, and each month's scores rescaled to the same scale (`s` 335). Trained with the factoriser (for the
-accumulator and the layer stacks), 80 epochs of 100M positions with a cosine learning rate schedule and loss power
-2; epoch 78 is the network (validation 0.021003, against 0.021329 for the best epoch of the previous
-architecture on the same data).
+`models/tiki-2026-11-14.nnue` (format version 6): 2.34B positions from 46 months of Lichess games (2023-01 to
+2026-10) between players rated 2000+, labelled with Lichess's Stockfish evaluations (70%) and the game results
+(30%). The results of positions with 6 pieces or fewer were corrected with the Syzygy tables, and each month's
+scores rescaled to the same scale (`s` 335). Trained with the factoriser (for the accumulator and the layer
+stacks), 100 epochs of 100M positions with a cosine learning rate schedule and loss power 2; epoch 95 is the
+network (validation 0.020901, on a validation set of its own, so not comparable with the runs below). In
+gauntlets at 8+0.08 it scored +24 ± 25 against Eleanor 4.1 and +108 ± 27 against Leorik 3.2.1 (300 games each;
+see the [README](../README.md#strength)).
 
-It beat the previous network (`tiki-2026-11-07.nnue`: the same data, the version 2 architecture, 65 epochs) by
+Before it, `tiki-2026-11-13.nnue` was the first network of this architecture (`tiki-2026-11-08.nnue`, 1.95B
+positions from 38 months, 2023-09 to 2026-10, epoch 78 of 80, validation 0.021003 against 0.021329 for the
+best epoch of the previous architecture on the same data) exported again with the finer output scale.
+`tiki-2026-11-08.nnue` beat the previous network (`tiki-2026-11-07.nnue`: the same data, the version 2 architecture, 65 epochs) by
 **+18.3 ± 8.3 Elo** (SPRT [0, 5] passed, 2,722 games at 8+0.08), although it searches about 6% fewer nodes per
 second (that SPRT's builds were AVX2, without VNNI). Before it, `tiki-2026-11-07.nnue` had beaten
 `tiki-2026-11-06.nnue` (1.71B positions, 2024-01 to 2026-09, no relabelling, rescaling or factoriser) by
@@ -55,9 +58,9 @@ python3 training/lichess_download.py --download-dir <dir> --months 2024-01:2026-
 training/lichess_convert/lichess_convert --min-elo 2000 <month>.pgn.zst <month>.bin
 training/syzygy_relabel/syzygy_relabel --tb <tables> <data dir> <relabelled dir>
 python3 training/rescale.py --scale-to 335 <relabelled dir> <rescaled dir>    # see training/README.md, "Adding a Lichess month"
-python3 training/train_streaming.py --data <dir> --out <nets> --epochs 65 --epoch-positions 100000000 \
-        --lr-schedule cosine --wdl 0.3 [--factoriser]
-build/engine/app/tiki nnue-eval <nets>/tiki-65.nnue "<fen>"
+python3 training/train_streaming.py --data <dir> --out <nets> --epochs 100 --epoch-positions 100000000 \
+        --lr-schedule cosine --wdl 0.3 --factoriser
+build/engine/app/tiki nnue-eval <nets>/tiki-95.nnue "<fen>"
 ```
 
 - **Data sources:** Lichess's analysed games (Stockfish evaluations), tiki's self-play (`tiki datagen`), and Leela

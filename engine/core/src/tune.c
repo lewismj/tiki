@@ -32,6 +32,9 @@ int tune_tm_soft_percent = TM_SOFT_PERCENT_DEFAULT;
 int tune_tm_hard_percent = TM_HARD_PERCENT_DEFAULT;
 int tune_tm_unstable_percent = TM_UNSTABLE_PERCENT_DEFAULT;
 int tune_tm_nodes_percent = TM_NODES_PERCENT_DEFAULT;
+int tune_tm_falling_prev = TM_FALLING_PREV_DEFAULT;
+int tune_tm_falling_iter = TM_FALLING_ITER_DEFAULT;
+int tune_tm_falling_max = TM_FALLING_MAX_DEFAULT;
 int tune_corr_pawn_weight = CORR_PAWN_WEIGHT_DEFAULT;
 int tune_corr_nonpawn_weight = CORR_NONPAWN_WEIGHT_DEFAULT;
 int tune_corr_max = CORR_MAX_DEFAULT;
@@ -88,6 +91,9 @@ const tunable_t tunables[] = {
     { "TM_HARD_PERCENT",    &tune_tm_hard_percent,   150, 500, 15.0, 0.002 },
     { "TM_UNSTABLE_PERCENT", &tune_tm_unstable_percent, 130, 400, 13.0, 0.002 },
     { "TM_NODES_PERCENT",   &tune_tm_nodes_percent,   80, 200,  6.0, 0.002 },
+    { "TM_FALLING_PREV",    &tune_tm_falling_prev,     0,  40,  2.0, 0.002 },
+    { "TM_FALLING_ITER",    &tune_tm_falling_iter,     0,  40,  2.0, 0.002 },
+    { "TM_FALLING_MAX",     &tune_tm_falling_max,    100, 400, 15.0, 0.002 },
     /* Correction history (search_constants.h). */
     { "CORR_PAWN_WEIGHT",   &tune_corr_pawn_weight,    0, 200, 10.0, 0.002 },
     { "CORR_NONPAWN_WEIGHT", &tune_corr_nonpawn_weight, 0, 200, 10.0, 0.002 },
