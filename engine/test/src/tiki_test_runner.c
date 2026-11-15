@@ -85,6 +85,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_see_ge_matches_see);
     RUN_TEST(test_board_to_fen_round_trip);
     RUN_TEST(test_nnue_feature_index_known_values);
+    RUN_TEST(test_nnue_pawn_pair_known_values);
     RUN_TEST(test_nnue_features_in_range_and_unique);
     RUN_TEST(test_nnue_feature_symmetry);
     RUN_TEST(test_nnue_evaluate_known_value);

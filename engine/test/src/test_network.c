@@ -15,16 +15,19 @@
  *   (s n up to 31), so plus - minus = 2 s n.
  * - Hidden unit 0: bias QH / 2 (the middle of CReLU's range), weight +-w on the side to move's plus and
  *   minus inputs of each kind, the other side's kinds the negative, with 2 s w = 128 * pawns per piece:
- *   h = QH / 2 + 128 * (material difference in pawns), linear while it stays within 0..QH (a
- *   difference of up to 31.75 pawns).
- * - Output: weight 1016 * 32 = 32512 on unit 0 (within int16), bias -32512 * QH / 2, so
- *   eval = 32512 * 128 * pawns * 400 / (QH * QO) = 100 * pawns. The same in every bucket.
+ *   h0 = QH / 2 + 128 n for a material difference of n pawns, linear while it stays within 0..QH (a
+ *   difference of up to 31.75 pawns). Its CReLU activation is (4064 + 128 n) >> 6 = 63 + 2 n, exactly.
+ * - Second layer unit 0: weight QW (1.0) on that activation, no bias: h1 = 64 (63 + 2 n), activation
+ *   63 + 2 n again.
+ * - Output: weight 32512 on it (within int16), bias -63 * 32512, so out = 2 n * 32512 and
+ *   eval = out * 64 * 400 / (QH * QO) = 100 n. No skip (units 14 and 15 are 0). The same in every bucket.
  *
  * Steps and weights per kind (P N B R Q): s = 2 2 2 4 8, w = 32 96 96 80 72, exact up to 15 pawns,
  * knights or bishops, 7 rooks and 3 queens of a side.
  */
 #define UNIT_BIAS 128
-#define OUT_WEIGHT (1016 * (NNUE_QO / NNUE_QW))
+#define OUT_WEIGHT 32512
+#define SECOND_LAYER_UNIT 0             /* The second layer's unit that passes h0 on. */
 
 void load_material_network(void) {
     static const int step[5] = { 2, 2, 2, 4, 8 };          /* P N B R Q */
@@ -52,7 +55,8 @@ void load_material_network(void) {
             nnue_net.l1_weights[nnue_l1_index(b, 0, 2 * kind + 1)] = (int8_t) -w;
         }
         nnue_net.l1_bias[b][0] = NNUE_QH / 2;
-        nnue_net.out_weights[b][0] = OUT_WEIGHT;
-        nnue_net.out_bias[b] = -OUT_WEIGHT * (NNUE_QH / 2);
+        nnue_net.l2_weights[nnue_l2_index(b, SECOND_LAYER_UNIT, 0)] = NNUE_QW;   /* Unit 0's CReLU activation. */
+        nnue_net.out_weights[b][NNUE_L2_INPUTS + SECOND_LAYER_UNIT] = OUT_WEIGHT;  /* Its CReLU activation. */
+        nnue_net.out_bias[b] = -63 * OUT_WEIGHT;
     }
 }

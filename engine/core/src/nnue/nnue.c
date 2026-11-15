@@ -46,6 +46,56 @@ int nnue_feature_index(colour perspective, square king, piece pc, square sq) {
     return bucket * NNUE_PIECE_SQUARES + kind * 64 + oriented_sq;
 }
 
+int nnue_pawn_id(colour perspective, square king, colour pawn_colour, square sq) {
+    const int oriented_king = perspective == white ? king : king ^ 56;
+    int oriented_sq = perspective == white ? sq : sq ^ 56;
+    if ((oriented_king & 7) >= 4) oriented_sq ^= 7;     /* Mirrored as the piece features are. */
+    return (pawn_colour != perspective) * 48 + oriented_sq - 8;
+}
+
+int nnue_pair_index(int id_a, int id_b) {
+    const int hi = id_a > id_b ? id_a : id_b, lo = id_a > id_b ? id_b : id_a;
+    return NNUE_INPUTS + hi * (hi - 1) / 2 + lo;
+}
+
+/* The squares a pawn on 'sq' pairs with: its own and the neighbouring files, less its own square. */
+static inline bitboard pair_window(square sq) {
+    const int file = sq & 7;
+    const bitboard files = 0x0101010101010101ULL << file;
+    return (files | (file > 0 ? files >> 1 : 0) | (file < 7 ? files << 1 : 0)) & ~(1ULL << sq);
+}
+
+/*
+ * The pawn pairs that involve a pawn of 'changed' (per colour), each with a pawn of 'changed' or 'kept': with
+ * 'changed' the pawns that left and 'kept' those that stayed, the pairs that went; with the pawns that arrived,
+ * those that came. A pair of two changed pawns is written once (the first is taken out before its partners are
+ * looked for). Writes feature indices to 'features' from 'n', returns the new count. Stockfish's way.
+ */
+static int pair_features(int* features, int n, colour perspective, square king, const bitboard changed[2],
+                         const bitboard kept[2]) {
+    /* nnue_pawn_id with the perspective's orientation worked out once: id = base[colour] + (sq ^ flip). */
+    const int oriented_king = perspective == white ? king : king ^ 56;
+    const int flip = (perspective == white ? 0 : 56) ^ ((oriented_king & 7) >= 4 ? 7 : 0);
+    const int base[2] = { (perspective != white) * 48 - 8, (perspective != black) * 48 - 8 };
+    bitboard rest[2] = { changed[white], changed[black] };
+    for (int c = white; c <= black; c++) {
+        while (rest[c]) {
+            const square sq = get_lsb_and_pop_bit(&rest[c]);
+            const int id = base[c] + (sq ^ flip);
+            const bitboard window = pair_window(sq);
+            for (int c2 = white; c2 <= black; c2++) {
+                bitboard partners = (kept[c2] | rest[c2]) & window;
+                while (partners) {
+                    const int other = base[c2] + (get_lsb_and_pop_bit(&partners) ^ flip);
+                    const int hi = id > other ? id : other, lo = id > other ? other : id;
+                    features[n++] = NNUE_INPUTS + hi * (hi - 1) / 2 + lo;
+                }
+            }
+        }
+    }
+    return n;
+}
+
 int nnue_active_features(const board_t* board, colour perspective, int* features) {
     square king = trailing_zero_count(board->pieces[perspective == white ? K : k]);
     int n = 0;
@@ -56,17 +106,24 @@ int nnue_active_features(const board_t* board, colour perspective, int* features
             features[n++] = nnue_feature_index(perspective, king, pc, sq);
         }
     }
-    return n;
+    /* Every pair of the pawns on the board: all of them "changed" from none. */
+    const bitboard pawns[2] = { board->pieces[P], board->pieces[p] };
+    const bitboard none[2] = { 0, 0 };
+    return pair_features(features, n, perspective, king, pawns, none);
 }
 
 /* Feature transformer weights, 64 byte aligned like the rest of the network (see nnue.h). */
 #define NNUE_FT_BYTES ((size_t) NNUE_INPUTS * NNUE_HIDDEN * sizeof(int16_t))
 static_assert(NNUE_FT_BYTES % 64 == 0, "aligned_alloc needs a multiple of the alignment");
+#define NNUE_PAIR_BYTES ((size_t) NNUE_PAIR_FEATURES * NNUE_HIDDEN)
+static_assert(NNUE_PAIR_BYTES % 64 == 0, "aligned_alloc needs a multiple of the alignment");
 
 /* Hidden layer weights, 256 KB, on the heap like the feature transformer (not in nnue_network_t, which
  * nnue_load_memory builds on the stack). */
 #define NNUE_L1_COUNT ((size_t) NNUE_OUTPUT_BUCKETS * NNUE_L1 * NNUE_L1_INPUTS)
 static_assert(NNUE_L1_COUNT % 64 == 0, "aligned_alloc needs a multiple of the alignment");
+#define NNUE_L2_COUNT ((size_t) NNUE_OUTPUT_BUCKETS * NNUE_L2 * NNUE_L2_INPUTS)
+static_assert(NNUE_L2_COUNT % 64 == 0, "aligned_alloc needs a multiple of the alignment");
 
 static void* allocate_aligned(size_t bytes) {
 #if defined(_WIN32)
@@ -86,17 +143,23 @@ static void free_aligned(void* pointer) {
 
 static void free_network(nnue_network_t* net) {
     free_aligned(net->ft_weights);
+    free_aligned(net->pair_weights);
     free_aligned(net->l1_weights);
+    free_aligned(net->l2_weights);
     net->ft_weights = NULL;
+    net->pair_weights = NULL;
     net->l1_weights = NULL;
+    net->l2_weights = NULL;
 }
 
-/* A network with its weight arrays allocated (not initialised), false if either allocation failed
- * (then neither is kept). */
+/* A network with its weight arrays allocated (not initialised), false if any allocation failed
+ * (then none is kept). */
 static bool allocate_network(nnue_network_t* net) {
     net->ft_weights = allocate_aligned(NNUE_FT_BYTES);
+    net->pair_weights = allocate_aligned(NNUE_PAIR_BYTES);
     net->l1_weights = allocate_aligned(NNUE_L1_COUNT);
-    if (net->ft_weights == NULL || net->l1_weights == NULL) {
+    net->l2_weights = allocate_aligned(NNUE_L2_COUNT);
+    if (net->ft_weights == NULL || net->pair_weights == NULL || net->l1_weights == NULL || net->l2_weights == NULL) {
         free_network(net);
         return false;
     }
@@ -109,7 +172,9 @@ bool nnue_allocate(void) {
     memset(&nnue_net, 0, sizeof(nnue_net));
     if (!allocate_network(&nnue_net)) return false;
     memset(nnue_net.ft_weights, 0, NNUE_FT_BYTES);
+    memset(nnue_net.pair_weights, 0, NNUE_PAIR_BYTES);
     memset(nnue_net.l1_weights, 0, NNUE_L1_COUNT);
+    memset(nnue_net.l2_weights, 0, NNUE_L2_COUNT);
     return true;
 }
 
@@ -130,9 +195,10 @@ static bool little_endian_host(void) {
 
 /* Size of a network in the file format, every valid file is exactly this long. */
 #define NNUE_FT_COUNT ((size_t) NNUE_INPUTS * NNUE_HIDDEN)
-#define NNUE_FILE_SIZE (8 + 3 * sizeof(uint32_t) + NNUE_FT_COUNT * sizeof(int16_t) + NNUE_HIDDEN * sizeof(int16_t) + \
-                        NNUE_L1_COUNT * sizeof(int8_t) + sizeof(nnue_net.l1_bias) + sizeof(nnue_net.out_weights) + \
-                        sizeof(nnue_net.out_bias))
+#define NNUE_FILE_SIZE (8 + 3 * sizeof(uint32_t) + NNUE_FT_COUNT * sizeof(int16_t) + NNUE_PAIR_BYTES + \
+                        NNUE_HIDDEN * sizeof(int16_t) + \
+                        NNUE_L1_COUNT * sizeof(int8_t) + sizeof(nnue_net.l1_bias) + NNUE_L2_COUNT * sizeof(int8_t) + \
+                        sizeof(nnue_net.l2_bias) + sizeof(nnue_net.out_weights) + sizeof(nnue_net.out_bias))
 
 /* Copies the hidden layer weights between the file's order ([bucket][unit][input], 'file') and memory's
  * (nnue_l1_index, 'memory'): into memory if 'load', else out to the file order. The one place the two
@@ -149,11 +215,31 @@ static void convert_l1_weights(int8_t* memory, int8_t* file, bool load) {
     }
 }
 
+/* convert_l1_weights for the second hidden layer ([bucket][unit][input] and nnue_l2_index). */
+static void convert_l2_weights(int8_t* memory, int8_t* file, bool load) {
+    size_t f = 0;
+    for (int b = 0; b < NNUE_OUTPUT_BUCKETS; b++) {
+        for (int u = 0; u < NNUE_L2; u++) {
+            for (int i = 0; i < NNUE_L2_INPUTS; i++, f++) {
+                if (load) memory[nnue_l2_index(b, u, i)] = file[f];
+                else file[f] = memory[nnue_l2_index(b, u, i)];
+            }
+        }
+    }
+}
+
 /* The hidden layer weights at 'data' + *at (file order) into 'out' (memory order), false if fewer are left. */
 static bool take_l1_weights(const uint8_t* data, size_t size, size_t* at, int8_t* out) {
     if (size - *at < NNUE_L1_COUNT) return false;
     convert_l1_weights(out, (int8_t*) (data + *at), true);
     *at += NNUE_L1_COUNT;
+    return true;
+}
+
+static bool take_l2_weights(const uint8_t* data, size_t size, size_t* at, int8_t* out) {
+    if (size - *at < NNUE_L2_COUNT) return false;
+    convert_l2_weights(out, (int8_t*) (data + *at), true);
+    *at += NNUE_L2_COUNT;
     return true;
 }
 
@@ -177,11 +263,14 @@ bool nnue_load_memory(const void* data, size_t size, const char* name) {
               take(data, size, &at, magic, sizeof(magic)) &&
               memcmp(magic, NNUE_MAGIC, sizeof(magic)) == 0 &&
               take(data, size, &at, header, sizeof(header)) &&
-              header[0] == NNUE_VERSION && header[1] == NNUE_INPUTS && header[2] == NNUE_HIDDEN &&
+              header[0] == NNUE_VERSION && header[1] == NNUE_TOTAL_INPUTS && header[2] == NNUE_HIDDEN &&
               take(data, size, &at, net.ft_weights, NNUE_FT_COUNT * sizeof(int16_t)) &&
+              take(data, size, &at, net.pair_weights, NNUE_PAIR_BYTES) &&
               take(data, size, &at, net.ft_bias, sizeof(net.ft_bias)) &&
               take_l1_weights(data, size, &at, net.l1_weights) &&
               take(data, size, &at, net.l1_bias, sizeof(net.l1_bias)) &&
+              take_l2_weights(data, size, &at, net.l2_weights) &&
+              take(data, size, &at, net.l2_bias, sizeof(net.l2_bias)) &&
               take(data, size, &at, net.out_weights, sizeof(net.out_weights)) &&
               take(data, size, &at, net.out_bias, sizeof(net.out_bias)) &&
               at == size; /* Nothing after the network. */
@@ -208,14 +297,13 @@ bool nnue_load(const char* path) {
 
     const bool ok = size == NNUE_FILE_SIZE && nnue_load_memory(data, size, path);
 
-    /* A tiki network of another version (the networks before the hidden layer are version 2): say so,
-     * rather than leave only "could not load". Version 5 differs only in the output layer's scale. */
+    /* A tiki network of another version (those before pawn pairs and the second hidden layer are version 6):
+     * say so, rather than leave only "could not load". */
     uint32_t version;
     if (!ok && size >= 12 && memcmp(data, NNUE_MAGIC, 8) == 0 &&
         (memcpy(&version, data + 8, sizeof(version)), version != NNUE_VERSION)) {
-        fprintf(stderr, "%s is a version %u network, this build of tiki reads version %d.%s\n",
-                path, (unsigned) version, NNUE_VERSION,
-                version == 5 ? " Convert it with the trainer (read_network, then write_network)." : "");
+        fprintf(stderr, "%s is a version %u network, this build of tiki reads version %d.\n",
+                path, (unsigned) version, NNUE_VERSION);
     }
     free(data);
     return ok;
@@ -224,32 +312,61 @@ bool nnue_load(const char* path) {
 bool nnue_save(const char* path) {
     if (!nnue_is_loaded() || !little_endian_host()) return false;
 
-    /* The hidden layer weights back in the file's order, [bucket][unit][input]. */
+    /* The hidden layers' weights back in the file's order, [bucket][unit][input]. */
     int8_t* l1_file = malloc(NNUE_L1_COUNT);
-    if (l1_file == NULL) return false;
-    convert_l1_weights(nnue_net.l1_weights, l1_file, false);
-
-    FILE* file = fopen(path, "wb");
+    int8_t* l2_file = malloc(NNUE_L2_COUNT);
+    FILE* file = l1_file != NULL && l2_file != NULL ? fopen(path, "wb") : NULL;
     if (file == NULL) {
         free(l1_file);
+        free(l2_file);
         return false;
     }
-    const uint32_t header[3] = { NNUE_VERSION, NNUE_INPUTS, NNUE_HIDDEN };
+    convert_l1_weights(nnue_net.l1_weights, l1_file, false);
+    convert_l2_weights(nnue_net.l2_weights, l2_file, false);
+    const uint32_t header[3] = { NNUE_VERSION, NNUE_TOTAL_INPUTS, NNUE_HIDDEN };
     const size_t ft_count = (size_t) NNUE_INPUTS * NNUE_HIDDEN;
     bool ok = fwrite(NNUE_MAGIC, 1, 8, file) == 8 &&
               fwrite(header, sizeof(uint32_t), 3, file) == 3 &&
               fwrite(nnue_net.ft_weights, sizeof(int16_t), ft_count, file) == ft_count &&
+              fwrite(nnue_net.pair_weights, 1, NNUE_PAIR_BYTES, file) == NNUE_PAIR_BYTES &&
               fwrite(nnue_net.ft_bias, sizeof(int16_t), NNUE_HIDDEN, file) == NNUE_HIDDEN &&
               fwrite(l1_file, sizeof(int8_t), NNUE_L1_COUNT, file) == NNUE_L1_COUNT &&
               fwrite(nnue_net.l1_bias, sizeof(nnue_net.l1_bias), 1, file) == 1 &&
+              fwrite(l2_file, sizeof(int8_t), NNUE_L2_COUNT, file) == NNUE_L2_COUNT &&
+              fwrite(nnue_net.l2_bias, sizeof(nnue_net.l2_bias), 1, file) == 1 &&
               fwrite(nnue_net.out_weights, sizeof(nnue_net.out_weights), 1, file) == 1 &&
               fwrite(nnue_net.out_bias, sizeof(nnue_net.out_bias), 1, file) == 1;
     free(l1_file);
+    free(l2_file);
     return fclose(file) == 0 && ok;
 }
 
 static inline const int16_t* feature_row(int feature) {
     return &nnue_net.ft_weights[(size_t) feature * NNUE_HIDDEN];
+}
+
+static inline const int8_t* pair_row(int feature) {
+    return &nnue_net.pair_weights[(size_t) (feature - NNUE_INPUTS) * NNUE_HIDDEN];
+}
+
+/* The rows an accumulator update adds and subtracts: piece features' (int16) and pawn pairs' (int8). */
+typedef struct {
+    int added_count, removed_count, pairs_added_count, pairs_removed_count;
+    const int16_t* added[NNUE_MAX_ACTIVE];
+    const int16_t* removed[NNUE_MAX_ACTIVE];
+    const int8_t* pairs_added[NNUE_MAX_PAIRS];
+    const int8_t* pairs_removed[NNUE_MAX_PAIRS];
+} row_changes_t;
+
+/* Adds a feature's row to 'changes' as added ('add') or removed, by its kind. */
+static inline void change_feature(row_changes_t* changes, int feature, bool add) {
+    if (feature < NNUE_INPUTS) {
+        if (add) changes->added[changes->added_count++] = feature_row(feature);
+        else changes->removed[changes->removed_count++] = feature_row(feature);
+    } else {
+        if (add) changes->pairs_added[changes->pairs_added_count++] = pair_row(feature);
+        else changes->pairs_removed[changes->pairs_removed_count++] = pair_row(feature);
+    }
 }
 
 /*
@@ -262,14 +379,23 @@ static inline const int16_t* feature_row(int feature) {
 #define NNUE_GROUPS (NNUE_L1_INPUTS / 4)        /* Groups of 4 inputs (nnue_l1_index). */
 
 /* in[j] = (x * y) >> 9 with x = clamp(v[j], 0, QA) and y = clamp(v[j + NNUE_PAIRS], 0, QA), 0..127:
- * one perspective's NNUE_HIDDEN accumulator values to its NNUE_PAIRS inputs. */
-static inline void hidden_inputs_scalar(uint8_t* in, const int16_t* values) {
+ * one perspective's NNUE_HIDDEN accumulator values, v = values + pairs (the piece features' sum and the pawn
+ * pairs'; together within int16, see nnue.h), to its NNUE_PAIRS inputs. */
+static inline void hidden_inputs_scalar(uint8_t* in, const int16_t* values, const int16_t* pairs) {
     for (int j = 0; j < NNUE_PAIRS; j++) {
-        const int x = values[j] < 0 ? 0 : values[j] > NNUE_QA ? NNUE_QA : values[j];
-        const int y = values[j + NNUE_PAIRS] < 0 ? 0 : values[j + NNUE_PAIRS] > NNUE_QA ? NNUE_QA : values[j + NNUE_PAIRS];
+        const int vx = values[j] + pairs[j], vy = values[j + NNUE_PAIRS] + pairs[j + NNUE_PAIRS];
+        const int x = vx < 0 ? 0 : vx > NNUE_QA ? NNUE_QA : vx;
+        const int y = vy < 0 ? 0 : vy > NNUE_QA ? NNUE_QA : vy;
         in[j] = (uint8_t) ((x * y) >> 9);
     }
 }
+
+#ifndef NNUE_PAIR_PREFETCH_LINES
+#define NNUE_PAIR_PREFETCH_LINES 4          /* Of a pair sum's 16 cache lines, prefetched on a push. */
+#endif
+
+/* No pawn pairs: for an accumulator that already has them (nnue_refresh's). */
+static const int16_t no_pairs[NNUE_HIDDEN] align = { 0 };
 
 /* sums[u] = sum(in[i] * weight[bucket][u][i]) over the NNUE_L1_INPUTS inputs, for each hidden unit u,
  * a group of 4 inputs at a time over the weights as stored (nnue_l1_index), skipping groups of zeros.
@@ -282,6 +408,20 @@ static inline void hidden_sums_scalar(int32_t* sums, const uint8_t* in, int buck
         if ((x[0] | x[1] | x[2] | x[3]) == 0) continue;
         const int8_t* w = weights + (size_t) g * NNUE_L1 * 4;
         for (int u = 0; u < NNUE_L1; u++) {
+            sums[u] += x[0] * w[4 * u] + x[1] * w[4 * u + 1] + x[2] * w[4 * u + 2] + x[3] * w[4 * u + 3];
+        }
+    }
+}
+
+/* sums[u] = sum(in[i] * l2 weight[bucket][u][i]) over the NNUE_L2_INPUTS activations, for each unit of the
+ * second hidden layer, a group of 4 inputs at a time over the weights as stored (nnue_l2_index). */
+static inline void l2_sums_scalar(int32_t* sums, const uint8_t* in, int bucket) {
+    for (int u = 0; u < NNUE_L2; u++) sums[u] = 0;
+    const int8_t* weights = nnue_net.l2_weights + nnue_l2_index(bucket, 0, 0);
+    for (int g = 0; g < NNUE_L2_INPUTS / 4; g++) {
+        const uint8_t* x = in + 4 * g;
+        const int8_t* w = weights + (size_t) g * NNUE_L2 * 4;
+        for (int u = 0; u < NNUE_L2; u++) {
             sums[u] += x[0] * w[4 * u] + x[1] * w[4 * u + 1] + x[2] * w[4 * u + 2] + x[3] * w[4 * u + 3];
         }
     }
@@ -314,6 +454,7 @@ typedef __m512i vec_t;
 #define vec_set1_32 _mm512_set1_epi32
 #define vec_zero _mm512_setzero_si512
 #define vec_add_32 _mm512_add_epi32
+#define vec_load_i8(p) _mm512_cvtepi8_epi16(_mm256_loadu_si256((const __m256i*) (p)))   /* 32 int8 to int16 */
 #define NNUE_TILE_REGISTERS 16                  /* Of 32: the whole accumulator stays in registers. */
 
 /* _mm512_packus_epi16 packs within each 128-bit lane (a0 b0 a1 b1 ... in 64-bit quarters), the
@@ -348,6 +489,7 @@ typedef __m256i vec_t;
 #define vec_set1_32 _mm256_set1_epi32
 #define vec_zero _mm256_setzero_si256
 #define vec_add_32 _mm256_add_epi32
+#define vec_load_i8(p) _mm256_cvtepi8_epi16(_mm_loadu_si128((const __m128i*) (p)))      /* 16 int8 to int16 */
 #define NNUE_TILE_REGISTERS 8                   /* Of 16, the rest hold the rows' loads. */
 
 /* Within each 128-bit half (a0 b0 a1 b1 in 64-bit quarters), the permute restores a0 a1 b0 b1. */
@@ -382,6 +524,11 @@ typedef __m128i vec_t;
 #define vec_zero _mm_setzero_si128
 #define vec_add_32 _mm_add_epi32
 #define vec_packus_16 _mm_packus_epi16          /* One lane, already in order. */
+/* 8 int8 to int16 with SSE2 alone: each byte doubled into a 16-bit lane, then shifted down arithmetically. */
+static inline vec_t vec_load_i8(const int8_t* p) {
+    const __m128i x = _mm_loadl_epi64((const __m128i*) p);
+    return _mm_srai_epi16(_mm_unpacklo_epi8(x, x), 8);
+}
 #define NNUE_TILE_REGISTERS 8                   /* Of 16. */
 
 #if defined(__SSSE3__)
@@ -403,25 +550,33 @@ const char* nnue_simd(void) {
 }
 
 /*
- * out = in + the 'added' rows - the 'removed' rows, over the whole accumulator ('out' may be 'in').
- * A tile of the accumulator stays in registers while every row is applied to it.
+ * out = in + the added rows - the removed rows of 'changes', over the whole accumulator ('out' may be 'in').
+ * A tile of the accumulator stays in registers while every row is applied to it; the pawn pairs' int8 rows
+ * are sign-extended as they're loaded.
  */
 #define NNUE_TILE (NNUE_TILE_REGISTERS * NNUE_VEC_BYTES / 2)
 static_assert(NNUE_HIDDEN % NNUE_TILE == 0, "the accumulator is a whole number of tiles");
 
-static inline void apply_rows(int16_t* out, const int16_t* in, const int16_t* const* added, int added_count,
-                              const int16_t* const* removed, int removed_count) {
+static inline void apply_rows(int16_t* out, const int16_t* in, const row_changes_t* changes) {
     enum { lanes = NNUE_VEC_BYTES / 2 };
     for (int t = 0; t < NNUE_HIDDEN; t += NNUE_TILE) {
         vec_t v[NNUE_TILE_REGISTERS];
         for (int k = 0; k < NNUE_TILE_REGISTERS; k++) v[k] = vec_load(in + t + lanes * k);
-        for (int a = 0; a < added_count; a++) {
-            const int16_t* row = added[a] + t;
+        for (int a = 0; a < changes->added_count; a++) {
+            const int16_t* row = changes->added[a] + t;
             for (int k = 0; k < NNUE_TILE_REGISTERS; k++) v[k] = vec_add_16(v[k], vec_load(row + lanes * k));
         }
-        for (int r = 0; r < removed_count; r++) {
-            const int16_t* row = removed[r] + t;
+        for (int r = 0; r < changes->removed_count; r++) {
+            const int16_t* row = changes->removed[r] + t;
             for (int k = 0; k < NNUE_TILE_REGISTERS; k++) v[k] = vec_sub_16(v[k], vec_load(row + lanes * k));
+        }
+        for (int a = 0; a < changes->pairs_added_count; a++) {
+            const int8_t* row = changes->pairs_added[a] + t;
+            for (int k = 0; k < NNUE_TILE_REGISTERS; k++) v[k] = vec_add_16(v[k], vec_load_i8(row + lanes * k));
+        }
+        for (int r = 0; r < changes->pairs_removed_count; r++) {
+            const int8_t* row = changes->pairs_removed[r] + t;
+            for (int k = 0; k < NNUE_TILE_REGISTERS; k++) v[k] = vec_sub_16(v[k], vec_load_i8(row + lanes * k));
         }
         for (int k = 0; k < NNUE_TILE_REGISTERS; k++) vec_store(out + t + lanes * k, v[k]);
     }
@@ -437,19 +592,21 @@ static inline void apply_rows(int16_t* out, const int16_t* in, const int16_t* co
 static_assert((NNUE_QA << 7) <= INT16_MAX, "x << 7 must fit int16");
 static_assert(NNUE_PAIRS % NNUE_VEC_BYTES == 0, "a register of inputs a step");
 
-static inline vec_t scaled_x(const int16_t* values) {
-    return vec_slli_16(vec_min_16(vec_max_16(vec_load(values), vec_zero()), vec_set1_16(NNUE_QA)), 7);
+static inline vec_t scaled_x(const int16_t* values, const int16_t* pairs) {
+    const vec_t v = vec_add_16(vec_load(values), vec_load(pairs));
+    return vec_slli_16(vec_min_16(vec_max_16(v, vec_zero()), vec_set1_16(NNUE_QA)), 7);
 }
 
-static inline vec_t capped_y(const int16_t* values) {
-    return vec_min_16(vec_load(values), vec_set1_16(NNUE_QA));
+static inline vec_t capped_y(const int16_t* values, const int16_t* pairs) {
+    return vec_min_16(vec_add_16(vec_load(values), vec_load(pairs)), vec_set1_16(NNUE_QA));
 }
 
-static inline void hidden_inputs(uint8_t* in, const int16_t* values) {
+static inline void hidden_inputs(uint8_t* in, const int16_t* values, const int16_t* pairs) {
     enum { lanes = NNUE_VEC_BYTES / 2 };
     for (int j = 0; j < NNUE_PAIRS; j += NNUE_VEC_BYTES) {
-        const vec_t p = vec_mulhi_16(scaled_x(values + j), capped_y(values + NNUE_PAIRS + j));
-        const vec_t q = vec_mulhi_16(scaled_x(values + j + lanes), capped_y(values + NNUE_PAIRS + j + lanes));
+        const vec_t p = vec_mulhi_16(scaled_x(values + j, pairs + j), capped_y(values + NNUE_PAIRS + j, pairs + NNUE_PAIRS + j));
+        const vec_t q = vec_mulhi_16(scaled_x(values + j + lanes, pairs + j + lanes),
+                                     capped_y(values + NNUE_PAIRS + j + lanes, pairs + NNUE_PAIRS + j + lanes));
         vec_store(in + j, vec_packus_16(p, q));
     }
 }
@@ -458,6 +615,10 @@ static inline void hidden_inputs(uint8_t* in, const int16_t* values) {
 
 static inline void hidden_sums(int32_t* sums, const uint8_t* in, int bucket) {
     hidden_sums_scalar(sums, in, bucket);
+}
+
+static inline void l2_sums(int32_t* sums, const uint8_t* in, int bucket) {
+    l2_sums_scalar(sums, in, bucket);
 }
 
 #else
@@ -504,6 +665,25 @@ static inline void hidden_sums(int32_t* sums, const uint8_t* in, int bucket) {
     }
 }
 
+/* l2_sums_scalar the same way: a group's 32 units x 4 weights are NNUE_L2_SUM_VECS registers. The inputs are
+ * 0..127, as the first layer's, so maddubs can't saturate here either. */
+#define NNUE_L2_SUM_VECS (NNUE_L2 * 4 / NNUE_VEC_BYTES)
+static_assert(NNUE_L2 * 4 % NNUE_VEC_BYTES == 0, "a group's weights are whole registers");
+
+static inline void l2_sums(int32_t* sums, const uint8_t* in, int bucket) {
+    const int8_t* weights = nnue_net.l2_weights + nnue_l2_index(bucket, 0, 0);
+    vec_t acc[NNUE_L2_SUM_VECS];
+    for (int k = 0; k < NNUE_L2_SUM_VECS; k++) acc[k] = vec_zero();
+    for (int group = 0; group < NNUE_L2_INPUTS / 4; group++) {
+        int32_t four;
+        memcpy(&four, in + 4 * group, sizeof(four));
+        const vec_t x = vec_set1_32(four);
+        const int8_t* w = weights + (size_t) group * NNUE_L2 * 4;
+        for (int k = 0; k < NNUE_L2_SUM_VECS; k++) acc[k] = vec_dpbusd(acc[k], x, vec_load(w + NNUE_VEC_BYTES * k));
+    }
+    for (int k = 0; k < NNUE_L2_SUM_VECS; k++) vec_store(sums + k * (NNUE_VEC_BYTES / 4), acc[k]);
+}
+
 #endif
 
 #else
@@ -512,55 +692,95 @@ const char* nnue_simd(void) {
     return "scalar";
 }
 
-static inline void apply_rows(int16_t* out, const int16_t* in, const int16_t* const* added, int added_count,
-                              const int16_t* const* removed, int removed_count) {
+static inline void apply_rows(int16_t* out, const int16_t* in, const row_changes_t* changes) {
     for (int j = 0; j < NNUE_HIDDEN; j++) {
         int v = in[j];
-        for (int a = 0; a < added_count; a++) v += added[a][j];
-        for (int r = 0; r < removed_count; r++) v -= removed[r][j];
+        for (int a = 0; a < changes->added_count; a++) v += changes->added[a][j];
+        for (int r = 0; r < changes->removed_count; r++) v -= changes->removed[r][j];
+        for (int a = 0; a < changes->pairs_added_count; a++) v += changes->pairs_added[a][j];
+        for (int r = 0; r < changes->pairs_removed_count; r++) v -= changes->pairs_removed[r][j];
         out[j] = (int16_t) v;
     }
 }
 
-static inline void hidden_inputs(uint8_t* in, const int16_t* values) {
-    hidden_inputs_scalar(in, values);
+static inline void hidden_inputs(uint8_t* in, const int16_t* values, const int16_t* pairs) {
+    hidden_inputs_scalar(in, values, pairs);
 }
 
 static inline void hidden_sums(int32_t* sums, const uint8_t* in, int bucket) {
     hidden_sums_scalar(sums, in, bucket);
 }
 
+static inline void l2_sums(int32_t* sums, const uint8_t* in, int bucket) {
+    l2_sums_scalar(sums, in, bucket);
+}
+
 #endif
 
-/* The rest of bucket 'bucket's layer stack from the hidden layer sums: bias, CReLU, the output layer,
- * in centipawns (nnue.h). int64: a clamped activation (up to QH) times an int16 weight, 16 of them (at
- * most 16 * 8128 * 32768 + 2^31, times SCALE, well inside int64). */
-static inline int stack_output(const int32_t* sums, int bucket) {
-    int64_t out = nnue_net.out_bias[bucket];
-    for (int u = 0; u < NNUE_L1; u++) {
-        int64_t h = (int64_t) sums[u] + nnue_net.l1_bias[bucket][u];
-        h = h < 0 ? 0 : h > NNUE_QH ? NNUE_QH : h;
-        out += h * nnue_net.out_weights[bucket][u];
+/* A hidden layer's 'n' sums (with their biases, scale QH) to its 2n activations (nnue.h): each sum clamped to
+ * 0..QH, then >> 6 (CReLU, 0..127) for all of them, then (x * x) >> 19 (SqrCReLU, 0..126). */
+static_assert(NNUE_QH == NNUE_QU * 64, "CReLU's >> 6 maps QH to 127");
+static_assert((int64_t) NNUE_QH * NNUE_QH <= INT32_MAX, "the square of a clamped sum fits int32");
+static inline void activations(uint8_t* restrict out, const int32_t* restrict h, int n) {
+    /* Two plain loops over int32, which the compiler vectorises for the CPU level built for. */
+    for (int i = 0; i < n; i++) {
+        const int32_t x = h[i] < 0 ? 0 : h[i] > NNUE_QH ? NNUE_QH : h[i];
+        out[i] = (uint8_t) (x >> 6);
     }
-    return (int) (out * NNUE_SCALE / ((int64_t) NNUE_QH * NNUE_QO));
+    for (int i = 0; i < n; i++) {
+        const int32_t x = h[i] < 0 ? 0 : h[i] > NNUE_QH ? NNUE_QH : h[i];
+        out[n + i] = (uint8_t) ((x * x) >> 19);
+    }
+}
+
+/*
+ * The rest of bucket 'bucket's layer stack from the first hidden layer's sums, in centipawns (nnue.h), the
+ * second layer's sums by SIMD ('simd') or the plain C reference: everything else is the same code. int32
+ * until the end: a sum is at most 512 * 127 * 128 (first layer) or 32 * 127 * 128 plus its bias (the trainer's
+ * biases are a few QH; a file with biases near 2^31 would overflow), a square at most QH * QH, the output's
+ * sum at most 96 * 127 * 32768 plus its bias; the final scaling is int64.
+ */
+static inline int stack_output(const int32_t* sums, int bucket, bool simd) {
+    int32_t h0[NNUE_L1], h1[NNUE_L2];
+    uint8_t a[NNUE_OUT_INPUTS] align;
+    int32_t sums1[NNUE_L2] align;
+    for (int u = 0; u < NNUE_L1; u++) h0[u] = sums[u] + nnue_net.l1_bias[bucket][u];
+    activations(a, h0, NNUE_L1);
+    if (simd) l2_sums(sums1, a, bucket);
+    else l2_sums_scalar(sums1, a, bucket);
+    for (int u = 0; u < NNUE_L2; u++) h1[u] = sums1[u] + nnue_net.l2_bias[bucket][u];
+    activations(a + NNUE_L2_INPUTS, h1, NNUE_L2);
+
+    const int16_t* weights = nnue_net.out_weights[bucket];
+    int32_t out = nnue_net.out_bias[bucket];
+    for (int i = 0; i < NNUE_OUT_INPUTS; i++) out += a[i] * weights[i];
+    const int64_t skip = (int64_t) h0[NNUE_SKIP_PLUS] - h0[NNUE_SKIP_MINUS];
+    return (int) (((int64_t) out * (NNUE_QH / NNUE_QU) + skip * NNUE_QO) * NNUE_SCALE /
+                  ((int64_t) NNUE_QH * NNUE_QO));
+}
+
+/* The layer stack on the accumulator plus the pawn pairs' sums 'pairs' (per perspective, by colour). */
+static int output_with_pairs(const nnue_accumulator_t* accumulator, const int16_t* const pairs[2], colour side, int bucket) {
+    uint8_t in[NNUE_L1_INPUTS];
+    int32_t sums[NNUE_L1] align;
+    hidden_inputs(in, accumulator->values[side], pairs[side]);
+    hidden_inputs(in + NNUE_PAIRS, accumulator->values[side ^ 1], pairs[side ^ 1]);
+    hidden_sums(sums, in, bucket);
+    return stack_output(sums, bucket, true);
 }
 
 int nnue_output(const nnue_accumulator_t* accumulator, colour side, int bucket) {
-    uint8_t in[NNUE_L1_INPUTS];
-    int32_t sums[NNUE_L1];
-    hidden_inputs(in, accumulator->values[side]);
-    hidden_inputs(in + NNUE_PAIRS, accumulator->values[side ^ 1]);
-    hidden_sums(sums, in, bucket);
-    return stack_output(sums, bucket);
+    const int16_t* const pairs[2] = { no_pairs, no_pairs };
+    return output_with_pairs(accumulator, pairs, side, bucket);
 }
 
 int nnue_output_scalar(const nnue_accumulator_t* accumulator, colour side, int bucket) {
     uint8_t in[NNUE_L1_INPUTS];
     int32_t sums[NNUE_L1];
-    hidden_inputs_scalar(in, accumulator->values[side]);
-    hidden_inputs_scalar(in + NNUE_PAIRS, accumulator->values[side ^ 1]);
+    hidden_inputs_scalar(in, accumulator->values[side], no_pairs);
+    hidden_inputs_scalar(in + NNUE_PAIRS, accumulator->values[side ^ 1], no_pairs);
     hidden_sums_scalar(sums, in, bucket);
-    return stack_output(sums, bucket);
+    return stack_output(sums, bucket, false);
 }
 
 int nnue_board_bucket(const board_t* board) {
@@ -571,11 +791,26 @@ int nnue_board_bucket(const board_t* board) {
 
 /* From scratch: the bias plus every active feature's row. */
 static void refresh_perspective(const board_t* board, colour perspective, int16_t* values) {
-    int features[NNUE_MAX_ACTIVE];
-    const int16_t* rows[NNUE_MAX_ACTIVE];
-    int n = nnue_active_features(board, perspective, features);
-    for (int f = 0; f < n; f++) rows[f] = feature_row(features[f]);
-    apply_rows(values, nnue_net.ft_bias, rows, n, NULL, 0);
+    int features[NNUE_MAX_FEATURES];
+    row_changes_t changes;
+    changes.added_count = changes.removed_count = changes.pairs_added_count = changes.pairs_removed_count = 0;
+    const int n = nnue_active_features(board, perspective, features);
+    for (int f = 0; f < n; f++) change_feature(&changes, features[f], true);
+    apply_rows(values, nnue_net.ft_bias, &changes);
+}
+
+/* The pawn pairs that changed between the pawns 'before' and 'after' (per colour), for 'perspective' (king on
+ * 'king'), into 'changes': those of the pawns that left removed, those of the pawns that arrived added. */
+static inline void change_pairs(row_changes_t* changes, colour perspective, square king, const bitboard before[2],
+                                const bitboard after[2]) {
+    int features[NNUE_MAX_PAIRS];
+    const bitboard gone[2] = { before[white] & ~after[white], before[black] & ~after[black] };
+    const bitboard arrived[2] = { after[white] & ~before[white], after[black] & ~before[black] };
+    const bitboard kept[2] = { before[white] & after[white], before[black] & after[black] };
+    const int n_gone = pair_features(features, 0, perspective, king, gone, kept);
+    for (int f = 0; f < n_gone; f++) changes->pairs_removed[changes->pairs_removed_count++] = pair_row(features[f]);
+    const int n_arrived = pair_features(features, 0, perspective, king, arrived, kept);
+    for (int f = 0; f < n_arrived; f++) changes->pairs_added[changes->pairs_added_count++] = pair_row(features[f]);
 }
 
 void nnue_refresh(const board_t* board, nnue_accumulator_t* accumulator) {
@@ -596,9 +831,10 @@ void nnue_stack_init(nnue_stack_t* stack) {
 void nnue_reset(nnue_stack_t* stack) {
     stack->top = 0;
     stack->entries[0].computed[white] = stack->entries[0].computed[black] = false;
+    stack->entries[0].pair_key_set = false;
 }
 
-/* Every cache entry back to the empty board (the bias, no pieces), for the current network. */
+/* Every cache entry back to the empty board (the bias, no pieces), and no pair sums, for the current network. */
 static void init_cache(nnue_stack_t* stack) {
     for (int c = white; c <= black; c++) {
         for (int sq = 0; sq < 64; sq++) {
@@ -606,7 +842,23 @@ static void init_cache(nnue_stack_t* stack) {
             memset(stack->cache[c][sq].pieces, 0, sizeof(stack->cache[c][sq].pieces));
         }
     }
+    for (int i = 0; i < NNUE_PAIR_CACHE_SIZE; i++) stack->pair_cache[i].key = 0;
     stack->cache_generation = nnue_generation();
+}
+
+/* The key of a pawn structure's pair sum for 'perspective': the pawn hash (the board's correction key for the
+ * pawns), told apart by perspective and by the half its king is on (which mirrors the pairs). */
+static const uint64_t pair_salt[2][2] = { { 0x9E3779B97F4A7C15ULL, 0xC2B2AE3D27D4EB4FULL },
+                                          { 0x165667B19E3779F9ULL, 0xD6E8FEB86659FD93ULL } };
+
+static inline void set_pair_keys(nnue_entry_t* entry, const board_t* board) {
+    for (int c = white; c <= black; c++) {
+        const square king = trailing_zero_count(board->pieces[c == white ? K : k]);
+        const int oriented_king = c == white ? king : king ^ 56;
+        entry->pair_half[c] = (oriented_king & 7) >= 4;
+        entry->pair_key[c] = board->corr_keys[0] ^ pair_salt[c][entry->pair_half[c]];
+    }
+    entry->pair_key_set = true;
 }
 
 /* refresh_perspective through the cache: only the pieces that differ from the cached position. */
@@ -616,19 +868,18 @@ static void refresh_cached(nnue_stack_t* stack, const board_t* board, colour per
     const square king = trailing_zero_count(board->pieces[perspective == white ? K : k]);
     nnue_cache_entry_t* entry = &stack->cache[perspective][king];
 
-    /* At most 32 pieces were on the board then, and 32 are now. */
-    const int16_t* added[NNUE_MAX_ACTIVE];
-    const int16_t* removed[NNUE_MAX_ACTIVE];
-    int added_count = 0, removed_count = 0;
+    /* At most 32 pieces were on the board then, and 32 are now (the pawn pairs are apart, pair_sum). */
+    row_changes_t changes;
+    changes.added_count = changes.removed_count = changes.pairs_added_count = changes.pairs_removed_count = 0;
     for (int pc = P; pc <= k; pc++) {
         const bitboard now = board->pieces[pc];
         bitboard gone = entry->pieces[pc] & ~now;
         bitboard arrived = now & ~entry->pieces[pc];
-        while (gone) removed[removed_count++] = feature_row(nnue_feature_index(perspective, king, pc, get_lsb_and_pop_bit(&gone)));
-        while (arrived) added[added_count++] = feature_row(nnue_feature_index(perspective, king, pc, get_lsb_and_pop_bit(&arrived)));
+        while (gone) changes.removed[changes.removed_count++] = feature_row(nnue_feature_index(perspective, king, pc, get_lsb_and_pop_bit(&gone)));
+        while (arrived) changes.added[changes.added_count++] = feature_row(nnue_feature_index(perspective, king, pc, get_lsb_and_pop_bit(&arrived)));
         entry->pieces[pc] = now;
     }
-    apply_rows(entry->values, entry->values, added, added_count, removed, removed_count);
+    apply_rows(entry->values, entry->values, &changes);
     memcpy(values, entry->values, sizeof(entry->values));
 }
 
@@ -654,12 +905,34 @@ void nnue_push(nnue_stack_t* stack, const board_t* board, move_t move) {
     add_change(entry->removed, &entry->removed_count, moved, source);
     add_change(entry->added, &entry->added_count, promoted ? promoted : moved, target);
 
+    /* The pawns now, and before the move: the moved pawn back on its square (and off the target, unless it
+     * promoted), and a captured pawn back. */
+    entry->pawns_after[white] = board->pieces[P];
+    entry->pawns_after[black] = board->pieces[p];
+    entry->pawns_before[white] = entry->pawns_after[white];
+    entry->pawns_before[black] = entry->pawns_after[black];
+    if (moved == P || moved == p) {
+        entry->pawns_before[mover] |= 1ULL << source;
+        if (!promoted) entry->pawns_before[mover] &= ~(1ULL << target);
+    }
+
+    set_pair_keys(entry, board);
+    /* The evaluation will look these pair sums up (if there is one): start loading their keys and first lines. */
+    for (int c = white; c <= black; c++) {
+        const nnue_pair_cache_entry_t* slot = &stack->pair_cache[entry->pair_key[c] & (NNUE_PAIR_CACHE_SIZE - 1)];
+        __builtin_prefetch(&slot->key);
+        for (int line = 0; line < NNUE_PAIR_PREFETCH_LINES; line++) __builtin_prefetch((const char*) slot->values + 64 * line);
+    }
+
     if (get_capture_flag(move)) {
         if (get_enpassant_flag(move)) {
-            add_change(entry->removed, &entry->removed_count,
-                       mover == white ? p : P, mover == white ? target + 8 : target - 8);
+            const square taken = mover == white ? target + 8 : target - 8;
+            add_change(entry->removed, &entry->removed_count, mover == white ? p : P, taken);
+            entry->pawns_before[mover ^ 1] |= 1ULL << taken;
         } else {
-            add_change(entry->removed, &entry->removed_count, board->stack[board->stack_ptr - 1].captured_piece, target);
+            const piece captured = board->stack[board->stack_ptr - 1].captured_piece;
+            add_change(entry->removed, &entry->removed_count, captured, target);
+            if (captured == P || captured == p) entry->pawns_before[mover ^ 1] |= 1ULL << target;
         }
     } else if (get_king_side_castle_flag(move) || get_queen_side_castle_flag(move)) {
         const piece rook = mover == white ? R : r;
@@ -688,18 +961,60 @@ static void update_perspective(nnue_stack_t* stack, const board_t* board, colour
     const square king = trailing_zero_count(board->pieces[perspective == white ? K : k]);
     for (int i = from + 1; i <= stack->top; i++) {
         nnue_entry_t* entry = &stack->entries[i];
-        const int16_t* added[2];
-        const int16_t* removed[2];
+        row_changes_t changes;
+        changes.added_count = entry->added_count;
+        changes.removed_count = entry->removed_count;
+        changes.pairs_added_count = changes.pairs_removed_count = 0;
         for (int a = 0; a < entry->added_count; a++) {
-            added[a] = feature_row(nnue_feature_index(perspective, king, entry->added[a].pc, entry->added[a].sq));
+            changes.added[a] = feature_row(nnue_feature_index(perspective, king, entry->added[a].pc, entry->added[a].sq));
         }
         for (int r = 0; r < entry->removed_count; r++) {
-            removed[r] = feature_row(nnue_feature_index(perspective, king, entry->removed[r].pc, entry->removed[r].sq));
+            changes.removed[r] = feature_row(nnue_feature_index(perspective, king, entry->removed[r].pc, entry->removed[r].sq));
         }
         apply_rows(entry->accumulator.values[perspective], stack->entries[i - 1].accumulator.values[perspective],
-                   added, entry->added_count, removed, entry->removed_count);
+                   &changes);
         entry->computed[perspective] = true;
     }
+}
+
+/*
+ * The pawn pairs' sum for the top entry's 'perspective': from the cache if its pawn structure is there, else
+ * built in its slot from the parent's sum (if the parent's structure is still cached, in another slot, for the
+ * same king half) and the pairs this move changed, else from scratch.
+ */
+static const int16_t* pair_sum(nnue_stack_t* stack, const board_t* board, colour perspective) {
+    if (stack->cache_generation != nnue_generation()) init_cache(stack);
+    nnue_entry_t* top = &stack->entries[stack->top];
+    if (!top->pair_key_set) set_pair_keys(top, board);      /* The root, now that there's a board. */
+    const uint64_t key = top->pair_key[perspective];
+    nnue_pair_cache_entry_t* slot = &stack->pair_cache[key & (NNUE_PAIR_CACHE_SIZE - 1)];
+    if (slot->key == key) return slot->values;
+
+    const square king = trailing_zero_count(board->pieces[perspective == white ? K : k]);
+    row_changes_t changes;
+    changes.added_count = changes.removed_count = changes.pairs_added_count = changes.pairs_removed_count = 0;
+    const int16_t* from = no_pairs;
+    if (stack->top > 0) {
+        const nnue_entry_t* parent = &stack->entries[stack->top - 1];
+        const uint64_t parent_key = parent->pair_key[perspective];
+        const nnue_pair_cache_entry_t* parent_slot = &stack->pair_cache[parent_key & (NNUE_PAIR_CACHE_SIZE - 1)];
+        if (parent->pair_key_set && parent->pair_half[perspective] == top->pair_half[perspective] &&
+            parent_slot != slot && parent_slot->key == parent_key) {
+            from = parent_slot->values;
+            change_pairs(&changes, perspective, king, top->pawns_before, top->pawns_after);
+        }
+    }
+    if (from == no_pairs) {
+        /* From scratch: every pair of the board's pawns. */
+        int features[NNUE_MAX_PAIRS];
+        const bitboard pawns[2] = { board->pieces[P], board->pieces[p] };
+        const bitboard none[2] = { 0, 0 };
+        const int n = pair_features(features, 0, perspective, king, pawns, none);
+        for (int f = 0; f < n; f++) changes.pairs_added[changes.pairs_added_count++] = pair_row(features[f]);
+    }
+    apply_rows(slot->values, from, &changes);
+    slot->key = key;
+    return slot->values;
 }
 
 int nnue_evaluate_incremental(nnue_stack_t* stack, const board_t* board) {
@@ -707,5 +1022,6 @@ int nnue_evaluate_incremental(nnue_stack_t* stack, const board_t* board) {
     for (int c = white; c <= black; c++) {
         if (!top->computed[c]) update_perspective(stack, board, c);
     }
-    return nnue_output(&top->accumulator, board->side, nnue_board_bucket(board));
+    const int16_t* const pairs[2] = { pair_sum(stack, board, white), pair_sum(stack, board, black) };
+    return output_with_pairs(&top->accumulator, pairs, board->side, nnue_board_bucket(board));
 }

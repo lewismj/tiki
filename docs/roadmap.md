@@ -54,7 +54,8 @@ parts of one mechanism together.
   the refutation was reduced or pruned (weakening any of six pruning techniques finds it, no one of them is the
   cause). A blunder suite (65 such positions replayed warm at the games' times, 10 runs each: 42% blunders
   for the gauntlet build) can only show the gain, not the time taken from later moves, so it's tested with a
-  no-worse SPRT [-3, 1] against `main`; the three percentages are left to a later SPSA.
+  no-worse SPRT [-3, 1] against `main`; the three percentages are left to a later SPSA. Kept: +6.8 ± 8.9 Elo
+  after 1,840 games (LLR 0.80 of 2.94, stopped early as clearly no worse).
 
 ## Next
 

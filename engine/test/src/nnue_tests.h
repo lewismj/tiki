@@ -3,6 +3,7 @@
 
 
 void test_nnue_feature_index_known_values();
+void test_nnue_pawn_pair_known_values();
 void test_nnue_features_in_range_and_unique();
 void test_nnue_feature_symmetry();
 void test_nnue_evaluate_known_value();

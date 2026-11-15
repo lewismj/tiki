@@ -67,9 +67,11 @@ def random_model(seed, factoriser):
         model.l1.weight.normal_(0.0, 0.3)
         model.l1.bias.normal_(0.0, 0.5)
         model.l1_shared.weight.normal_(0.0, 0.3)
-        model.out.weight.normal_(0.0, 0.8)
-        model.out.bias.normal_(0.0, 0.3)
-    model.clip_weights()
+        model.l2_weight.normal_(0.0, 0.4)
+        model.l2_bias.normal_(0.3, 0.4)
+        model.out_weight.normal_(0.0, 0.8)
+        model.out_bias.normal_(0.0, 0.3)
+    model.clip_weights()        # The pawn pair rows (normal above, like every row) to PAIR_CLIP.
     return model
 
 
