@@ -1,5 +1,7 @@
 """Tests for pipeline.py (the stages' commands and the jobs tui.py runs) and a headless run of tui.py."""
 
+import io
+import json
 import os
 import shutil
 import sys
@@ -38,6 +40,8 @@ class Directories(unittest.TestCase):
             self.settings[key] = os.path.join(self.root, key)
         self.settings["train_data"] = self.settings["rescaled_dir"]
         self.settings["months"] = "2026-01:2026-03"
+        self.settings["analysis_pgn"] = os.path.join(self.root, "gauntlet.pgn")
+        self.settings["analysis_tiki"] = os.path.join(self.root, "tiki")
 
     def path(self, key, name):
         """A file of one of the settings' directories, as the jobs name it."""
@@ -138,6 +142,30 @@ class Stages(Directories):
         self.assertEqual(self.path("out_dir", "tiki-10.pt"), argv[argv.index("--resume") + 1])
         argv = pipeline.train_steps(dict(self.settings, resume="/x/tiki-3.pt"))[0].argv
         self.assertEqual("/x/tiki-3.pt", argv[argv.index("--resume") + 1])
+
+    def test_analyse(self):
+        argv = pipeline.analyse_steps(self.settings)[0].argv
+        self.assertEqual("analyse_games.py", argv[2])
+        value = lambda flag: argv[argv.index(flag) + 1]  # noqa: E731
+        self.assertEqual(L(self.settings["analysis_pgn"]), value("--pgn"))
+        self.assertEqual(L(self.settings["analysis_pgn"])[:-4] + "-analysis", value("--out"))
+        self.assertEqual("missed", value("--scope"))
+        self.assertNotIn("--opponent", argv)
+        self.assertNotIn("--limit", argv)
+        argv = pipeline.analyse_steps(dict(self.settings, opponent="/e/leorik", analysis_scope="losses",
+                                           analysis_limit="5", analysis_out="/x/out"))[0].argv
+        self.assertEqual(["/e/leorik", "losses", "5", "/x/out"],
+                         [argv[argv.index(flag) + 1] for flag in ("--opponent", "--scope", "--limit", "--out")])
+        for key, bad in (("analysis_pgn", ""), ("analysis_tiki", ""), ("search_time", "x"), ("analysis_workers", "0")):
+            with self.assertRaises(PipelineError, msg=key):
+                pipeline.analyse_steps(dict(self.settings, **{key: bad}))
+
+    def test_analysis_summary(self):
+        path = os.path.join(self.root, "summary.json")
+        self.assertEqual({"path": path}, pipeline.analysis_summary(path))
+        with open(path, "w") as handle:
+            handle.write('{"counts": {}}')
+        self.assertEqual({"counts": {}, "path": path}, pipeline.analysis_summary(path))
 
     def test_every_stage_builds_from_the_defaults_with_months(self):
         for stage in pipeline.STAGES:
@@ -427,6 +455,34 @@ class Interface(unittest.TestCase):
             self.assertIn("Improvement 10.00%", summary)
             self.assertIn("validation", shown(train.query_one("#chart-loss", Static)))
             self.assertIn("epoch 1", train.query_one("#chart-gain", Static).border_title)
+
+            # The analysis tally follows the summary.json of Analyse's Output directory.
+            # As analyse_games.summarise writes it (built by hand: that needs python-chess).
+            counts = {kind: {phase: {cause: 0 for cause in ("depth", "eval", "gradual")}
+                             for phase in ("opening", "middlegame", "endgame")} for kind in ("loss", "missed win")}
+            counts["loss"]["middlegame"]["eval"] = 1
+            top = [{"game": 3, "kind": "loss", "move": "20.Nf3", "drop": 0.4, "phase": "middlegame", "cause": "eval",
+                    "game_depth": 14, "tiki_move": "Nd2", "opponent_move": "Ne2", "opponent_solves": "yes",
+                    "fen": "8/8/8/8/8/8/8/K6k w - - 0 1"}]
+            summary = {"score": {"win": 5, "draw": 3, "loss": 2}, "scope": "missed", "scanned": 4, "to_scan": 5,
+                       "finished": None, "opponents": ["Leorik"], "examined": 1, "counts": counts, "top": top,
+                       "opponent": {"depth": {"tried": 0, "solved": 0}, "eval": {"tried": 1, "solved": 1}}}
+            out = os.path.join(directory, "analysis")
+            os.makedirs(out)
+            with open(os.path.join(out, "summary.json"), "w") as file:
+                json.dump(summary, file)
+            analyse = app.query_one("#page-analyse", tui.StagePage)
+            analyse.inputs["analysis_out"].value = out
+            app.query_one("#stages").index = [stage.name for stage in stages].index("analyse")
+            await pilot.pause(0.8)
+            tally = analyse.query_one(".analysis", Static)
+            text = tally.renderable if hasattr(tally, "renderable") else tally.content
+            from rich.console import Console
+            console = Console(width=200, record=True, file=io.StringIO())
+            console.print(text)
+            shown_text = console.export_text()
+            for expected in ("vs Leorik", "+5 =3 -2", "4/5", "Cause eval", "1 (100%)", "Ne2 ✓", "20.Nf3"):
+                self.assertIn(expected, shown_text)
 
 
 if __name__ == "__main__":

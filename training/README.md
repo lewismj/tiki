@@ -85,6 +85,7 @@ directory).
 | Rescale | `rescale.py` (or `--fit-only`), by month, or the whole directory without months |
 | Train | `train_streaming.py` |
 | Tests | the trainer's tests |
+| Analyse games | `analyse_games.py` on a match's PGN (see [Why tiki loses a match](#why-tiki-loses-a-match)) |
 
 - **Running:** pick a stage on the left, set its options, and press F5 (F8 stops it; again to insist). The
   commands a stage will run are shown under its options before it runs, and its output and progress below.
@@ -471,6 +472,35 @@ scripts\match.bat gauntlet build-windows\engine\app\tiki.exe C:\Users\lewis\Down
   scripts\match.bat gauntlet ... | findstr /v /b /c:"Warning;" /c:"Info;" /c:"Position;" /c:"Moves;"
   ```
 
+#### Why tiki loses a match
+
+`analyse_games.py` (the interface's **Analyse games** stage) looks at a match's games for where tiki went
+wrong. A referee engine (Stockfish) scores every position of each game examined as tiki's expected score,
+and the turning point is tiki's move that dropped it the most. Each one is then tallied:
+
+- **Kind:** a loss, or a missed win: a game tiki drew or lost after the referee had it winning (expected
+  score at least 0.8), whose turning point is the costliest move after that. Which games are examined is a
+  choice: losses and missed wins (the default), losses only, or every game.
+- **Phase:** opening (move 15 or earlier), endgame (at most 4 pieces besides kings and pawns), middlegame.
+- **Cause:** tiki searches the position again, afresh, for the search time (10 s by default), with the
+  game's moves before it so repetitions count. If its move recovers at least half the drop (scored by the
+  referee), more depth would have found it (**depth**); if not, the evaluation misled it (**eval**). A drop
+  under 0.15 has no clear mistake (**gradual**).
+- **Competitor** (optional): the opponent searches the same position for the same time. A turning point it
+  solves where tiki doesn't is a concrete gap.
+
+```bash
+cd training
+python3 analyse_games.py --pgn ../matches/gauntlet-20261114-100723.pgn --referee /path/to/stockfish     --tiki ../matches/bin/tiki.exe --opponent "/path/to/Leorik-3.2.1.exe" --out ../matches/leorik-analysis
+```
+
+It writes `positions.csv` (one row per game: the move, the drop, the phase and cause, tiki's and the
+competitor's moves, the FEN) and `summary.json` after every game, so a run can be read while it goes. The
+interface shows the tally, with another analysis beside it (**Compare with**, say the same build against
+Eleanor), and the costliest turning points. A game takes about the scan (0.1 s a position) plus up to
+two searches; with 3 workers a 300-game gauntlet's 60 or so losses and missed wins take 10-20 minutes.
+Windows engines run from WSL as they are.
+
 #### Settings
 
 Set these in the environment first (`set NAME=value` in `cmd`, `NAME=value` before the command in
@@ -517,7 +547,8 @@ TIKI_APP=../build/engine/app/tiki python3 -m unittest discover -s tests
 | `test_stream.py` | training and validation cover every record of every file once, and validation stays the same when files are added; a pass yields every training record once, mixed across files, and the next pass reorders them; epochs of a fixed number of batches, and the validation limit; a small `train_streaming.py` run that trains and exports |
 | `test_lc0.py` | lc0 records built as lc0 encodes them decode to the real position's features, for either side to move; the policy move table against lc0's published one; the quiet-position filter (captures, en passant, promotions, check) and the other filters; rejecting records that aren't positions or V6; scores on the trainer's scale; downloading, resuming, and a server that ignores the resume request |
 | `test_score_scale.py` | fitting the scale recovers a known one; sampling across files in proportion to their sizes |
-| `test_pipeline.py` | `tui.py`'s stages (`pipeline.py`): month ranges; Windows paths to WSL paths and back; each stage's commands from the settings; Prepare doing only the months that are missing; Train refusing to overwrite a run, and resuming from the last checkpoint; jobs running their steps in order, stopping at a failure, skipping outputs that exist, and reporting after a stop; reading progress from a job's log and from `train.log`; a run's losses by epoch from `train.log` (a new run or a resume in the same directory replacing the old epochs); the braille chart (`chart.py`: size, axis labels, a fixed x range, no data); and a headless run of the interface (skipped without `textual`). Runs on Linux and on Windows (jobs in WSL) |
+| `test_pipeline.py` | `tui.py`'s stages (`pipeline.py`): month ranges; Windows paths to WSL paths and back; each stage's commands from the settings; Prepare doing only the months that are missing; Train refusing to overwrite a run, and resuming from the last checkpoint; jobs running their steps in order, stopping at a failure, skipping outputs that exist, and reporting after a stop; reading progress from a job's log and from `train.log`; a run's losses by epoch from `train.log` (a new run or a resume in the same directory replacing the old epochs); the braille chart (`chart.py`: size, axis labels, a fixed x range, no data); the Analyse stage's command (its output beside the PGN by default, the competitor and limit only when set, required fields) and reading `summary.json`; and a headless run of the interface, its training graphs and analysis tally (skipped without `textual`). Runs on Linux and on Windows (jobs in WSL) |
+| `test_analyse_games.py` | `analyse_games.py` without engines: tiki's colour and result; which games each scope examines, and reading them from a PGN (games without tiki left out, the limit); the turning point (only tiki's moves, a missed win's after it was first winning, draws only with every game); depth, eval and gradual; the phases; tiki's depth from fastchess's comments; the summary's counts, what the competitor solved, and the costliest turning points |
 | `test_rescale.py` | rounding and clamping; files on different scales all fit 400 afterwards with only their scores changed; `.part` files left out; existing outputs skipped, the source never overwritten; `--fit-only` writes nothing |
 
 ### Next steps

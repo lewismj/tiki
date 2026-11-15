@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""A terminal interface for the training pipeline: download, convert, relabel, rescale, train.
+"""A terminal interface for the training pipeline: download, convert, relabel, rescale, train; and for
+analysing a match's games (why tiki lost them, analyse_games.py).
 
     python3 training/tui.py          (needs 'pip install textual')
 
@@ -24,6 +25,8 @@ import shutil
 import sys
 import time
 
+from rich.console import Group
+from rich.table import Table
 from rich.text import Text
 from textual.app import App
 from textual.design import ColorSystem
@@ -41,7 +44,8 @@ from chart import Series, chart
 from pipeline import FIELDS, STAGES, PipelineError
 
 WIDE = {"months", "download_dir", "converted_dir", "relabelled_dir", "rescaled_dir", "tables", "train_data",
-        "out_dir", "resume", "train_extra", "tiki_app"}
+        "out_dir", "resume", "train_extra", "tiki_app", "analysis_pgn", "referee", "analysis_tiki", "opponent",
+        "analysis_out", "analysis_compare"}
 PREVIEW_STEPS = 5
 GB = 1024 ** 3
 
@@ -61,6 +65,75 @@ def labelled(*pairs):
         text.append(f"{label} ", style=LABEL)
         text.append(f"{value}   ", style=VALUE)
     return text
+
+
+ANALYSIS_PHASES = ("opening", "middlegame", "endgame")
+ANALYSIS_CAUSES = ("depth", "eval", "gradual")
+
+
+def analysis_view(summaries):
+    """The analyses' tallies side by side (one column each, from summary.json: pipeline.analysis_summary),
+    then the first one's costliest turning points."""
+    def share(n, total):
+        return f"{n} ({100 * n / total:.0f}%)" if total else str(n)
+
+    def count(summary, kinds=None, phase=None, cause=None):
+        return sum(n for kind, phases in summary["counts"].items() if kinds is None or kind in kinds
+                   for p, causes in phases.items() if phase is None or p == phase
+                   for c, n in causes.items() if cause is None or c == cause)
+
+    table = Table(box=None, pad_edge=False, header_style=VALUE, show_edge=False)
+    table.add_column("", style=LABEL, no_wrap=True)
+    readable = [s for s in summaries if "counts" in s]
+    for summary in summaries:
+        if "counts" not in summary:
+            table.add_column(Text(f"no analysis yet\n{summary['path']}", style=DIM))
+            continue
+        title = os.path.basename(os.path.dirname(summary["path"]))
+        table.add_column(f"{title}\nvs {', '.join(summary.get('opponents', [])) or '?'}", no_wrap=True)
+    if not readable:
+        return table
+
+    def row(label, cell):
+        table.add_row(label, *(cell(s) if "counts" in s else "" for s in summaries))
+
+    def score(s):
+        w, d, l = (s["score"][k] for k in ("win", "draw", "loss"))
+        games = w + d + l
+        return f"+{w} ={d} -{l}  {100 * (w + d / 2) / games:.1f}%" if games else "-"
+
+    row("Match", score)
+    row("Scanned", lambda s: f"{s['scanned']}/{s['to_scan']} ({s['scope']})" + ("" if s.get("finished") else " …"))
+    row("Losses", lambda s: str(count(s, ("loss",))))
+    row("Missed wins", lambda s: str(count(s, ("missed win",))))
+    table.add_row("", *("" for _ in summaries))
+    for cause in ANALYSIS_CAUSES:
+        row(f"Cause {cause}", lambda s, c=cause: share(count(s, cause=c), s["examined"]))
+    for phase in ANALYSIS_PHASES:
+        row(f"Phase {phase}", lambda s, p=phase: share(count(s, phase=p), s["examined"]))
+    table.add_row("", *("" for _ in summaries))
+    for phase in ANALYSIS_PHASES:
+        row(f"{phase} d/e/g", lambda s, p=phase: " / ".join(str(count(s, phase=p, cause=c)) for c in ANALYSIS_CAUSES))
+    table.add_row("", *("" for _ in summaries))
+
+    def solved(s, cause):
+        entry = s["opponent"][cause]
+        return f"{entry['solved']}/{entry['tried']}" if entry["tried"] else "-"
+
+    row("Competitor solves depth", lambda s: solved(s, "depth"))
+    row("Competitor solves eval", lambda s: solved(s, "eval"))
+
+    first = readable[0]
+    top = Table(box=None, pad_edge=False, header_style=VALUE, show_edge=False, title_style=LABEL,
+                title=f"Costliest turning points ({os.path.basename(os.path.dirname(first['path']))})",
+                title_justify="left")
+    for name in ("game", "kind", "move", "drop", "phase", "cause", "depth", "tiki", "competitor", "fen"):
+        top.add_column(name, no_wrap=True, style=LABEL if name == "fen" else None)
+    for r in first.get("top", [])[:8]:
+        top.add_row(str(r["game"]), r["kind"], r["move"], f"{r['drop']:.2f}", r["phase"], r["cause"],
+                    str(r["game_depth"]), r["tiki_move"] or "-",
+                    (r["opponent_move"] + (" ✓" if r["opponent_solves"] == "yes" else "")) or "-", r["fen"])
+    return Group(table, Text(""), top) if first.get("top") else table
 
 
 class Chart(Static):
@@ -107,6 +180,7 @@ class StagePage(Vertical):
         self.stops = 0
         self.download_seen = None   # (time, bytes) of the partial download when last looked at.
         self.history_seen = None    # (path, size, modified) of the train.log the graphs were drawn from.
+        self.analysis_seen = None   # The same of the summary.json files the analysis tally was drawn from.
 
     def field(self, key):
         spec = FIELDS[key]
@@ -145,6 +219,9 @@ class StagePage(Vertical):
             with Horizontal(classes="charts"):
                 yield Chart("Loss by epoch", id="chart-loss")
                 yield Chart("Validation improvement", id="chart-gain")
+        if self.stage.name == "analyse":
+            with VerticalScroll(classes="analysis-box"):
+                yield Static("", classes="analysis")
         log = RichLog(max_lines=5000, wrap=False, highlight=False, markup=False)
         log.border_title = "Output"
         yield log
@@ -157,6 +234,8 @@ class StagePage(Vertical):
         self.set_interval(0.3, self.poll)
         if self.stage.name == "train":
             self.set_interval(3, self.refresh_history)
+        if self.stage.name == "analyse":
+            self.set_interval(3, self.refresh_analysis)
 
     # ---- Options ----
 
@@ -179,6 +258,8 @@ class StagePage(Vertical):
     def refresh_preview(self):
         if self.stage.name == "train":
             self.refresh_history()
+        if self.stage.name == "analyse":
+            self.refresh_analysis()
         preview = self.query_one(".preview", Static)
         run = self.query_one("Button.-success", Button)
         try:
@@ -330,6 +411,28 @@ class StagePage(Vertical):
         gain.show([Series(f"% diff epoch {first[0]}", GAIN_COLOUR, numbers, gains)],
                   y_format="{:.2f}%", x_range=x_range)
 
+    def refresh_analysis(self):
+        """The tally of the analysis in Output and, beside it, the one in Compare with (their summary.json),
+        drawn again only when one of the files has changed."""
+        paths = []
+        try:
+            paths.append(pipeline.local_path(pipeline.join(pipeline.analysis_out(self.app.settings), "summary.json")))
+        except PipelineError:
+            pass
+        compare = pipeline.text(self.app.settings, "analysis_compare")
+        if compare:
+            paths.append(pipeline.local_path(pipeline.join(compare, "summary.json")))
+        seen = []
+        for path in paths:
+            try:
+                seen.append((path, os.path.getsize(path), os.path.getmtime(path)))
+            except OSError:
+                seen.append((path, None, None))
+        if seen == self.analysis_seen:
+            return
+        self.analysis_seen = seen
+        self.query_one(".analysis", Static).update(analysis_view([pipeline.analysis_summary(path) for path in paths]))
+
     def watch_download(self):
         """The partial download's size and speed: lichess_download.py shows no progress when it isn't
         writing to a terminal."""
@@ -442,6 +545,8 @@ class TrainingApp(App):
     ProgressBar PercentageStatus { color: #91abec; text-style: bold; }
     .summary { height: 1; margin-top: 1; }
     .charts { height: 16; }
+    .analysis-box { height: auto; max-height: 26; margin-top: 1; }
+    .analysis { height: auto; }
     Chart, RichLog { background: #0f1525; border: tall #1b233a; border-title-color: #bbc8e8;
                      border-title-style: bold; padding: 0 1; }
     Chart { width: 1fr; height: 100%; }

@@ -151,7 +151,24 @@ FIELDS = {f.key: f for f in (
     Field("train_extra", "Other options", "", help="passed to train_streaming.py as typed"),
 
     Field("tiki_app", "tiki binary", "", help="blank: skip the engine cross-check (TIKI_APP)"),
+
+    Field("analysis_pgn", "Games", "", help="the match's PGN, e.g. a gauntlet's (matches/gauntlet-....pgn)"),
+    Field("referee", "Referee", "/mnt/c/Users/lewis/Downloads/stockfish/stockfish-windows-x86-64-universal.exe",
+          help="the engine that judges the moves (Stockfish)"),
+    Field("analysis_tiki", "tiki", "", help="the tiki build that searches the turning points"),
+    Field("opponent", "Competitor", "", help="searches the turning points too; blank: skip it"),
+    Field("analysis_name", "tiki's name", "tiki", help="tiki's name in the PGN (new in an SPRT)"),
+    Field("analysis_scope", "Games examined", "losses + missed wins", "choice",
+          ("losses + missed wins", "losses", "all")),
+    Field("scan_time", "Scan time", "0.1", help="seconds the referee spends on each position of a game"),
+    Field("search_time", "Search time", "10", help="seconds tiki and the competitor search a turning point"),
+    Field("analysis_workers", "Workers", "3", help="games analysed at once (each runs its own engines)"),
+    Field("analysis_limit", "Limit", "", help="at most this many games; blank: all"),
+    Field("analysis_out", "Output", "", help="blank: <games>-analysis beside the PGN"),
+    Field("analysis_compare", "Compare with", "", help="another analysis's Output, shown beside this one"),
 )}
+
+SCOPES = {"losses + missed wins": "missed", "losses": "losses", "all": "all"}
 
 
 def defaults():
@@ -370,6 +387,43 @@ def test_steps(settings):
     return [Step(PYTHON + ["-m", "unittest", "discover", "-s", "tests"], env={"TIKI_APP": app} if app else {})]
 
 
+def analysis_out(settings):
+    """Where the analysis writes: Output, or <games without .pgn>-analysis beside the PGN."""
+    out = text(settings, "analysis_out")
+    if out:
+        return out
+    pgn = required(settings, "analysis_pgn")
+    return (pgn[:-4] if pgn.lower().endswith(".pgn") else pgn) + "-analysis"
+
+
+def analysis_summary(path):
+    """An analysis's summary.json (analyse_games.py) with its 'path', or just the path if it can't be read."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            summary = json.load(handle)
+        if not isinstance(summary, dict) or "counts" not in summary:
+            raise ValueError
+    except (OSError, ValueError):
+        return {"path": path}
+    summary["path"] = path
+    return summary
+
+
+def analyse_steps(settings):
+    argv = PYTHON + ["analyse_games.py", "--pgn", required(settings, "analysis_pgn"),
+                     "--referee", required(settings, "referee"), "--tiki", required(settings, "analysis_tiki"),
+                     "--out", analysis_out(settings), "--name", required(settings, "analysis_name"),
+                     "--scope", SCOPES.get(text(settings, "analysis_scope"), "missed"),
+                     "--scan-time", number(settings, "scan_time", float),
+                     "--search-time", number(settings, "search_time", float),
+                     "--workers", number(settings, "analysis_workers", minimum=1)]
+    if opponent := text(settings, "opponent"):
+        argv += ["--opponent", opponent]
+    if limit := number(settings, "analysis_limit", minimum=1, optional=True):
+        argv += ["--limit", limit]
+    return [Step(argv)]
+
+
 @dataclass(frozen=True)
 class Stage:
     name: str
@@ -408,6 +462,13 @@ STAGES = (
            "train_extra"), train_steps),
     Stage("tests", "Tests", "The trainer's tests (python3 -m unittest discover -s tests).",
           ("tiki_app",), test_steps),
+    Stage("analyse", "Analyse games",
+          "Why tiki lost, or failed to win, a match's games (analyse_games.py): the referee finds each game's "
+          "turning point, tiki (and the competitor) search it again, and each is tallied by phase and cause "
+          "(depth: tiki finds a saving move with more time; eval: it doesn't; gradual: no clear mistake).",
+          ("analysis_pgn", "referee", "analysis_tiki", "opponent", "analysis_out", "analysis_compare",
+           "analysis_name", "analysis_scope", "scan_time", "search_time", "analysis_workers", "analysis_limit"),
+          analyse_steps),
 )
 
 
