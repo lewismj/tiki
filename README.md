@@ -89,7 +89,6 @@ Any UCI GUI or tester can run `tiki` (`tiki.exe`) directly.
 | [docs/building.md](docs/building.md)   | build options, Windows, OpenBench's `make`, releases                                     |
 | [docs/testing.md](docs/testing.md)     | bench, SPRTs and gauntlets, OpenBench and SPSA tuning                                    |
 | [docs/nnue.md](docs/nnue.md)           | the network, its data and training (details in [training/README.md](training/README.md)) |
-| [docs/roadmap.md](docs/roadmap.md)     | what's next                                                                              |
 | [scripts/README.md](scripts/README.md) | the build, match and packaging scripts                                                   |
 
 ## Credits

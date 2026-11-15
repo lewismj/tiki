@@ -87,3 +87,5 @@ nnue_candidates/
 tiki-dev
 tiki-tune
 training/binpack
+# Internal notes (not published)
+internal_docs/

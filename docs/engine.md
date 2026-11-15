@@ -25,58 +25,25 @@ Moves are generated in stages: captures and promotions first, quiet moves only w
 
 ## Search
 
-Iterative deepening, PVS, and aspiration windows from depth 4 (±25, doubled on each fail, the full window past
-±1000).
-
-**Move ordering** (a staged picker): the TT move, winning and equal captures (MVV-LVA plus capture history), queen
-promotions, two killers, quiet moves by history, then losing captures (SEE < 0). In check and on the PV all
-moves are generated and scored at once.
-
-- **History:** butterfly history (from/to per side), plus continuation history: how good a quiet move has been
-  after the moves 1, 2 and 4 plies before. Quiet moves are ordered by the sum. Bonus min(16 × depth², 1600) for
-  the move that raised alpha, the same malus for the quiets tried before it, with gravity. The butterfly and
-  capture histories are kept between moves and halved before each search; the continuation and correction
-  histories are kept for the game. `ucinewgame` clears them all.
-- **Correction history:** the static eval is corrected by how wrong it has been in similar positions: tables
-  per side for the pawn structure and for each colour's other pieces, at most ±64 cp. Pruning decisions use the
-  corrected eval.
-
-**Pruning and reductions:**
-
-| | |
-|---|---|
-| Reverse futility | depth ≤ 6, eval − 100 × depth ≥ beta (margin 50 smaller when improving) |
-| Null move | from depth 2, R = 3 + depth / 3 + min((eval − beta) / 200, 3); verified by a normal search from depth 14 |
-| ProbCut | non-PV nodes from depth 5: a capture or promotion (TT move first, then those whose SEE brings the eval up to the bound) that beats beta + 200 (150 when improving) in a qsearch and then in a search 4 plies shallower cuts the node off |
-| Futility | quiet moves, depth ≤ 8, eval + 50 + 100 × depth ≤ alpha |
-| Late move pruning | quiet moves, depth ≤ 6, after 3 + depth² moves (two thirds of that when not improving) |
-| SEE pruning | depth ≤ 8: quiets with SEE < −60 × depth, captures with SEE < −20 × depth² |
-| History pruning | quiet moves, depth ≤ 4, history < −300 × depth |
-| Internal iterative reduction | one ply less from depth 4 when there's no TT move |
-| Late move reductions | 0.75 + ln(depth) × ln(moves) / 2.25, from depth 3 after 3 moves; less for good history, more at expected cut nodes and when not improving; killers aren't reduced |
-
-**Extensions:** singular extensions from depth 6 (a TT move that beats every other move by 2 cp × depth in a
-half-depth search is extended; one that isn't singular but beat beta is searched a ply shallower) and check
-extensions, limited to the first 2 × root depth plies.
-
-**Quiescence:** captures and queen promotions, skipping losing captures (SEE) and with delta pruning (200 cp). It
-probes and saves the TT.
-
-**Transposition table:** 16-byte lock-less entries (Hyatt's XOR scheme, so a torn entry reads as a miss), four to
-a 64-byte bucket. A save replaces the position's own entry or the bucket's least valuable one (empty, else the
-shallowest, entries from earlier searches counting less). Entries hold the best move, score, depth, bound and
-static eval. The child's bucket is prefetched after each move. The table is kept between moves and cleared on
-`ucinewgame`.
-
-**Lazy SMP:** with `Threads` > 1, helper threads search the same root with their own board and move histories,
-sharing the TT and the correction history. Odd-numbered helpers search one ply deeper. The main thread checks the clock and reports the
-total nodes. The move is chosen by a vote of each thread's last completed depth, weighted by
-(score − lowest score + 5) × depth, with found wins first and lost threads last; the chosen thread's line is
-reported. With one thread none of this runs.
-
-**Draws:** repetition, as Stockfish counts it (a position repeated once inside the search, or for the third time
-counting the game history), the fifty-move rule and insufficient material. The en passant square is set and
-hashed only when an enemy pawn can capture there, so a position after a double push matches its repeats.
+- Iterative deepening with aspiration windows
+- Principal variation search (PVS)
+- Staged move ordering: TT move, MVV-LVA with capture history, killers, history
+- Butterfly, capture and continuation histories (1, 2 and 4 plies)
+- Correction history (pawn structure and non-pawn pieces)
+- Reverse futility pruning
+- Null move pruning, with verification search at high depth
+- ProbCut
+- Futility pruning
+- Late move pruning
+- SEE pruning
+- History pruning
+- Internal iterative reductions
+- Late move reductions
+- Singular extensions, check extensions
+- Quiescence search with SEE and delta pruning
+- Transposition table: lock-less, 4-entry buckets, prefetched
+- Lazy SMP with shared TT and correction history, thread voting
+- Draw detection: repetition, fifty-move rule, insufficient material
 
 ## Syzygy tablebases
 
