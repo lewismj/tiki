@@ -158,8 +158,9 @@ FIELDS = {f.key: f for f in (
     Field("analysis_tiki", "tiki", "", help="the tiki build that searches the turning points"),
     Field("opponent", "Competitor", "", help="searches the turning points too; blank: skip it"),
     Field("analysis_name", "tiki's name", "tiki", help="tiki's name in the PGN (new in an SPRT)"),
-    Field("analysis_scope", "Games examined", "losses + missed wins", "choice",
-          ("losses + missed wins", "losses", "all")),
+    Field("analysis_scope", "Games examined", "lost pairs", "choice",
+          ("lost pairs", "losses + missed wins", "losses", "all"),
+          help="lost pairs: losses and missed wins in the openings tiki scored under half in, both colours"),
     Field("scan_time", "Scan time", "0.1", help="seconds the referee spends on each position of a game"),
     Field("search_time", "Search time", "10", help="seconds tiki and the competitor search a turning point"),
     Field("analysis_workers", "Workers", "3", help="games analysed at once (each runs its own engines)"),
@@ -168,7 +169,7 @@ FIELDS = {f.key: f for f in (
     Field("analysis_compare", "Compare with", "", help="another analysis's Output, shown beside this one"),
 )}
 
-SCOPES = {"losses + missed wins": "missed", "losses": "losses", "all": "all"}
+SCOPES = {"lost pairs": "pairs", "losses + missed wins": "missed", "losses": "losses", "all": "all"}
 
 
 def defaults():
@@ -413,7 +414,7 @@ def analyse_steps(settings):
     argv = PYTHON + ["analyse_games.py", "--pgn", required(settings, "analysis_pgn"),
                      "--referee", required(settings, "referee"), "--tiki", required(settings, "analysis_tiki"),
                      "--out", analysis_out(settings), "--name", required(settings, "analysis_name"),
-                     "--scope", SCOPES.get(text(settings, "analysis_scope"), "missed"),
+                     "--scope", SCOPES.get(text(settings, "analysis_scope"), "pairs"),
                      "--scan-time", number(settings, "scan_time", float),
                      "--search-time", number(settings, "search_time", float),
                      "--workers", number(settings, "analysis_workers", minimum=1)]

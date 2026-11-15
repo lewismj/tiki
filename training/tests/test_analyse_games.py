@@ -62,12 +62,35 @@ class Selection(unittest.TestCase):
         path = os.path.join(root, "games.pgn")
         with open(path, "w") as handle:
             handle.write(PGN)
-        jobs, score, opponents = ag.read_games(path, "tiki", "missed", None)
+        jobs, score, opponents, _ = ag.read_games(path, "tiki", "missed", None)
         self.assertEqual({"win": 1, "draw": 1, "loss": 1}, score)     # The game without tiki isn't counted.
         self.assertEqual(["Eleanor", "Leorik"], opponents)
         self.assertEqual([1, 4], [index for index, _ in jobs])      # Its loss and its draw.
         self.assertEqual([1], [index for index, _ in ag.read_games(path, "tiki", "losses", None)[0]])
         self.assertEqual([1], [index for index, _ in ag.read_games(path, "tiki", "missed", 1)[0]])
+        self.assertEqual([4], [index for index, _ in ag.read_games(path, "tiki", "missed", None, {4})[0]])
+
+
+    def test_lost_pairs(self):
+        # Round 1: lost both; round 2: a loss and a win (level); round 3: a draw and a loss; round 4: one game.
+        games = [("1", "loss"), ("1", "loss"), ("2", "loss"), ("2", "win"), ("3", "draw"), ("3", "loss"),
+                 ("4", "loss"), ("5", None)]
+        self.assertEqual({"1", "3", "4"}, ag.lost_pairs(games))
+
+    def test_pairs_scope(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        path = os.path.join(root, "games.pgn")
+        game = '[Round "{}"]\n[White "{}"]\n[Black "{}"]\n[Result "{}"]\n\n1. e4 e5 {}\n\n'
+        with open(path, "w") as handle:
+            for round_, white, black, result in (("1", "tiki", "L", "0-1"), ("1", "L", "tiki", "1-0"),
+                                                 ("2", "tiki", "L", "0-1"), ("2", "L", "tiki", "0-1"),
+                                                 ("3", "tiki", "L", "1/2-1/2"), ("3", "L", "tiki", "1-0")):
+                handle.write(game.format(round_, white, black, result, result))
+        jobs, _, _, pairs = ag.read_games(path, "tiki", "pairs", None)
+        self.assertEqual((2, 3), pairs)                                 # Rounds 1 and 3 of the 3 lost.
+        self.assertEqual([1, 2, 5, 6], [index for index, _ in jobs])  # Not round 2's loss: tiki won the other.
+        self.assertEqual([1, 2, 3, 5, 6], [index for index, _ in ag.read_games(path, "tiki", "missed", None)[0]])
 
 
 class TurningPoint(unittest.TestCase):
@@ -100,6 +123,10 @@ class TurningPoint(unittest.TestCase):
         self.assertEqual("gradual", ag.cause(0.1, 1.0))
         self.assertEqual("depth", ag.cause(0.4, 0.5))
         self.assertEqual("eval", ag.cause(0.4, 0.49))
+        # A fresh search to the game's depth that solves it: the game's search went wrong on its own.
+        self.assertEqual("unreproduced", ag.cause(0.4, 0.0, 0.5))
+        self.assertEqual("depth", ag.cause(0.4, 0.6, 0.2))
+        self.assertEqual("gradual", ag.cause(0.1, 0.0, 1.0))
         self.assertEqual("opening", ag.phase(chess.Board()))
         self.assertEqual("middlegame", ag.phase(chess.Board("r2qk2r/8/8/8/8/8/8/R2QK2R w - - 0 30")))
         self.assertEqual("endgame", ag.phase(chess.Board("r3k2r/8/8/8/8/8/8/R3K2R w - - 0 30")))

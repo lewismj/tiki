@@ -149,7 +149,7 @@ class Stages(Directories):
         value = lambda flag: argv[argv.index(flag) + 1]  # noqa: E731
         self.assertEqual(L(self.settings["analysis_pgn"]), value("--pgn"))
         self.assertEqual(L(self.settings["analysis_pgn"])[:-4] + "-analysis", value("--out"))
-        self.assertEqual("missed", value("--scope"))
+        self.assertEqual("pairs", value("--scope"))
         self.assertNotIn("--opponent", argv)
         self.assertNotIn("--limit", argv)
         argv = pipeline.analyse_steps(dict(self.settings, opponent="/e/leorik", analysis_scope="losses",

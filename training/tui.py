@@ -68,7 +68,7 @@ def labelled(*pairs):
 
 
 ANALYSIS_PHASES = ("opening", "middlegame", "endgame")
-ANALYSIS_CAUSES = ("depth", "eval", "gradual")
+ANALYSIS_CAUSES = ("unreproduced", "depth", "eval", "gradual")
 
 
 def analysis_view(summaries):
@@ -104,6 +104,7 @@ def analysis_view(summaries):
 
     row("Match", score)
     row("Scanned", lambda s: f"{s['scanned']}/{s['to_scan']} ({s['scope']})" + ("" if s.get("finished") else " …"))
+    row("Openings lost", lambda s: f"{s['pairs_lost']}/{s['pairs']}" if "pairs" in s else "-")
     row("Losses", lambda s: str(count(s, ("loss",))))
     row("Missed wins", lambda s: str(count(s, ("missed win",))))
     table.add_row("", *("" for _ in summaries))
@@ -113,13 +114,15 @@ def analysis_view(summaries):
         row(f"Phase {phase}", lambda s, p=phase: share(count(s, phase=p), s["examined"]))
     table.add_row("", *("" for _ in summaries))
     for phase in ANALYSIS_PHASES:
-        row(f"{phase} d/e/g", lambda s, p=phase: " / ".join(str(count(s, phase=p, cause=c)) for c in ANALYSIS_CAUSES))
+        row(f"{phase} u/d/e/g",
+            lambda s, p=phase: " / ".join(str(count(s, phase=p, cause=c)) for c in ANALYSIS_CAUSES))
     table.add_row("", *("" for _ in summaries))
 
     def solved(s, cause):
-        entry = s["opponent"][cause]
+        entry = s["opponent"].get(cause, {"tried": 0})
         return f"{entry['solved']}/{entry['tried']}" if entry["tried"] else "-"
 
+    row("Competitor solves unrepr.", lambda s: solved(s, "unreproduced"))
     row("Competitor solves depth", lambda s: solved(s, "depth"))
     row("Competitor solves eval", lambda s: solved(s, "eval"))
 
@@ -127,11 +130,12 @@ def analysis_view(summaries):
     top = Table(box=None, pad_edge=False, header_style=VALUE, show_edge=False, title_style=LABEL,
                 title=f"Costliest turning points ({os.path.basename(os.path.dirname(first['path']))})",
                 title_justify="left")
-    for name in ("game", "kind", "move", "drop", "phase", "cause", "depth", "tiki", "competitor", "fen"):
+    for name in ("game", "kind", "move", "drop", "phase", "cause", "depth", "fresh", "tiki", "competitor",
+                 "fen"):
         top.add_column(name, no_wrap=True, style=LABEL if name == "fen" else None)
     for r in first.get("top", [])[:8]:
         top.add_row(str(r["game"]), r["kind"], r["move"], f"{r['drop']:.2f}", r["phase"], r["cause"],
-                    str(r["game_depth"]), r["tiki_move"] or "-",
+                    str(r["game_depth"]), r.get("fresh_move") or "-", r["tiki_move"] or "-",
                     (r["opponent_move"] + (" ✓" if r["opponent_solves"] == "yes" else "")) or "-", r["fen"])
     return Group(table, Text(""), top) if first.get("top") else table
 

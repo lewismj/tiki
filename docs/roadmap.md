@@ -39,7 +39,14 @@ together.
   - a longer training schedule (100 epochs), checked by the validation loss first;
   - `--loss-power 2.5` (Stockfish's exponent), on its own run;
   - fine-tuning on Leela's positions (the Stockfish binpacks, scored by Leela), from the Lichess network;
-  - more data: self-play written directly in the binary format, more months, endgame-heavy samples.
+  - more data: self-play written directly in the binary format, more months, endgame-heavy samples;
+  - endgame training data that teaches progress, not just the result: the network knows K+R v K, K+Q v K and
+    K+B+N v K are won but not how to win them. Over 300 random positions each (defender to move), its static
+    eval falls as the defending king nears a corner (K+Q v K: 754 with the king in the centre, 542 in a corner;
+    K+B+N v K: 415 and 344; K+R v K: 651 and 617), probably from human games' stalemate tricks, and without
+    tablebases tiki drew 4 tablebase-won endings in the net95 gauntlets against Leorik and Eleanor (3 by the
+    fifty-move rule). Positions from these endings scored by distance to mate or to a zeroing
+    move (Syzygy DTZ), oversampled so the network sees enough of them.
 - **En passant in the position hash, first after the SPRT of the tuned values:** the en passant square is set and
   hashed after every double pawn push, even when no pawn can capture there, so the position after a double push
   never matches its later repeats and a threefold whose first occurrence followed one is missed (fastchess:
@@ -49,6 +56,15 @@ together.
 - **Repetitions:** Stockfish's rule (a draw on a repetition inside the search, or a third occurrence; one earlier
   occurrence in the game no longer counts). Written, in the working tree; after the SPSA: tests, unchanged
   bench, a 1,000-game match against `main` for gross bugs and a look at the repetition games.
+- **Mop-up evaluation: written and parked, not to be committed.** The fix for bare-king endings is endgame
+  training data (Network, above); with Syzygy DTZ tables (as on CCRL) tiki's root ranking already wins them. The
+  stopgap is kept as a patch, `tiki-analysis\mop-up.patch` (applies to 27ef41b): a bare king against queen,
+  rook, bishops on both colours or bishop and knight, with no pawns, scored by `mop_up.h` instead of the network
+  (a fixed win plus pushing the defending king to the edge, with B+N to a corner of the bishop's colour, and
+  the kings together), and the correction history skipped there (corrections learnt by the defending king's
+  square flattened the push). Bench unchanged, no measurable speed cost. Against Stockfish's defence K+Q and
+  K+B+N mate at 0.1-0.3 s a move; K+R is still unreliable at 0.1 s (the search's score sits at mop-up's
+  maximum, so its moves tie; a rook "box" term would be needed).
 - **Razoring** (tiki has none; Stockfish, Eleanor and Leorik all do): at a non-PV, expected fail-low node of
   depth 1-3 whose corrected eval is far below alpha (a tunable margin per ply, about 200 cp to start), return
   the qsearch score instead of searching the node. Futility pruning already skips the quiet moves there, but

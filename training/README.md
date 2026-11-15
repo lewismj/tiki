@@ -480,12 +480,18 @@ and the turning point is tiki's move that dropped it the most. Each one is then 
 
 - **Kind:** a loss, or a missed win: a game tiki drew or lost after the referee had it winning (expected
   score at least 0.8), whose turning point is the costliest move after that. Which games are examined is a
-  choice: losses and missed wins (the default), losses only, or every game.
+  choice. The default, **lost pairs**, takes the losses and missed wins only in the openings tiki scored
+  under half in over both colours (both games of an opening share a Round): with an unbalanced book like
+  UHO, losing the bad side of an opening that tiki then wins with the other colour says little. The others
+  are losses and missed wins in every opening, losses only, or every game.
 - **Phase:** opening (move 15 or earlier), endgame (at most 4 pieces besides kings and pawns), middlegame.
-- **Cause:** tiki searches the position again, afresh, for the search time (10 s by default), with the
-  game's moves before it so repetitions count. If its move recovers at least half the drop (scored by the
-  referee), more depth would have found it (**depth**); if not, the evaluation misled it (**eval**). A drop
-  under 0.15 has no clear mistake (**gradual**).
+- **Cause:** tiki searches the position again, afresh, with the game's moves before it so repetitions
+  count; a move that recovers at least half the drop (scored by the referee) solves it. First to the depth
+  it reached in the game (Hash 16, as in the matches): if that solves it, the game's search went wrong for
+  reasons of its own, such as what earlier moves left in the TT and histories or timing under load
+  (**unreproduced**). Then for the search time (10 s by default): if only that solves it, more depth would
+  have found it (**depth**); if neither does, the evaluation misled it (**eval**). A drop under 0.15 has no
+  clear mistake (**gradual**).
 - **Competitor** (optional): the opponent searches the same position for the same time. A turning point it
   solves where tiki doesn't is a concrete gap.
 
