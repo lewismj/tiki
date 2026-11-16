@@ -576,7 +576,7 @@ static inline void apply_rows(int16_t* out, const int16_t* in, const row_changes
 }
 
 /*
- * hidden_inputs_scalar, a register of inputs at a time, as Stockfish does it: x (clamped to 0..QA)
+ * hidden_inputs_scalar, a register of inputs at a time: x (clamped to 0..QA)
  * shifted left 7 is at most 32640, so it fits int16, and mulhi by y gives (x * 128 * y) >> 16 =
  * (x * y) >> 9 in one instruction. y is only clamped above (to QA): a negative y gives a negative
  * product, which packus saturates to 0, the same as clamping it to 0 first. Results 0..127, so they
@@ -622,11 +622,6 @@ static inline void l2_sums(int32_t* sums, const uint8_t* in, int bucket) {
  * Without VNNI maddubs adds pairs into int16 first, at most 2 * 127 * 128 = 32512, so it never saturates
  * and every version gives the same sums. NNUE_CHAINS groups a step into separate sums (four registers of
  * sums in flight), added at the end.
- *
- * Every group is computed: skipping the groups of 4 zero inputs (Stockfish's sparse first layer) was
- * slower, as with these networks over 80% of groups have a non-zero input (35% of the inputs are
- * non-zero, spread out). Reordering the accumulator after training so zeros share groups could change
- * that.
  */
 #define NNUE_SUM_VECS (NNUE_L1 * 4 / NNUE_VEC_BYTES)
 #define NNUE_CHAINS (4 / NNUE_SUM_VECS)
@@ -1012,6 +1007,36 @@ static inline_always void update_forward(nnue_stack_t* stack, const board_t* boa
     }
 }
 
+/*
+ * After the top entry's 'perspective' was refreshed: entries top - 1 down to 'to' from the one above, each move's
+ * changes undone (its added rows removed, its removed rows added, its pawn pairs back), as Stockfish does. The
+ * king hasn't moved after 'to', so it's where it is now. Otherwise the next position evaluated below 'to' would
+ * walk back to it, still not computed, and refresh again (about half the refreshes in bench were such repeats).
+ */
+static void update_backward(nnue_stack_t* stack, const board_t* board, colour perspective, int to) {
+    const square king = trailing_zero_count(board->pieces[perspective == white ? K : k]);
+    const pair_orientation_t o = pair_orientation(perspective, king);
+    for (int i = stack->top - 1; i >= to; i--) {
+        const nnue_entry_t* next = &stack->entries[i + 1];
+        row_changes_t changes;
+        row_changes_t* out[2] = { &changes, &changes };
+        changes.added_count = next->removed_count;
+        changes.removed_count = next->added_count;
+        changes.pairs_added_count = changes.pairs_removed_count = 0;
+        for (int r = 0; r < next->removed_count; r++) {
+            changes.added[r] = feature_row(nnue_feature_index(perspective, king, next->removed[r].pc, next->removed[r].sq));
+        }
+        for (int a = 0; a < next->added_count; a++) {
+            changes.removed[a] = feature_row(nnue_feature_index(perspective, king, next->added[a].pc, next->added[a].sq));
+        }
+        if (pawns_changed(next->pawns_before, next->pawns_after)) {
+            change_pairs(1, &o, out, next->pawns_after, next->pawns_before);
+        }
+        apply_rows(stack->entries[i].accumulator.values[perspective], next->accumulator.values[perspective], &changes);
+        stack->entries[i].computed[perspective] = true;
+    }
+}
+
 /* Brings the top entry's 'perspective' accumulator up to date. */
 static void update_perspective(nnue_stack_t* stack, const board_t* board, colour perspective) {
     nnue_entry_t* top = &stack->entries[stack->top];
@@ -1019,6 +1044,7 @@ static void update_perspective(nnue_stack_t* stack, const board_t* board, colour
     if (!stack->entries[from].computed[perspective]) {
         refresh_cached(stack, board, perspective, top->accumulator.values[perspective]);
         top->computed[perspective] = true;
+        update_backward(stack, board, perspective, from);
         return;
     }
     update_forward(stack, board, 1, &perspective, from);

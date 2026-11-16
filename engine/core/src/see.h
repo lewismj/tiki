@@ -87,7 +87,7 @@ static inline_always int see(const board_t* board, move_t move) {
 
 /**
  * see(board, move) >= threshold, the question the search asks, answered without playing out the
- * whole exchange (Stockfish's see_ge). 'swap' is how far the side that just captured is above the
+ * whole exchange. 'swap' is how far the side that just captured is above the
  * threshold if the other side doesn't recapture, less the value of the piece it would lose if it
  * does; each side stops as soon as the result can't change. The attackers are found once, then
  * only the sliders behind a capturing piece are added (x-rays). Same rules as see: least valuable

@@ -1146,10 +1146,7 @@ static inline_always void learn_correction(search_state_t* search_state, int sid
 
 /**
  * The search of a node (negamax is the root's). cut_node: the node is expected to fail high (a
- * cut node), set by the parent as Stockfish does, see where it searches its moves. Never in a PV
- * node: a PV node's children with the full window are PV nodes, the null-window ones alternate,
- * a reduced late move's child is a cut node (it should fail high, so the move fails low here),
- * and the null move's child and its verification aren't. Used by LMR (lmr_reduction).
+ * cut node), set by the parent.
  */
 static int negamax_node(int alpha,
                         int beta,

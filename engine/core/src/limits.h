@@ -21,7 +21,7 @@
  *     passes soft * scale, where the scale (search.c, tm_scale) is larger when the best move just
  *     changed or got few of the root's nodes, and smaller when it has been stable and took most,
  *     and larger again when the score is falling (tm_falling_scale): against the previous search's
- *     score and against the score TM_FALLING_DEPTHS depths before, as Stockfish does;
+ *     score and against the score TM_FALLING_DEPTHS depths prior.
  *   - hard = base * TM_HARD_PERCENT / 100, never more than half of what's left, stops the search
  *     wherever it is.
  */

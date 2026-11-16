@@ -12,7 +12,7 @@
  * Tiki's NNUE: HalfKAv2_hm and PawnPairs features -> 512 x 2 accumulator -> pairwise products -> 512 -> 16
  * -> [CReLU, SqrCReLU] -> 32 -> [CReLU, SqrCReLU] -> 1 over both layers' activations, plus a skip from two of
  * the first layer's sums. The part after the accumulator (a layer stack) is one of 32 chosen by the number of
- * pieces on the board and which sides have a queen (output buckets, as Stockfish's SFNNv18).
+ * pieces on the board and which sides have a queen.
  * The trainer (training/tiki_nnue) implements the same features and quantisation, any change
  * here must be made there too (training/tests check the two agree).
  *
@@ -26,12 +26,12 @@
  *     (type * 2 + (colour != perspective)), and 10 for either king ("A": both kings share one).
  *   - index = bucket * 704 + kind * 64 + oriented square. 32 * 11 * 64 = 22528 inputs.
  *
- * PawnPairs (Stockfish's PP_3Wide), per perspective, after those: every unordered pair of pawns, of either
+ * PawnPairs (N.B. Modelled off Stockfish's PP_3Wide), per perspective, after those: every unordered pair of pawns, of either
  * colour, whose files differ by at most one (levers, chains, phalanxes, rams, doubled pawns...).
  *   - A pawn's id = (its colour != perspective) * 48 + its oriented square - 8, the square oriented and
  *     mirrored as above (pawns are on ranks 2-7, oriented squares 8..55), so 0..95.
  *   - index = 22528 + hi * (hi - 1) / 2 + lo of the two ids, 4560 pairs: 27088 inputs in all. No king buckets.
- *   - At most C(16, 2) = 120 are active. Their rows are int8 (+-127, as Stockfish's), the pieces' int16 within
+ *   - At most C(16, 2) = 120 are active. Their rows are int8, the pieces' int16 within
  *     +-505 (the trainer's clips), so the int16 accumulator can't overflow (33 * 505 + 120 * 127 < 32767), and a
  *     pawn move, which changes about 7 pairs per perspective (bench average), reads half the bytes.
  *   - They are in the same accumulator as the piece features: a move that changes no pawn changes no pair.
@@ -44,11 +44,11 @@
  *   accumulator = ft_bias + sum of ft_weights rows for active features, int16, scale QA (255).
  *   in[i] = (x * y) >> 9 with x = clamp(acc[i], 0, QA), y = clamp(acc[i + 256], 0, QA), i < 256:
  *           the pairwise product of the accumulator's halves, 0..127 (scale QI = 127, rounded down), the side
- *           to move's 256 then the other side's (as Stockfish's pairwise CReLU).
+ *           to move's 256 then the other side's.
  *   h0[j] = l1_bias[b][j] + sum(in[i] * l1_w[b][j][i]), 16 sums (int8 weights scale QW = 64, QH = QI * QW
  *           = 8128 is 1.0).
  *   act(h): x = clamp(h, 0, QH), x >> 6 (CReLU, 0..127) for every sum, then (x * x) >> 19 (SqrCReLU, 0..126)
- *           for every sum: u8, 1.0 is 127 (Stockfish's shifts).
+ *           for every sum: u8, 1.0 is 127.
  *   a0 = act(h0) (32), h1[j] = l2_bias[b][j] + sum(a0[i] * l2_w[b][j][i]) (32, int8 weights at QW), a1 = act(h1)
  *   out = out_bias[b] + sum over the 96 of a0 ++ a1 times out_w[b][k] (int16 at QO = 2048, bias at 127 * QO)
  *   skip = h0[14] - h0[15]
@@ -146,7 +146,7 @@ typedef struct {
  * or, if that side's king moved on the way (every one of its features changes), refreshes from the
  * board. A null move changes no pieces, so it pushes nothing.
  *
- * The accumulators hold the pawn pairs too (as Stockfish's): an entry whose move changed the pawns also applies
+ * The accumulators hold the pawn pairs too: an entry whose move changed the pawns also applies
  * the pairs that went and came, in the same pass as its pieces. Each entry keeps both sides' pawns before and
  * after its move for that. The pairs are mirrored with the king's half, so a king move (a refresh) is the only
  * thing that changes all of them, and the refresh cache handles that.

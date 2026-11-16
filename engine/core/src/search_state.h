@@ -239,7 +239,7 @@ static inline_always void clear_pv_table(search_state_t* search_state) {
  * repetition_check[repetition_index] holds the current position, entries below it are the
  * earlier positions (game history from 'position', then the search path).
  *
- * The position at 'index' (its hash already stored) against the earlier ones, as Stockfish's
+ * The position at 'index' (its hash already stored) against the earlier ones.
  * StateInfo::repetition: the distance in plies back to its last earlier occurrence, negated if that
  * occurrence was itself a repetition (so this is the position's third occurrence), 0 if none. Only
  * positions with the same side to move (every second entry) since the last irreversible move

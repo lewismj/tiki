@@ -61,7 +61,7 @@ double tm_scale(int stability, uint64_t best_move_nodes, uint64_t root_nodes);
  * TM_FALLING_PREV % per 10 cp it is below the previous search's score ('previous', if 'has_previous': the
  * search for this side's last move) and TM_FALLING_ITER % per 10 cp below the score TM_FALLING_DEPTHS depths
  * before ('earlier', if 'has_earlier'), at most TM_FALLING_MAX %. Never below 1 (a rising score takes the
- * usual time), and 1 with mate or tablebase scores, which are no estimate. Stockfish's 'fallingEval'.
+ * usual time), and 1 with mate or tablebase scores, which are no estimate.
  */
 double tm_falling_scale(int score, bool has_previous, int previous, bool has_earlier, int earlier);
 
