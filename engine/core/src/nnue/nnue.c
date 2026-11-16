@@ -379,23 +379,16 @@ static inline void change_feature(row_changes_t* changes, int feature, bool add)
 #define NNUE_GROUPS (NNUE_L1_INPUTS / 4)        /* Groups of 4 inputs (nnue_l1_index). */
 
 /* in[j] = (x * y) >> 9 with x = clamp(v[j], 0, QA) and y = clamp(v[j + NNUE_PAIRS], 0, QA), 0..127:
- * one perspective's NNUE_HIDDEN accumulator values, v = values + pairs (the piece features' sum and the pawn
- * pairs'; together within int16, see nnue.h), to its NNUE_PAIRS inputs. */
-static inline void hidden_inputs_scalar(uint8_t* in, const int16_t* values, const int16_t* pairs) {
+ * one perspective's NNUE_HIDDEN accumulator values v (the piece features' and the pawn pairs' sum, within
+ * int16, see nnue.h) to its NNUE_PAIRS inputs. */
+static inline void hidden_inputs_scalar(uint8_t* in, const int16_t* values) {
     for (int j = 0; j < NNUE_PAIRS; j++) {
-        const int vx = values[j] + pairs[j], vy = values[j + NNUE_PAIRS] + pairs[j + NNUE_PAIRS];
+        const int vx = values[j], vy = values[j + NNUE_PAIRS];
         const int x = vx < 0 ? 0 : vx > NNUE_QA ? NNUE_QA : vx;
         const int y = vy < 0 ? 0 : vy > NNUE_QA ? NNUE_QA : vy;
         in[j] = (uint8_t) ((x * y) >> 9);
     }
 }
-
-#ifndef NNUE_PAIR_PREFETCH_LINES
-#define NNUE_PAIR_PREFETCH_LINES 4          /* Of a pair sum's 16 cache lines, prefetched on a push. */
-#endif
-
-/* No pawn pairs: for an accumulator that already has them (nnue_refresh's). */
-static const int16_t no_pairs[NNUE_HIDDEN] align = { 0 };
 
 /* sums[u] = sum(in[i] * weight[bucket][u][i]) over the NNUE_L1_INPUTS inputs, for each hidden unit u,
  * a group of 4 inputs at a time over the weights as stored (nnue_l1_index), skipping groups of zeros.
@@ -592,21 +585,19 @@ static inline void apply_rows(int16_t* out, const int16_t* in, const row_changes
 static_assert((NNUE_QA << 7) <= INT16_MAX, "x << 7 must fit int16");
 static_assert(NNUE_PAIRS % NNUE_VEC_BYTES == 0, "a register of inputs a step");
 
-static inline vec_t scaled_x(const int16_t* values, const int16_t* pairs) {
-    const vec_t v = vec_add_16(vec_load(values), vec_load(pairs));
-    return vec_slli_16(vec_min_16(vec_max_16(v, vec_zero()), vec_set1_16(NNUE_QA)), 7);
+static inline vec_t scaled_x(const int16_t* values) {
+    return vec_slli_16(vec_min_16(vec_max_16(vec_load(values), vec_zero()), vec_set1_16(NNUE_QA)), 7);
 }
 
-static inline vec_t capped_y(const int16_t* values, const int16_t* pairs) {
-    return vec_min_16(vec_add_16(vec_load(values), vec_load(pairs)), vec_set1_16(NNUE_QA));
+static inline vec_t capped_y(const int16_t* values) {
+    return vec_min_16(vec_load(values), vec_set1_16(NNUE_QA));
 }
 
-static inline void hidden_inputs(uint8_t* in, const int16_t* values, const int16_t* pairs) {
+static inline void hidden_inputs(uint8_t* in, const int16_t* values) {
     enum { lanes = NNUE_VEC_BYTES / 2 };
     for (int j = 0; j < NNUE_PAIRS; j += NNUE_VEC_BYTES) {
-        const vec_t p = vec_mulhi_16(scaled_x(values + j, pairs + j), capped_y(values + NNUE_PAIRS + j, pairs + NNUE_PAIRS + j));
-        const vec_t q = vec_mulhi_16(scaled_x(values + j + lanes, pairs + j + lanes),
-                                     capped_y(values + NNUE_PAIRS + j + lanes, pairs + NNUE_PAIRS + j + lanes));
+        const vec_t p = vec_mulhi_16(scaled_x(values + j), capped_y(values + NNUE_PAIRS + j));
+        const vec_t q = vec_mulhi_16(scaled_x(values + j + lanes), capped_y(values + NNUE_PAIRS + j + lanes));
         vec_store(in + j, vec_packus_16(p, q));
     }
 }
@@ -703,8 +694,8 @@ static inline void apply_rows(int16_t* out, const int16_t* in, const row_changes
     }
 }
 
-static inline void hidden_inputs(uint8_t* in, const int16_t* values, const int16_t* pairs) {
-    hidden_inputs_scalar(in, values, pairs);
+static inline void hidden_inputs(uint8_t* in, const int16_t* values) {
+    hidden_inputs_scalar(in, values);
 }
 
 static inline void hidden_sums(int32_t* sums, const uint8_t* in, int bucket) {
@@ -759,26 +750,20 @@ static inline int stack_output(const int32_t* sums, int bucket, bool simd) {
                   ((int64_t) NNUE_QH * NNUE_QO));
 }
 
-/* The layer stack on the accumulator plus the pawn pairs' sums 'pairs' (per perspective, by colour). */
-static int output_with_pairs(const nnue_accumulator_t* accumulator, const int16_t* const pairs[2], colour side, int bucket) {
+int nnue_output(const nnue_accumulator_t* accumulator, colour side, int bucket) {
     uint8_t in[NNUE_L1_INPUTS];
     int32_t sums[NNUE_L1] align;
-    hidden_inputs(in, accumulator->values[side], pairs[side]);
-    hidden_inputs(in + NNUE_PAIRS, accumulator->values[side ^ 1], pairs[side ^ 1]);
+    hidden_inputs(in, accumulator->values[side]);
+    hidden_inputs(in + NNUE_PAIRS, accumulator->values[side ^ 1]);
     hidden_sums(sums, in, bucket);
     return stack_output(sums, bucket, true);
-}
-
-int nnue_output(const nnue_accumulator_t* accumulator, colour side, int bucket) {
-    const int16_t* const pairs[2] = { no_pairs, no_pairs };
-    return output_with_pairs(accumulator, pairs, side, bucket);
 }
 
 int nnue_output_scalar(const nnue_accumulator_t* accumulator, colour side, int bucket) {
     uint8_t in[NNUE_L1_INPUTS];
     int32_t sums[NNUE_L1];
-    hidden_inputs_scalar(in, accumulator->values[side], no_pairs);
-    hidden_inputs_scalar(in + NNUE_PAIRS, accumulator->values[side ^ 1], no_pairs);
+    hidden_inputs_scalar(in, accumulator->values[side]);
+    hidden_inputs_scalar(in + NNUE_PAIRS, accumulator->values[side ^ 1]);
     hidden_sums_scalar(sums, in, bucket);
     return stack_output(sums, bucket, false);
 }
@@ -799,18 +784,70 @@ static void refresh_perspective(const board_t* board, colour perspective, int16_
     apply_rows(values, nnue_net.ft_bias, &changes);
 }
 
-/* The pawn pairs that changed between the pawns 'before' and 'after' (per colour), for 'perspective' (king on
- * 'king'), into 'changes': those of the pawns that left removed, those of the pawns that arrived added. */
-static inline void change_pairs(row_changes_t* changes, colour perspective, square king, const bitboard before[2],
-                                const bitboard after[2]) {
-    int features[NNUE_MAX_PAIRS];
+/* A perspective's pawn ids worked out once (nnue_pawn_id): id = base[colour] + (sq ^ flip). */
+typedef struct {
+    int flip;
+    int base[2];
+} pair_orientation_t;
+
+static inline pair_orientation_t pair_orientation(colour perspective, square king) {
+    const int oriented_king = perspective == white ? king : king ^ 56;
+    const pair_orientation_t o = { (perspective == white ? 0 : 56) ^ ((oriented_king & 7) >= 4 ? 7 : 0),
+                                   { (perspective != white) * 48 - 8, (perspective != black) * 48 - 8 } };
+    return o;
+}
+
+/* The weight row of the pair of pawn ids 'a' and 'b' (nnue_pair_index, less NNUE_INPUTS). */
+static inline const int8_t* pair_ids_row(int a, int b) {
+    const int hi = a > b ? a : b, lo = a > b ? b : a;
+    return &nnue_net.pair_weights[(size_t) (hi * (hi - 1) / 2 + lo) * NNUE_HIDDEN];
+}
+
+/*
+ * pair_features' pairs (those of a pawn of 'changed' with a pawn of 'changed' or 'kept', each once) as weight
+ * rows, for 'n' perspectives (1 or 2) at once: the pairs are found once and each perspective only maps them to
+ * its ids. Appends to rows[v] from *counts[v].
+ */
+static inline_always void pair_rows(int n, const pair_orientation_t* o, const int8_t** rows[2], int* counts[2],
+                                    const bitboard changed[2], const bitboard kept[2]) {
+    bitboard rest[2] = { changed[white], changed[black] };
+    for (int c = white; c <= black; c++) {
+        while (rest[c]) {
+            const square sq = get_lsb_and_pop_bit(&rest[c]);
+            const bitboard window = pair_window(sq);
+            int id[2];
+            for (int v = 0; v < n; v++) id[v] = o[v].base[c] + (sq ^ o[v].flip);
+            for (int c2 = white; c2 <= black; c2++) {
+                bitboard partners = (kept[c2] | rest[c2]) & window;
+                while (partners) {
+                    const square sq2 = get_lsb_and_pop_bit(&partners);
+                    for (int v = 0; v < n; v++) {
+                        rows[v][(*counts[v])++] = pair_ids_row(id[v], o[v].base[c2] + (sq2 ^ o[v].flip));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* The pawn pairs that changed between the pawns 'before' and 'after' (per colour), for 'n' perspectives (1 or 2,
+ * orientations 'o'), into changes[v]: those of the pawns that left removed, those of the pawns that arrived
+ * added. */
+static inline_always void change_pairs(int n, const pair_orientation_t* o, row_changes_t* changes[2],
+                                       const bitboard before[2], const bitboard after[2]) {
     const bitboard gone[2] = { before[white] & ~after[white], before[black] & ~after[black] };
     const bitboard arrived[2] = { after[white] & ~before[white], after[black] & ~before[black] };
     const bitboard kept[2] = { before[white] & after[white], before[black] & after[black] };
-    const int n_gone = pair_features(features, 0, perspective, king, gone, kept);
-    for (int f = 0; f < n_gone; f++) changes->pairs_removed[changes->pairs_removed_count++] = pair_row(features[f]);
-    const int n_arrived = pair_features(features, 0, perspective, king, arrived, kept);
-    for (int f = 0; f < n_arrived; f++) changes->pairs_added[changes->pairs_added_count++] = pair_row(features[f]);
+    const int8_t** removed[2] = { changes[0]->pairs_removed, changes[n - 1]->pairs_removed };
+    int* removed_counts[2] = { &changes[0]->pairs_removed_count, &changes[n - 1]->pairs_removed_count };
+    const int8_t** added[2] = { changes[0]->pairs_added, changes[n - 1]->pairs_added };
+    int* added_counts[2] = { &changes[0]->pairs_added_count, &changes[n - 1]->pairs_added_count };
+    pair_rows(n, o, removed, removed_counts, gone, kept);
+    pair_rows(n, o, added, added_counts, arrived, kept);
+}
+
+static inline bool pawns_changed(const bitboard before[2], const bitboard after[2]) {
+    return ((before[white] ^ after[white]) | (before[black] ^ after[black])) != 0;
 }
 
 void nnue_refresh(const board_t* board, nnue_accumulator_t* accumulator) {
@@ -831,10 +868,9 @@ void nnue_stack_init(nnue_stack_t* stack) {
 void nnue_reset(nnue_stack_t* stack) {
     stack->top = 0;
     stack->entries[0].computed[white] = stack->entries[0].computed[black] = false;
-    stack->entries[0].pair_key_set = false;
 }
 
-/* Every cache entry back to the empty board (the bias, no pieces), and no pair sums, for the current network. */
+/* Every cache entry back to the empty board (the bias, no pieces, so no pawn pairs), for the current network. */
 static void init_cache(nnue_stack_t* stack) {
     for (int c = white; c <= black; c++) {
         for (int sq = 0; sq < 64; sq++) {
@@ -842,35 +878,27 @@ static void init_cache(nnue_stack_t* stack) {
             memset(stack->cache[c][sq].pieces, 0, sizeof(stack->cache[c][sq].pieces));
         }
     }
-    for (int i = 0; i < NNUE_PAIR_CACHE_SIZE; i++) stack->pair_cache[i].key = 0;
     stack->cache_generation = nnue_generation();
 }
 
-/* The key of a pawn structure's pair sum for 'perspective': the pawn hash (the board's correction key for the
- * pawns), told apart by perspective and by the half its king is on (which mirrors the pairs). */
-static const uint64_t pair_salt[2][2] = { { 0x9E3779B97F4A7C15ULL, 0xC2B2AE3D27D4EB4FULL },
-                                          { 0x165667B19E3779F9ULL, 0xD6E8FEB86659FD93ULL } };
-
-static inline void set_pair_keys(nnue_entry_t* entry, const board_t* board) {
-    for (int c = white; c <= black; c++) {
-        const square king = trailing_zero_count(board->pieces[c == white ? K : k]);
-        const int oriented_king = c == white ? king : king ^ 56;
-        entry->pair_half[c] = (oriented_king & 7) >= 4;
-        entry->pair_key[c] = board->corr_keys[0] ^ pair_salt[c][entry->pair_half[c]];
-    }
-    entry->pair_key_set = true;
-}
-
-/* refresh_perspective through the cache: only the pieces that differ from the cached position. */
+/* refresh_perspective through the cache: only the pieces, and the pawn pairs, that differ from the cached
+ * position. The entry is for this king square, so its pairs were mirrored the same way. */
 static void refresh_cached(nnue_stack_t* stack, const board_t* board, colour perspective, int16_t* values) {
     if (stack->cache_generation != nnue_generation()) init_cache(stack);
 
     const square king = trailing_zero_count(board->pieces[perspective == white ? K : k]);
     nnue_cache_entry_t* entry = &stack->cache[perspective][king];
 
-    /* At most 32 pieces were on the board then, and 32 are now (the pawn pairs are apart, pair_sum). */
+    /* At most 32 pieces were on the board then, and 32 are now; at most 120 pawn pairs either way. */
     row_changes_t changes;
     changes.added_count = changes.removed_count = changes.pairs_added_count = changes.pairs_removed_count = 0;
+    const bitboard pawns_before[2] = { entry->pieces[P], entry->pieces[p] };
+    const bitboard pawns_after[2] = { board->pieces[P], board->pieces[p] };
+    if (pawns_changed(pawns_before, pawns_after)) {
+        const pair_orientation_t o = pair_orientation(perspective, king);
+        row_changes_t* out[2] = { &changes, &changes };
+        change_pairs(1, &o, out, pawns_before, pawns_after);
+    }
     for (int pc = P; pc <= k; pc++) {
         const bitboard now = board->pieces[pc];
         bitboard gone = entry->pieces[pc] & ~now;
@@ -916,14 +944,6 @@ void nnue_push(nnue_stack_t* stack, const board_t* board, move_t move) {
         if (!promoted) entry->pawns_before[mover] &= ~(1ULL << target);
     }
 
-    set_pair_keys(entry, board);
-    /* The evaluation will look these pair sums up (if there is one): start loading their keys and first lines. */
-    for (int c = white; c <= black; c++) {
-        const nnue_pair_cache_entry_t* slot = &stack->pair_cache[entry->pair_key[c] & (NNUE_PAIR_CACHE_SIZE - 1)];
-        __builtin_prefetch(&slot->key);
-        for (int line = 0; line < NNUE_PAIR_PREFETCH_LINES; line++) __builtin_prefetch((const char*) slot->values + 64 * line);
-    }
-
     if (get_capture_flag(move)) {
         if (get_enpassant_flag(move)) {
             const square taken = mover == white ? target + 8 : target - 8;
@@ -942,86 +962,90 @@ void nnue_push(nnue_stack_t* stack, const board_t* board, move_t move) {
     }
 }
 
-/* Brings the top entry's 'perspective' accumulator up to date. */
-static void update_perspective(nnue_stack_t* stack, const board_t* board, colour perspective) {
-    nnue_entry_t* top = &stack->entries[stack->top];
-
-    /* Back to the nearest computed accumulator, unless the king moved on the way. */
+/* The entry 'perspective' updates from: the nearest one whose accumulator is computed, back from the top, unless
+ * its king moved on the way (then the entry the walk stopped at, not computed: refresh). */
+static inline int update_start(const nnue_stack_t* stack, colour perspective) {
     int from = stack->top;
     while (from > 0 && !stack->entries[from].computed[perspective] && !stack->entries[from].refresh[perspective]) {
         from--;
     }
+    return from;
+}
+
+/* Entry's piece rows for 'perspective' (king on 'king') into 'changes', which it starts (no pairs yet). */
+static inline void piece_changes(row_changes_t* changes, const nnue_entry_t* entry, colour perspective, square king) {
+    changes->added_count = entry->added_count;
+    changes->removed_count = entry->removed_count;
+    changes->pairs_added_count = changes->pairs_removed_count = 0;
+    for (int a = 0; a < entry->added_count; a++) {
+        changes->added[a] = feature_row(nnue_feature_index(perspective, king, entry->added[a].pc, entry->added[a].sq));
+    }
+    for (int r = 0; r < entry->removed_count; r++) {
+        changes->removed[r] = feature_row(nnue_feature_index(perspective, king, entry->removed[r].pc, entry->removed[r].sq));
+    }
+}
+
+/* Applies entries from + 1 .. top forward for 'n' perspectives (1: just perspectives[0]; 2: white and black),
+ * each computed at 'from' and its king not moved since, so where it is now. A pawn move's pairs are found once
+ * for both. */
+static inline_always void update_forward(nnue_stack_t* stack, const board_t* board, int n, const colour* perspectives,
+                                         int from) {
+    square kings[2];
+    pair_orientation_t o[2];
+    for (int v = 0; v < n; v++) {
+        kings[v] = trailing_zero_count(board->pieces[perspectives[v] == white ? K : k]);
+        o[v] = pair_orientation(perspectives[v], kings[v]);
+    }
+    for (int i = from + 1; i <= stack->top; i++) {
+        nnue_entry_t* entry = &stack->entries[i];
+        row_changes_t changes[2];
+        row_changes_t* out[2] = { &changes[0], &changes[n - 1] };
+        for (int v = 0; v < n; v++) piece_changes(&changes[v], entry, perspectives[v], kings[v]);
+        if (pawns_changed(entry->pawns_before, entry->pawns_after)) {
+            change_pairs(n, o, out, entry->pawns_before, entry->pawns_after);
+        }
+        for (int v = 0; v < n; v++) {
+            const colour c = perspectives[v];
+            apply_rows(entry->accumulator.values[c], stack->entries[i - 1].accumulator.values[c], &changes[v]);
+            entry->computed[c] = true;
+        }
+    }
+}
+
+/* Brings the top entry's 'perspective' accumulator up to date. */
+static void update_perspective(nnue_stack_t* stack, const board_t* board, colour perspective) {
+    nnue_entry_t* top = &stack->entries[stack->top];
+    const int from = update_start(stack, perspective);
     if (!stack->entries[from].computed[perspective]) {
         refresh_cached(stack, board, perspective, top->accumulator.values[perspective]);
         top->computed[perspective] = true;
         return;
     }
-
-    /* The king hasn't moved since 'from', so it's where it is now. */
-    const square king = trailing_zero_count(board->pieces[perspective == white ? K : k]);
-    for (int i = from + 1; i <= stack->top; i++) {
-        nnue_entry_t* entry = &stack->entries[i];
-        row_changes_t changes;
-        changes.added_count = entry->added_count;
-        changes.removed_count = entry->removed_count;
-        changes.pairs_added_count = changes.pairs_removed_count = 0;
-        for (int a = 0; a < entry->added_count; a++) {
-            changes.added[a] = feature_row(nnue_feature_index(perspective, king, entry->added[a].pc, entry->added[a].sq));
-        }
-        for (int r = 0; r < entry->removed_count; r++) {
-            changes.removed[r] = feature_row(nnue_feature_index(perspective, king, entry->removed[r].pc, entry->removed[r].sq));
-        }
-        apply_rows(entry->accumulator.values[perspective], stack->entries[i - 1].accumulator.values[perspective],
-                   &changes);
-        entry->computed[perspective] = true;
-    }
+    update_forward(stack, board, 1, &perspective, from);
 }
 
-/*
- * The pawn pairs' sum for the top entry's 'perspective': from the cache if its pawn structure is there, else
- * built in its slot from the parent's sum (if the parent's structure is still cached, in another slot, for the
- * same king half) and the pairs this move changed, else from scratch.
- */
-static const int16_t* pair_sum(nnue_stack_t* stack, const board_t* board, colour perspective) {
-    if (stack->cache_generation != nnue_generation()) init_cache(stack);
-    nnue_entry_t* top = &stack->entries[stack->top];
-    if (!top->pair_key_set) set_pair_keys(top, board);      /* The root, now that there's a board. */
-    const uint64_t key = top->pair_key[perspective];
-    nnue_pair_cache_entry_t* slot = &stack->pair_cache[key & (NNUE_PAIR_CACHE_SIZE - 1)];
-    if (slot->key == key) return slot->values;
-
-    const square king = trailing_zero_count(board->pieces[perspective == white ? K : k]);
-    row_changes_t changes;
-    changes.added_count = changes.removed_count = changes.pairs_added_count = changes.pairs_removed_count = 0;
-    const int16_t* from = no_pairs;
-    if (stack->top > 0) {
-        const nnue_entry_t* parent = &stack->entries[stack->top - 1];
-        const uint64_t parent_key = parent->pair_key[perspective];
-        const nnue_pair_cache_entry_t* parent_slot = &stack->pair_cache[parent_key & (NNUE_PAIR_CACHE_SIZE - 1)];
-        if (parent->pair_key_set && parent->pair_half[perspective] == top->pair_half[perspective] &&
-            parent_slot != slot && parent_slot->key == parent_key) {
-            from = parent_slot->values;
-            change_pairs(&changes, perspective, king, top->pawns_before, top->pawns_after);
-        }
+void nnue_reset_root(nnue_stack_t* stack, const board_t* board) {
+    nnue_reset(stack);
+    nnue_entry_t* root = &stack->entries[0];
+    for (int c = white; c <= black; c++) {
+        refresh_cached(stack, board, c, root->accumulator.values[c]);
+        root->computed[c] = true;
     }
-    if (from == no_pairs) {
-        /* From scratch: every pair of the board's pawns. */
-        int features[NNUE_MAX_PAIRS];
-        const bitboard pawns[2] = { board->pieces[P], board->pieces[p] };
-        const bitboard none[2] = { 0, 0 };
-        const int n = pair_features(features, 0, perspective, king, pawns, none);
-        for (int f = 0; f < n; f++) changes.pairs_added[changes.pairs_added_count++] = pair_row(features[f]);
-    }
-    apply_rows(slot->values, from, &changes);
-    slot->key = key;
-    return slot->values;
 }
 
 int nnue_evaluate_incremental(nnue_stack_t* stack, const board_t* board) {
     nnue_entry_t* top = &stack->entries[stack->top];
+    /* Usually both perspectives update from the same entry: then together, finding each pawn move's pairs once. */
+    if (!top->computed[white] && !top->computed[black]) {
+        const int from = update_start(stack, white);
+        if (from == update_start(stack, black) && stack->entries[from].computed[white] &&
+            stack->entries[from].computed[black]) {
+            static const colour both[2] = { white, black };
+            update_forward(stack, board, 2, both, from);
+        }
+    }
     for (int c = white; c <= black; c++) {
         if (!top->computed[c]) update_perspective(stack, board, c);
     }
-    const int16_t* const pairs[2] = { pair_sum(stack, board, white), pair_sum(stack, board, black) };
-    return output_with_pairs(&top->accumulator, pairs, board->side, nnue_board_bucket(board));
+    return nnue_output(&top->accumulator, board->side, nnue_board_bucket(board));
 }

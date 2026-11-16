@@ -33,7 +33,8 @@
  *   - index = 22528 + hi * (hi - 1) / 2 + lo of the two ids, 4560 pairs: 27088 inputs in all. No king buckets.
  *   - At most C(16, 2) = 120 are active. Their rows are int8 (+-127, as Stockfish's), the pieces' int16 within
  *     +-505 (the trainer's clips), so the int16 accumulator can't overflow (33 * 505 + 120 * 127 < 32767), and a
- *     pawn move, which changes a few dozen pairs, reads half the bytes.
+ *     pawn move, which changes about 7 pairs per perspective (bench average), reads half the bytes.
+ *   - They are in the same accumulator as the piece features: a move that changes no pawn changes no pair.
  *
  * Output bucket = piece bucket * 4 + (side to move has a queen ? 2 : 0) + (the other side has ? 1 : 0),
  * piece bucket = (pieces on the board, kings included, - 2) / 4: 2-5 pieces is 0 ... 30-32 is 7.
@@ -145,12 +146,10 @@ typedef struct {
  * or, if that side's king moved on the way (every one of its features changes), refreshes from the
  * board. A null move changes no pieces, so it pushes nothing.
  *
- * The accumulators along the stack hold the piece features only. The pawn pairs' sum is kept apart, in a cache
- * of sums by pawn structure (the pawn hash, the perspective and which half its king is on, the pairs'
- * mirroring): it doesn't change when a piece or the king moves within its half, and pawn structures repeat
- * across the tree. The two are added as the layer stack reads them. A missing sum is built from the parent's,
- * if that is still cached, with the pairs the move changed, else from scratch. Each entry keeps both sides'
- * pawns before and after its move for that, and its pawn structure's key for each perspective.
+ * The accumulators hold the pawn pairs too (as Stockfish's): an entry whose move changed the pawns also applies
+ * the pairs that went and came, in the same pass as its pieces. Each entry keeps both sides' pawns before and
+ * after its move for that. The pairs are mirrored with the king's half, so a king move (a refresh) is the only
+ * thing that changes all of them, and the refresh cache handles that.
  */
 #define NNUE_STACK_SIZE 128                 /* More than the deepest search path (MAX_PLY). */
 
@@ -169,36 +168,24 @@ typedef struct {
     nnue_piece_square_t removed[2];
     bitboard pawns_before[2];               /* [colour] */
     bitboard pawns_after[2];
-    uint64_t pair_key[2];                   /* [perspective] the pawn structure's pair sum (set_pair_keys) */
-    bool pair_half[2];                      /* [perspective] its king on files e-h (the pairs mirrored) */
-    bool pair_key_set;                      /* Not for the root until it's evaluated (nnue_reset has no board). */
 } nnue_entry_t;
 
 /**
  * Refresh cache ("Finny table"): when a king moves, every feature of its side changes, but most
  * pieces are where they were the last time that king stood on that square. Each entry holds a
  * perspective's accumulator for a king square and the pieces it was computed from, so a refresh
- * only applies the pieces that differ (usually a few) rather than adding all of them.
+ * only applies the pieces that differ (usually a few) rather than adding all of them, and the pawn
+ * pairs that differ (a king square is always in the same half, so the pairs' mirroring never changes).
  */
 typedef struct {
     int16_t values[NNUE_HIDDEN] align;
     bitboard pieces[12];
 } nnue_cache_entry_t;
 
-/* A pawn structure's pair sum for one perspective and king half (key 0: empty). */
-#ifndef NNUE_PAIR_CACHE_SIZE
-#define NNUE_PAIR_CACHE_SIZE 256            /* A power of 2. */
-#endif
-typedef struct {
-    int16_t values[NNUE_HIDDEN] align;
-    uint64_t key;
-} nnue_pair_cache_entry_t;
-
 typedef struct {
     nnue_entry_t entries[NNUE_STACK_SIZE];  /* entries[0] is the search root. */
     int top;
     nnue_cache_entry_t cache[2][64];        /* [perspective][that side's king square] */
-    nnue_pair_cache_entry_t pair_cache[NNUE_PAIR_CACHE_SIZE];
     uint32_t cache_generation;              /* The network the caches were built for (nnue_generation). */
 } nnue_stack_t;
 
@@ -281,6 +268,10 @@ void nnue_stack_init(nnue_stack_t* stack);
 /* Empties the stack, 'board' (whatever position it's next evaluated with) is the root. The refresh
  * cache is kept, it stays valid for the same network. */
 void nnue_reset(nnue_stack_t* stack);
+
+/* nnue_reset with 'board' the root, its accumulators computed now (from the refresh cache): every walk back
+ * from the search tree then ends at the root at worst, rather than refreshing each root move's subtree. */
+void nnue_reset_root(nnue_stack_t* stack, const board_t* board);
 
 /* After make_move(board, move): records the move's feature changes (legal or not). */
 void nnue_push(nnue_stack_t* stack, const board_t* board, move_t move);

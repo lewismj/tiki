@@ -796,7 +796,7 @@ int adjusted_eval(int eval, const tt_info_t* tt) {
 
 /* The qsearch node itself, already counted: by quiescence, or by negamax at depth 0. */
 static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* search_state, limits_t* limits) {
-    if (search_state->ply == 0) nnue_reset(&search_state->nnue);
+    if (search_state->ply == 0) nnue_reset_root(&search_state->nnue, board);
     if (search_state->ply > MAX_PLY-1) return evaluation(board, &search_state->nnue);
 
     /* The TT, saved at depth 0 by qsearch (and depth 0 negamax nodes, which are qsearch). Outside
@@ -1167,7 +1167,7 @@ static int negamax_node(int alpha,
 
     /* The root, the accumulators start again from this position. */
     if (search_state->ply == 0) {
-        nnue_reset(&search_state->nnue);
+        nnue_reset_root(&search_state->nnue, board);
         search_state->best_move_nodes = 0;
     }
 
