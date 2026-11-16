@@ -26,14 +26,15 @@
  *     (type * 2 + (colour != perspective)), and 10 for either king ("A": both kings share one).
  *   - index = bucket * 704 + kind * 64 + oriented square. 32 * 11 * 64 = 22528 inputs.
  *
- * PawnPairs (N.B. Modelled off Stockfish's PP_3Wide), per perspective, after those: every unordered pair of pawns, of either
+ * PawnPairs (N.B. Modelled off Stockfish's PP_3Wide - itself a copy from another engine), per perspective, 
+ * after those: every unordered pair of pawns, of either
  * colour, whose files differ by at most one (levers, chains, phalanxes, rams, doubled pawns...).
  *   - A pawn's id = (its colour != perspective) * 48 + its oriented square - 8, the square oriented and
  *     mirrored as above (pawns are on ranks 2-7, oriented squares 8..55), so 0..95.
  *   - index = 22528 + hi * (hi - 1) / 2 + lo of the two ids, 4560 pairs: 27088 inputs in all. No king buckets.
- *   - At most C(16, 2) = 120 are active. Their rows are int8, the pieces' int16 within
- *     +-505 (the trainer's clips), so the int16 accumulator can't overflow (33 * 505 + 120 * 127 < 32767), and a
- *     pawn move, which changes about 7 pairs per perspective (bench average), reads half the bytes.
+ *   - At most C(16, 2) = 120 are active. Their rows are int8 (+-127), the pieces' int16 within +-505 (the
+ *     trainer's clips), so the int16 accumulator can't overflow (33 * 505 + 120 * 127 < 32767), and a pawn
+ *     move, which changes about 7 pairs per perspective (bench average), reads half the bytes.
  *   - They are in the same accumulator as the piece features: a move that changes no pawn changes no pair.
  *
  * Output bucket = piece bucket * 4 + (side to move has a queen ? 2 : 0) + (the other side has ? 1 : 0),
@@ -140,16 +141,18 @@ typedef struct {
 /**
  * Accumulators along the search path, updated lazily. Each made move pushes an entry recording
  * the features it adds and removes (at most two of each: a castle moves the king and the rook, a
- * capture removes the moved piece's old square and the captured piece). Nothing is computed until
- * a position is evaluated, as many moves are made and undone without one (illegal, pruned). Then
- * each perspective walks back to the nearest computed accumulator and applies the changes forward,
- * or, if that side's king moved on the way (every one of its features changes), refreshes from the
- * board. A null move changes no pieces, so it pushes nothing.
+ * capture removes the moved piece's old square and the captured piece). Only the root's accumulators
+ * are computed straight away (nnue_reset_root); the rest wait until a position is evaluated, as many
+ * moves are made and undone without one (illegal, pruned). Then each perspective walks back to the
+ * nearest computed accumulator and applies the changes forward, or, if that side's king moved on the
+ * way (every one of its features changes), refreshes from the board (through the refresh cache) and
+ * fills the entries back to the king move by undoing their changes, so the next position evaluated
+ * below that move needn't refresh again. A null move changes no pieces, so it pushes nothing.
  *
- * The accumulators hold the pawn pairs too: an entry whose move changed the pawns also applies
- * the pairs that went and came, in the same pass as its pieces. Each entry keeps both sides' pawns before and
- * after its move for that. The pairs are mirrored with the king's half, so a king move (a refresh) is the only
- * thing that changes all of them, and the refresh cache handles that.
+ * The accumulators hold the pawn pairs too: an entry whose move changed the pawns also applies the
+ * pairs that went and came, in the same pass as its pieces. Each entry keeps both sides' pawns before
+ * and after its move for that. The pairs are mirrored with the king's half, so a king move (a refresh)
+ * is the only thing that changes all of them, and the refresh cache handles that.
  */
 #define NNUE_STACK_SIZE 128                 /* More than the deepest search path (MAX_PLY). */
 

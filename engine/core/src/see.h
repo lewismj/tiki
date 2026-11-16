@@ -126,9 +126,9 @@ static inline_always bool see_ge(const board_t* board, move_t move, int threshol
         bitboard candidates;
         while (!(candidates = own & board->pieces[pieces[i]])) i++;
 
-        /* The king doesn't recapture while the other side still attacks the square. Unlike
-         * Stockfish's see_ge, a king that does recapture is then played like any other piece, as see
-         * does: leaving its square can uncover a slider that takes it after all. */
+        /* The king doesn't recapture while the other side still attacks the square. A king that
+         * does recapture is then played like any other piece, as see does: leaving its square can
+         * uncover a slider that takes it after all. */
         if (i == 5 && (attackers & board->occupancy[side ^ 1])) return !result;
 
         swap = see_values[pieces[i]] - swap;

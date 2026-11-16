@@ -687,7 +687,7 @@ int probcut_beta(int beta, bool improving) {
 }
 
 /**
- * ProbCut (as Stockfish's): at a node deep enough that isn't the root, a PV node or in check, a
+ * ProbCut: at a node deep enough that isn't the root, a PV node or in check, a
  * capture or promotion that beats pc_beta (probcut_beta) in a search PROBCUT_REDUCTION plies
  * shallower is taken to beat beta at full depth, and the node is cut off without searching it. Not
  * when beta is a mate score, and not when the TT already says the node is below pc_beta from a
@@ -1145,8 +1145,22 @@ static inline_always void learn_correction(search_state_t* search_state, int sid
 }
 
 /**
- * The search of a node (negamax is the root's). cut_node: the node is expected to fail high (a
- * cut node), set by the parent.
+ * The search of a node, 'depth' plies from the horizon, in the window (alpha, beta); negamax is the
+ * root's. Fail-soft: returns the best score found, which may lie outside the window (at or above beta
+ * a lower bound, at or below alpha an upper bound), or STOPPED_SEARCH once the search is stopped. A
+ * PV node has a full window (beta - alpha > 1), every other node a null window.
+ *
+ * cut_node: the node is expected to fail high, set by the parent where it searches its moves. Never
+ * in a PV node: a PV node's first child is a PV node, the null-window children alternate, a reduced
+ * late move's child is a cut node (it should fail high, so the move fails low here), and the null
+ * move's child and its verification aren't. LMR reduces more in a cut node (lmr_reduction).
+ *
+ * In order: draws and the ply limit, the check extension, the TT (a cutoff outside the PV), qsearch
+ * at depth 0, the tablebases, IIR, the static eval (corrected, then adjusted by the TT score), the
+ * node's pruning (reverse futility, null move, ProbCut), singular extensions, then the moves best
+ * first with their pruning (late move, SEE, futility, history), LMR and PVS. The result is saved to
+ * the TT and teaches the correction history; a move that raises alpha updates the quiet history, and
+ * a cutoff the killers, the history maluses and the capture history.
  */
 static int negamax_node(int alpha,
                         int beta,
@@ -1294,7 +1308,7 @@ static int negamax_node(int alpha,
     /* ProbCut (can_probcut). The captures and promotions whose exchange alone brings the eval up to
      * pc_beta (SEE), best first, the TT move ahead of them: qsearch first, and only if that holds
      * the reduced search. A cutoff is saved as a lower bound at PROBCUT_TT_DEPTH (the reduced search plus
-     * the move), and returned less the margin (fail-soft, as Stockfish; a mate score as it is). */
+     * the move), and returned less the margin (fail-soft; a mate score as it is). */
     const int pc_beta = probcut_beta(beta, improving);
     if (!excluded_move && can_probcut(depth, search_state->ply, beta, in_check, is_pv_node, tt_hit,
                                       tt_hit ? tt.depth : 0, tt_hit ? tt.type : tt_none, tt_hit ? tt.score : 0,
@@ -1365,7 +1379,7 @@ static int negamax_node(int alpha,
 
             const singular_result_t result = singular_result(score, s_beta, tt_score, beta, is_pv_node);
             count_singular(search_state, search_state->nodes - nodes_before, result);
-            /* Fail-soft: another move reached s_beta (>= beta), a lower bound on the node (as Stockfish). */
+            /* Fail-soft: another move reached s_beta (>= beta), a lower bound on the node. */
             if (result == singular_multi_cut) return s_beta;
             if (result == singular_extend) extension = 1;
             else if (result == singular_reduce) extension = -SE_REDUCTION;
@@ -1476,8 +1490,8 @@ static int negamax_node(int alpha,
          * searched. */
         if (((futile && num_moves_searched > 0 && is_quiet) || history_prunable) && !gives_check) {
             /* Fail-soft: a futility-pruned move is assumed to score at most the futility value (at or
-             * below alpha), so it counts towards the best score, as Stockfish does; otherwise a fail
-             * low would return, and save as an upper bound, the lower score of the moves searched. */
+             * below alpha), so it counts towards the best score; otherwise a fail low would return,
+             * and save as an upper bound, the lower score of the moves searched. */
             if (futile && is_quiet) {
                 const int futility_value = static_eval + FUTILITY_BASE + FUTILITY_MARGIN * depth;
                 if (futility_value > best_score) best_score = futility_value;

@@ -69,7 +69,7 @@ static inline bitboard pair_window(square sq) {
  * The pawn pairs that involve a pawn of 'changed' (per colour), each with a pawn of 'changed' or 'kept': with
  * 'changed' the pawns that left and 'kept' those that stayed, the pairs that went; with the pawns that arrived,
  * those that came. A pair of two changed pawns is written once (the first is taken out before its partners are
- * looked for). Writes feature indices to 'features' from 'n', returns the new count. Stockfish's way.
+ * looked for). Writes feature indices to 'features' from 'n', returns the new count.
  */
 static int pair_features(int* features, int n, colour perspective, square king, const bitboard changed[2],
                          const bitboard kept[2]) {
@@ -1009,9 +1009,9 @@ static inline_always void update_forward(nnue_stack_t* stack, const board_t* boa
 
 /*
  * After the top entry's 'perspective' was refreshed: entries top - 1 down to 'to' from the one above, each move's
- * changes undone (its added rows removed, its removed rows added, its pawn pairs back), as Stockfish does. The
- * king hasn't moved after 'to', so it's where it is now. Otherwise the next position evaluated below 'to' would
- * walk back to it, still not computed, and refresh again (about half the refreshes in bench were such repeats).
+ * changes undone (its added rows removed, its removed rows added, its pawn pairs back). The king hasn't moved
+ * after 'to', so it's where it is now. Otherwise the next position evaluated below 'to' would walk back to it,
+ * still not computed, and refresh again (about half the refreshes in bench were such repeats).
  */
 static void update_backward(nnue_stack_t* stack, const board_t* board, colour perspective, int to) {
     const square king = trailing_zero_count(board->pieces[perspective == white ? K : k]);

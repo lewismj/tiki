@@ -239,9 +239,9 @@ static inline_always void clear_pv_table(search_state_t* search_state) {
  * repetition_check[repetition_index] holds the current position, entries below it are the
  * earlier positions (game history from 'position', then the search path).
  *
- * The position at 'index' (its hash already stored) against the earlier ones.
- * StateInfo::repetition: the distance in plies back to its last earlier occurrence, negated if that
- * occurrence was itself a repetition (so this is the position's third occurrence), 0 if none. Only
+ * The position at 'index' (its hash already stored) against the earlier ones: the distance in
+ * plies back to its last earlier occurrence, negated if that occurrence was itself a repetition
+ * (so this is the position's third occurrence), 0 if none. Only
  * positions with the same side to move (every second entry) since the last irreversible move
  * ('fifty_move' plies back) and the last null move can repeat. The position two plies back can't,
  * as each side has only made one move, so the scan starts four plies back. Worked out once, when
@@ -268,8 +268,8 @@ static inline_always void record_position(search_state_t* search_state, int inde
 }
 
 /**
- * Whether the current position, 'ply' plies from the root, is a draw by repetition. As Stockfish:
- * if it repeats once a position after the root (a side that can repeat once can keep repeating),
+ * Whether the current position, 'ply' plies from the root, is a draw by repetition: if it
+ * repeats once a position after the root (a side that can repeat once can keep repeating),
  * or for the third time anywhere (a negative distance). A single earlier occurrence at or before
  * the root isn't a draw, the other side doesn't have to repeat it again.
  */
