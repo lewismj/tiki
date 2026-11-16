@@ -65,6 +65,13 @@ double tm_scale(int stability, uint64_t best_move_nodes, uint64_t root_nodes);
  */
 double tm_falling_scale(int score, bool has_previous, int previous, bool has_earlier, int earlier);
 
+/**
+ * A further factor on the soft time limit, for an unstable best move: (TM_INSTABILITY_BASE +
+ * TM_INSTABILITY_PER_CHANGE * 'changes') / 100, 'changes' the times another move took the lead at the root during
+ * a depth, the total halved after each depth (so recent depths count most).
+ */
+double tm_instability_scale(double changes);
+
 /* The static eval refined by the position's TT entry (NULL for none): the TT score when its bound
  * says the true score is on that side of the eval, otherwise the eval. Mate scores are ignored. */
 int adjusted_eval(int eval, const tt_info_t* tt);

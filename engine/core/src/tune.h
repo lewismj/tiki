@@ -69,6 +69,8 @@ enum {
     TM_FALLING_PREV_DEFAULT = TM_FALLING_PREV,
     TM_FALLING_ITER_DEFAULT = TM_FALLING_ITER,
     TM_FALLING_MAX_DEFAULT = TM_FALLING_MAX,
+    TM_INSTABILITY_BASE_DEFAULT = TM_INSTABILITY_BASE,
+    TM_INSTABILITY_PER_CHANGE_DEFAULT = TM_INSTABILITY_PER_CHANGE,
     CORR_PAWN_WEIGHT_DEFAULT = CORR_PAWN_WEIGHT,
     CORR_NONPAWN_WEIGHT_DEFAULT = CORR_NONPAWN_WEIGHT,
     CORR_MAX_DEFAULT = CORR_MAX,
@@ -124,6 +126,8 @@ extern int tune_tm_nodes_percent;
 extern int tune_tm_falling_prev;
 extern int tune_tm_falling_iter;
 extern int tune_tm_falling_max;
+extern int tune_tm_instability_base;
+extern int tune_tm_instability_per_change;
 extern int tune_corr_pawn_weight;
 extern int tune_corr_nonpawn_weight;
 extern int tune_corr_max;
@@ -178,6 +182,8 @@ extern int tune_probcut_improving;
 #undef TM_FALLING_PREV
 #undef TM_FALLING_ITER
 #undef TM_FALLING_MAX
+#undef TM_INSTABILITY_BASE
+#undef TM_INSTABILITY_PER_CHANGE
 #undef CORR_PAWN_WEIGHT
 #undef CORR_NONPAWN_WEIGHT
 #undef CORR_MAX
@@ -231,6 +237,8 @@ extern int tune_probcut_improving;
 #define TM_FALLING_PREV tune_tm_falling_prev
 #define TM_FALLING_ITER tune_tm_falling_iter
 #define TM_FALLING_MAX tune_tm_falling_max
+#define TM_INSTABILITY_BASE tune_tm_instability_base
+#define TM_INSTABILITY_PER_CHANGE tune_tm_instability_per_change
 #define CORR_PAWN_WEIGHT tune_corr_pawn_weight
 #define CORR_NONPAWN_WEIGHT tune_corr_nonpawn_weight
 #define CORR_MAX tune_corr_max

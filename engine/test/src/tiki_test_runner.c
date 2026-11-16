@@ -115,6 +115,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_time_limit_stops_at_first_check);
     RUN_TEST(test_tm_scale);
     RUN_TEST(test_tm_falling_scale);
+    RUN_TEST(test_tm_instability_scale);
     RUN_TEST(test_tm_falling_previous_kept_between_searches);
     RUN_TEST(test_clock_search_within_hard_limit);
     RUN_TEST(test_pick_next_move_order);

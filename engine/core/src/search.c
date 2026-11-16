@@ -1576,7 +1576,11 @@ static int negamax_node(int alpha,
         if (score > best_score) best_score = score;
         if (score > alpha) {
             best_move = mv;
-            if (search_state->ply == 0) search_state->best_move_nodes = search_state->nodes - nodes_before_move;
+            if (search_state->ply == 0) {
+                search_state->best_move_nodes = search_state->nodes - nodes_before_move;
+                /* Another move than the first took the lead (time management, tm_instability_scale). */
+                if (num_moves_searched > 1) search_state->best_move_changes++;
+            }
 
             search_state->pv_table[search_state->ply][search_state->ply] = mv;
             for (int j = search_state->ply + 1; j < search_state->pv_length[search_state->ply + 1]; j++) {
@@ -1919,6 +1923,10 @@ double tm_falling_scale(int score, bool has_previous, int previous, bool has_ear
     return (percent > TM_FALLING_MAX ? TM_FALLING_MAX : percent) / 100.0;
 }
 
+double tm_instability_scale(double changes) {
+    return (TM_INSTABILITY_BASE + TM_INSTABILITY_PER_CHANGE * changes) / 100.0;
+}
+
 int vote_best_thread(const thread_result_t* results, int count) {
     int best = -1;
     int min_score = INF;
@@ -1994,6 +2002,7 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
     move_t move = 0;
     move_t previous_move = 0;
     int stability = 0;
+    double best_move_changes = 0.0;  /* Changes of the lead at the root, halved each depth (tm_instability_scale). */
     int completed_depth = 0;
     int depth_scores[MAX_PLY + 1];   /* Each completed depth's score, for tm_falling_scale. */
     /* The last search's score, if it was for this side (a search for the previous move, normally). */
@@ -2025,6 +2034,8 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
 
         stability = move == previous_move ? stability + 1 : 0;
         previous_move = move;
+        best_move_changes = best_move_changes / 2 + search_state->best_move_changes;
+        search_state->best_move_changes = 0;
 
         /* Soft limit: no new depth after it. With a clock it's scaled by how settled the search is,
          * from TM_SCALE_MIN_DEPTH on, and never later than the hard limit. */
@@ -2035,7 +2046,8 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
                 const double scale = tm_scale(stability, search_state->best_move_nodes,
                                               search_state->nodes - nodes_before) *
                                      tm_falling_scale(score, has_previous, search_state->previous_score, has_earlier,
-                                                      has_earlier ? depth_scores[i - TM_FALLING_DEPTHS] : 0);
+                                                      has_earlier ? depth_scores[i - TM_FALLING_DEPTHS] : 0) *
+                                     tm_instability_scale(best_move_changes);
                 soft_stop = limits->start_time +
                             (uint64_t) ((double) (limits->soft_stop_time - limits->start_time) * scale);
                 if (soft_stop > limits->stop_time) soft_stop = limits->stop_time;

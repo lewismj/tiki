@@ -236,6 +236,14 @@ void test_time_limit_stops_at_first_check() {
     TEST_ASSERT_TRUE(make_move(&board, mv));
 }
 
+void test_tm_instability_scale() {
+    /* No change of the lead: the base; each (decayed) change adds TM_INSTABILITY_PER_CHANGE %, linearly. */
+    TEST_ASSERT_TRUE(tm_instability_scale(0.0) == TM_INSTABILITY_BASE / 100.0);
+    TEST_ASSERT_TRUE(tm_instability_scale(1.0) == (TM_INSTABILITY_BASE + TM_INSTABILITY_PER_CHANGE) / 100.0);
+    TEST_ASSERT_TRUE(tm_instability_scale(2.5) == (TM_INSTABILITY_BASE + TM_INSTABILITY_PER_CHANGE * 2.5) / 100.0);
+    TEST_ASSERT_TRUE(tm_instability_scale(3.0) >= tm_instability_scale(1.5));
+}
+
 void test_tm_falling_scale() {
     /* Nothing to compare with, or a rising score: the usual time. */
     TEST_ASSERT_TRUE(tm_falling_scale(0, false, 0, false, 0) == 1.0);
