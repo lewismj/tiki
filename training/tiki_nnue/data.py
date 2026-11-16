@@ -14,22 +14,17 @@ import numpy as np
 import torch
 
 from .binary import PAD
-from .features import (BLACK, INPUTS, KING, MAX_ACTIVE, PIECE_SQUARES, WHITE, all_features, bucket_of_features,
-                       output_bucket, parse_fen)
-
-# Every pair of the 32 piece slots of a record (i < j), for the PawnPairs features of a batch.
-_SLOT_PAIRS = torch.triu_indices(MAX_ACTIVE, MAX_ACTIVE, 1)
+from .features import BLACK, KING, PIECE_SQUARES, WHITE, active_features, bucket_of_features, output_bucket, parse_fen
 
 
 def parse_line(line):
-    """Returns (stm features, nstm features, score, result), score and result for the side to move. The
-    features are the pieces' then the pawn pairs' (features.all_features)."""
+    """Returns (stm features, nstm features, score, result), score and result for the side to move."""
     fen, score, result = (field.strip() for field in line.split("|"))
     pieces, side = parse_fen(fen)
     score, result = float(score), float(result)
     if side == BLACK:
         score, result = -score, 1.0 - result
-    return all_features(pieces, side), all_features(pieces, side ^ 1), score, result
+    return active_features(pieces, side), active_features(pieces, side ^ 1), score, result
 
 
 def collate(samples):
@@ -53,8 +48,7 @@ def collate(samples):
 
 def perspective_features(pieces, perspective):
     """The features of 'pieces' (int32 [n, 32], binary.RECORD's pieces) for each row's 'perspective'
-    (int32 [n]), as EmbeddingBag inputs: each row's piece features (features.feature_index), then its pawn
-    pairs' (features.active_pair_features), for a whole batch as tensor ops."""
+    (int32 [n]), as EmbeddingBag inputs. features.feature_index for a whole batch, as tensor ops."""
     valid = pieces != PAD
     piece, sq = pieces >> 6, pieces & 63
 
@@ -75,20 +69,8 @@ def perspective_features(pieces, perspective):
     kind = torch.where(kind_type == 5, 10, kind_type * 2 + theirs)
     index = bucket[:, None] * PIECE_SQUARES + kind * 64 + oriented_sq
 
-    # PawnPairs: every pair of slots holding pawns whose files differ by at most one.
-    pawn = valid & (kind_type == 0)
-    pawn_id = theirs * 48 + oriented_sq - 8
-    a, b = _SLOT_PAIRS.to(pieces.device)
-    file = sq & 7
-    paired = pawn[:, a] & pawn[:, b] & ((file[:, a] - file[:, b]).abs() <= 1)
-    id_a, id_b = pawn_id[:, a], pawn_id[:, b]
-    hi, lo = torch.maximum(id_a, id_b), torch.minimum(id_a, id_b)
-    pair_index = INPUTS + hi * (hi - 1) // 2 + lo
-
-    every = torch.cat([index, pair_index], dim=1)
-    active = torch.cat([valid, paired], dim=1)
-    counts = active.sum(dim=1)
-    return every[active].long(), (torch.cumsum(counts, 0) - counts).long()
+    counts = valid.sum(dim=1)
+    return index[valid].long(), (torch.cumsum(counts, 0) - counts).long()
 
 
 def batch_tensors(records, device="cpu"):

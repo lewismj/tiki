@@ -93,12 +93,9 @@ def add_model_arguments(parser):
 
 def load_model(model, state, args, parser):
     """Restores a checkpoint's weights, which must have the same --factoriser setting, and be of this
-    architecture (pawn pairs and two hidden layers, format version 7)."""
+    architecture (pairwise inputs and the hidden layer, format version 5)."""
     if "l1.weight" not in state or "l1_shared.weight" not in state:
         parser.error("the checkpoint is from before the hidden layer (network format version 2 or 3), "
-                     "it can't be resumed with this trainer")
-    if "l2_weight" not in state:
-        parser.error("the checkpoint has one hidden layer and no pawn pairs (network format version 5 or 6), "
                      "it can't be resumed with this trainer")
     if state["l1.weight"].shape[1] != model.hidden:
         parser.error(f"the checkpoint's hidden layer has {state['l1.weight'].shape[1]} inputs, this trainer's "

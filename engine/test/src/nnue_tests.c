@@ -90,51 +90,25 @@ static int8_t* l1_weight(int b, int u, int i) {
     return &nnue_net.l1_weights[nnue_l1_index(b, u, i)];
 }
 
-/* The same for the second hidden layer: unit u's weight for activation i of the first layer. */
-static int8_t* l2_weight(int b, int u, int i) {
-    return &nnue_net.l2_weights[nnue_l2_index(b, u, i)];
-}
-
-/* Small random feature weights (the accumulators stay well inside int16, many within 0..QA), pawn pair rows
- * as well, int8 hidden weights over their whole range, biases that put the hidden units on both sides of
- * CReLU's range, and output weights of either sign (the trainer's range, +-127 / 64, at scale QO). */
+/* Small random feature weights (the accumulators stay well inside int16, many within 0..QA), int8
+ * hidden weights over their whole range, biases that put the hidden units on both sides of CReLU's
+ * range, and output weights of either sign (the trainer's range, +-127 / 64, at scale QO). */
 static void random_network(uint32_t seed) {
     const int out_scale = NNUE_QO / NNUE_QW;
     TEST_ASSERT_TRUE(nnue_allocate());
     uint32_t state = seed;
     for (size_t i = 0; i < (size_t) NNUE_INPUTS * NNUE_HIDDEN; i++)
         nnue_net.ft_weights[i] = (int16_t) ((int) (next_random_32(&state) % 129) - 64);
-    for (size_t i = 0; i < (size_t) NNUE_PAIR_FEATURES * NNUE_HIDDEN; i++)
-        nnue_net.pair_weights[i] = (int8_t) ((int) (next_random_32(&state) % 129) - 64);
     for (int i = 0; i < NNUE_HIDDEN; i++)
         nnue_net.ft_bias[i] = (int16_t) ((int) (next_random_32(&state) % 201) - 50);
     for (int b = 0; b < NNUE_OUTPUT_BUCKETS; b++) {
         for (int u = 0; u < NNUE_L1; u++) {
             for (int i = 0; i < NNUE_L1_INPUTS; i++) *l1_weight(b, u, i) = (int8_t) ((int) (next_random_32(&state) % 256) - 128);
             nnue_net.l1_bias[b][u] = (int32_t) (next_random_32(&state) % (4 * NNUE_QH)) - 2 * NNUE_QH;
-        }
-        for (int u = 0; u < NNUE_L2; u++) {
-            for (int i = 0; i < NNUE_L2_INPUTS; i++) *l2_weight(b, u, i) = (int8_t) ((int) (next_random_32(&state) % 256) - 128);
-            nnue_net.l2_bias[b][u] = (int32_t) (next_random_32(&state) % (4 * NNUE_QH)) - 2 * NNUE_QH;
-        }
-        for (int i = 0; i < NNUE_OUT_INPUTS; i++) {
-            nnue_net.out_weights[b][i] = (int16_t) (((int) (next_random_32(&state) % 255) - 127) * out_scale);
+            nnue_net.out_weights[b][u] = (int16_t) (((int) (next_random_32(&state) % 255) - 127) * out_scale);
         }
         nnue_net.out_bias[b] = ((int32_t) (next_random_32(&state) % 200001) - 100000) * out_scale;
     }
-}
-
-/* The pawn pairs of 'board' counted from the definition: pairs of pawns, either colour, at most a file apart. */
-static int count_pawn_pairs(const board_t* board) {
-    int squares[16], n = 0, pairs = 0;
-    for (int pc = P; pc <= p; pc += p - P) {
-        bitboard pawns = board->pieces[pc];
-        while (pawns) squares[n++] = get_lsb_and_pop_bit(&pawns);
-    }
-    for (int i = 0; i < n; i++) {
-        for (int j = i + 1; j < n; j++) pairs += abs((squares[i] & 7) - (squares[j] & 7)) <= 1;
-    }
-    return pairs;
 }
 
 
@@ -154,40 +128,16 @@ void test_nnue_feature_index_known_values() {
     TEST_ASSERT_EQUAL_INT(28 * NNUE_PIECE_SQUARES + 48, nnue_feature_index(white, a1, P, a2));
 }
 
-void test_nnue_pawn_pair_known_values() {
-    /* The same values as the trainer's tests (test_features.py): king e1 mirrors e2 to d2 (oriented square 51,
-     * id 43) and d2 to e2 (id 44); black's d7 and e7 with its king on e8 are the same pair. */
-    TEST_ASSERT_EQUAL_INT(43, nnue_pawn_id(white, e1, white, e2));
-    TEST_ASSERT_EQUAL_INT(44, nnue_pawn_id(white, e1, white, d2));
-    TEST_ASSERT_EQUAL_INT(48 + 43, nnue_pawn_id(white, e1, black, e2));     /* Their pawn: 48 more. */
-    TEST_ASSERT_EQUAL_INT(23517, nnue_pair_index(43, 44));
-    TEST_ASSERT_EQUAL_INT(23517, nnue_pair_index(44, 43));
-    TEST_ASSERT_EQUAL_INT(23517, nnue_pair_index(nnue_pawn_id(black, e8, black, e7), nnue_pawn_id(black, e8, black, d7)));
-    TEST_ASSERT_EQUAL_INT(NNUE_INPUTS, nnue_pair_index(0, 1));
-    TEST_ASSERT_EQUAL_INT(NNUE_TOTAL_INPUTS - 1, nnue_pair_index(95, 94));
-
-    /* The start position: 7 pairs of neighbouring white pawns, 7 black, 8 on the same file and 14 a file
-     * apart of opposite colours. */
-    board_t board;
-    parse_fen(START_FEN, &board);
-    TEST_ASSERT_EQUAL_INT(36, count_pawn_pairs(&board));
-    int features[NNUE_MAX_FEATURES];
-    TEST_ASSERT_EQUAL_INT(32 + 36, nnue_active_features(&board, white, features));
-}
-
 void test_nnue_features_in_range_and_unique() {
-    int features[NNUE_MAX_FEATURES];
+    int features[NNUE_MAX_ACTIVE];
     for (int i = 0; i < PROPERTY_POSITION_COUNT; i++) {
         board_t board;
         parse_fen(property_position(i), &board);
-        const int pieces = pop_count(board.occupancy[both]);
         for (int c = white; c <= black; c++) {
             int n = sorted_features(&board, c, features);
-            TEST_ASSERT_EQUAL_INT(pieces + count_pawn_pairs(&board), n);
+            TEST_ASSERT_EQUAL_INT(pop_count(board.occupancy[both]), n);
             for (int f = 0; f < n; f++) {
-                /* Sorted: the pieces' first, below NNUE_INPUTS, then the pairs'. */
-                TEST_ASSERT_TRUE(f < pieces ? features[f] >= 0 && features[f] < NNUE_INPUTS
-                                            : features[f] >= NNUE_INPUTS && features[f] < NNUE_TOTAL_INPUTS);
+                TEST_ASSERT_TRUE(features[f] >= 0 && features[f] < NNUE_INPUTS);
                 if (f) TEST_ASSERT_TRUE(features[f] != features[f - 1]);
             }
         }
@@ -195,7 +145,7 @@ void test_nnue_features_in_range_and_unique() {
 }
 
 void test_nnue_feature_symmetry() {
-    int a[NNUE_MAX_FEATURES], b[NNUE_MAX_FEATURES];
+    int a[NNUE_MAX_ACTIVE], b[NNUE_MAX_ACTIVE];
     for (int i = 0; i < PROPERTY_POSITION_COUNT; i++) {
         board_t board, flipped, mirrored;
         parse_fen(property_position(i), &board);
@@ -215,11 +165,6 @@ void test_nnue_feature_symmetry() {
     }
 }
 
-/* An evaluation of 'out' (the output layer's sum, scale QU * QO) plus 'skip' (scale QH), as nnue.h. */
-static int expected_eval(int64_t out, int64_t skip) {
-    return (int) ((out * (NNUE_QH / NNUE_QU) + skip * NNUE_QO) * NNUE_SCALE / ((int64_t) NNUE_QH * NNUE_QO));
-}
-
 void test_nnue_evaluate_known_value() {
     TEST_ASSERT_TRUE(nnue_allocate());
     board_t board;
@@ -228,14 +173,12 @@ void test_nnue_evaluate_known_value() {
     /* 32 pieces, both queens: the last output bucket. */
     const int b = NNUE_OUTPUT_BUCKETS - 1;
     TEST_ASSERT_EQUAL_INT(b, nnue_board_bucket(&board));
-    TEST_ASSERT_EQUAL_INT(0, nnue_evaluate(&board));
 
-    /* Only the output bias, QU * QO is 1.0, which is SCALE centipawns. */
-    nnue_net.out_bias[b] = NNUE_QU * NNUE_QO;
+    /* Only the output bias, QH * QO is 1.0, which is SCALE centipawns. */
+    nnue_net.out_bias[b] = NNUE_QH * NNUE_QO;
     TEST_ASSERT_EQUAL_INT(NNUE_SCALE, nnue_evaluate(&board));
 
-    /* First layer unit 0 at 1.0 (bias QH): its CReLU activation (input 0 of the output) is 127, 1.0, and with
-     * output weight 1.0 (QO) adds SCALE. */
+    /* Hidden unit 0 at activation 1.0 (bias QH) with output weight 1.0 (QO): +1.0. */
     nnue_net.l1_bias[b][0] = NNUE_QH;
     nnue_net.out_weights[b][0] = NNUE_QO;
     TEST_ASSERT_EQUAL_INT(2 * NNUE_SCALE, nnue_evaluate(&board));
@@ -245,60 +188,16 @@ void test_nnue_evaluate_known_value() {
     TEST_ASSERT_EQUAL_INT(2 * NNUE_SCALE, nnue_evaluate(&board));
     nnue_net.l1_bias[b][0] = -NNUE_QH;
     TEST_ASSERT_EQUAL_INT(NNUE_SCALE, nnue_evaluate(&board));
-
-    /* Its SqrCReLU activation (input L1 of the output): (QH * QH) >> 19 = 126 at 1.0, at half 1.0 a quarter of
-     * that rounded down ((4064 * 4064) >> 19 = 31), while CReLU gives 63 there (4064 >> 6). */
-    nnue_net.out_weights[b][0] = 0;
-    nnue_net.out_weights[b][NNUE_L1] = NNUE_QO;
-    nnue_net.l1_bias[b][0] = NNUE_QH;
-    TEST_ASSERT_EQUAL_INT(expected_eval((int64_t) (NNUE_QU + 126) * NNUE_QO, 0), nnue_evaluate(&board));
-    nnue_net.l1_bias[b][0] = NNUE_QH / 2;
-    TEST_ASSERT_EQUAL_INT(expected_eval((int64_t) (NNUE_QU + 31) * NNUE_QO, 0), nnue_evaluate(&board));
-    nnue_net.out_weights[b][0] = NNUE_QO;
-    nnue_net.out_weights[b][NNUE_L1] = 0;
-    TEST_ASSERT_EQUAL_INT(expected_eval((int64_t) (NNUE_QU + 63) * NNUE_QO, 0), nnue_evaluate(&board));
-    nnue_net.out_weights[b][0] = 0;
     nnue_net.l1_bias[b][0] = 0;
-    TEST_ASSERT_EQUAL_INT(NNUE_SCALE, nnue_evaluate(&board));
-
-    /* Second layer unit 1 at 1.0 by its bias: its CReLU activation (output input 2 * L1 + 1) with weight QO. */
-    nnue_net.l2_bias[b][1] = NNUE_QH;
-    nnue_net.out_weights[b][NNUE_L2_INPUTS + 1] = NNUE_QO;
-    TEST_ASSERT_EQUAL_INT(2 * NNUE_SCALE, nnue_evaluate(&board));
-    nnue_net.l2_bias[b][1] = 0;
-    TEST_ASSERT_EQUAL_INT(NNUE_SCALE, nnue_evaluate(&board));
-
-    /* The same through the first layer: unit 3 at 1.0 gives activation 127, weight QW (1.0) on it makes second
-     * layer unit 1 exactly QH. */
-    nnue_net.l1_bias[b][3] = NNUE_QH;
-    *l2_weight(b, 1, 3) = NNUE_QW;
-    TEST_ASSERT_EQUAL_INT(2 * NNUE_SCALE, nnue_evaluate(&board));
-    /* And through its SqrCReLU activation (first layer input L1 + 3, 126): 126 * 64 of QH, >> 6 is 126. */
-    *l2_weight(b, 1, 3) = 0;
-    *l2_weight(b, 1, NNUE_L1 + 3) = NNUE_QW;
-    TEST_ASSERT_EQUAL_INT(expected_eval((int64_t) (NNUE_QU + 126) * NNUE_QO, 0), nnue_evaluate(&board));
-    *l2_weight(b, 1, NNUE_L1 + 3) = 0;
-    nnue_net.l1_bias[b][3] = 0;
-    nnue_net.out_weights[b][NNUE_L2_INPUTS + 1] = 0;
-    TEST_ASSERT_EQUAL_INT(NNUE_SCALE, nnue_evaluate(&board));
-
-    /* The skip: first layer sums 14 - 15, scale QH, not clamped. */
-    nnue_net.l1_bias[b][NNUE_SKIP_PLUS] = NNUE_QH;
-    TEST_ASSERT_EQUAL_INT(2 * NNUE_SCALE, nnue_evaluate(&board));
-    nnue_net.l1_bias[b][NNUE_SKIP_PLUS] = 3 * NNUE_QH;
-    TEST_ASSERT_EQUAL_INT(4 * NNUE_SCALE, nnue_evaluate(&board));
-    nnue_net.l1_bias[b][NNUE_SKIP_MINUS] = NNUE_QH / 2;
-    TEST_ASSERT_EQUAL_INT(expected_eval(NNUE_QU * NNUE_QO, 3 * NNUE_QH - NNUE_QH / 2), nnue_evaluate(&board));
-    nnue_net.l1_bias[b][NNUE_SKIP_PLUS] = nnue_net.l1_bias[b][NNUE_SKIP_MINUS] = 0;
 
     /* From the accumulator: units 0 and its partner 256 both at QA, their product is 1.0, input QI; hidden
-     * weight 1.0 (QW) on the side to move's input 0 makes first layer unit 1 exactly QH, 1.0, and its output
+     * weight 1.0 (QW) on the side to move's input 0 makes hidden unit 1 exactly QH, 1.0, and its output
      * weight 1.0 (QO) adds SCALE. */
-    nnue_net.out_weights[b][1] = NNUE_QO;
     const int partner = NNUE_HIDDEN / 2;
     nnue_net.ft_bias[0] = NNUE_QA;
     nnue_net.ft_bias[partner] = NNUE_QA;
     *l1_weight(b, 1, 0) = NNUE_QW;
+    nnue_net.out_weights[b][1] = NNUE_QO;
     TEST_ASSERT_EQUAL_INT(2 * NNUE_SCALE, nnue_evaluate(&board));
 
     /* The same through the other side's input 0 (the biases are in both accumulators): the same. */
@@ -316,19 +215,12 @@ void test_nnue_evaluate_known_value() {
     nnue_net.ft_bias[partner] = 0;
     TEST_ASSERT_EQUAL_INT(NNUE_SCALE, nnue_evaluate(&board));
 
-    /* Half times all: (128 * 255) >> 9 = 63 (rounded down), so first layer unit 1 is 63 * QW, its activation
-     * (63 * 64) >> 6 = 63. */
+    /* Half times all: (128 * 255) >> 9 = 63 (rounded down), so hidden unit 1 is 63 * QW of QH, and the
+     * output (QH * QO + 63 * QW * QO) * SCALE / (QH * QO). */
     nnue_net.ft_bias[0] = 128;
     nnue_net.ft_bias[partner] = NNUE_QA;
-    TEST_ASSERT_EQUAL_INT(expected_eval((int64_t) (NNUE_QU + 63) * NNUE_QO, 0), nnue_evaluate(&board));
-
-    /* A pawn pair's row is in the accumulator: the pair d2-e2 (white's view), +127 (an int8 row's most), brings
-     * unit 0 from 128 to QA. */
-    const int pair = nnue_pair_index(nnue_pawn_id(white, e1, white, e2), nnue_pawn_id(white, e1, white, d2));
-    nnue_net.pair_weights[(size_t) (pair - NNUE_INPUTS) * NNUE_HIDDEN + 0] = NNUE_QA - 128;
-    *l1_weight(b, 1, NNUE_HIDDEN / 2) = 0;
-    *l1_weight(b, 1, 0) = NNUE_QW;
-    TEST_ASSERT_EQUAL_INT(2 * NNUE_SCALE, nnue_evaluate(&board));
+    const int64_t out = (int64_t) NNUE_QH * NNUE_QO + (int64_t) 63 * NNUE_QW * NNUE_QO;
+    TEST_ASSERT_EQUAL_INT((int) (out * NNUE_SCALE / ((int64_t) NNUE_QH * NNUE_QO)), nnue_evaluate(&board));
     nnue_free();
 }
 
@@ -372,81 +264,62 @@ void test_nnue_output_buckets() {
         const int before = nnue_evaluate(&board);
 
         const int other = (bucket + 1) % NNUE_OUTPUT_BUCKETS;
-        nnue_net.out_bias[other] += NNUE_QU * NNUE_QO;
+        nnue_net.out_bias[other] += NNUE_QH * NNUE_QO;
         nnue_net.l1_bias[other][3] += NNUE_QH;
-        nnue_net.l2_bias[other][9] += NNUE_QH;
         *l1_weight(other, 5, 7) ^= 0x55;
-        *l2_weight(other, 6, 8) ^= 0x55;
         TEST_ASSERT_EQUAL_INT_MESSAGE(before, nnue_evaluate(&board), property_position(i));
-        *l2_weight(other, 6, 8) ^= 0x55;
         *l1_weight(other, 5, 7) ^= 0x55;
-        nnue_net.l2_bias[other][9] -= NNUE_QH;
         nnue_net.l1_bias[other][3] -= NNUE_QH;
-        nnue_net.out_bias[other] -= NNUE_QU * NNUE_QO;
+        nnue_net.out_bias[other] -= NNUE_QH * NNUE_QO;
 
         /* +1.0 on its own output bias is +SCALE centipawns (give or take the truncating division). */
-        nnue_net.out_bias[bucket] += NNUE_QU * NNUE_QO;
+        nnue_net.out_bias[bucket] += NNUE_QH * NNUE_QO;
         TEST_ASSERT_INT_WITHIN_MESSAGE(1, before + NNUE_SCALE, nnue_evaluate(&board), property_position(i));
-        nnue_net.out_bias[bucket] -= NNUE_QU * NNUE_QO;
+        nnue_net.out_bias[bucket] -= NNUE_QH * NNUE_QO;
     }
     nnue_free();
 }
 
 void test_nnue_file_keeps_hidden_weight_order() {
-    /* The engine keeps the hidden weights grouped for its SIMD (nnue_l1_index, nnue_l2_index), the file in
-     * the trainer's order: bucket, unit, input. Weight [3][5][300] of the first layer and [3][5][20] of the
-     * second are the bytes at those places in the file. */
+    /* The engine keeps the hidden weights grouped for its SIMD (nnue_l1_index), the file in the
+     * trainer's order: bucket, unit, input. Weight [3][5][300] is the byte at that place in the file. */
     random_network(4711);
     *l1_weight(3, 5, 300) = 77;
     *l1_weight(3, 5, 301) = -78;
-    *l2_weight(3, 5, 20) = 55;
-    *l2_weight(3, 5, 21) = -56;
     size_t size;
     uint8_t* data = saved_network(&size);
-    const size_t l1_at = 8 + 3 * sizeof(uint32_t) + ((size_t) NNUE_INPUTS * NNUE_HIDDEN + NNUE_HIDDEN) * sizeof(int16_t) +
-                         (size_t) NNUE_PAIR_FEATURES * NNUE_HIDDEN;      /* The int8 pair rows. */
+    const size_t l1_at = 8 + 3 * sizeof(uint32_t) + ((size_t) NNUE_INPUTS * NNUE_HIDDEN + NNUE_HIDDEN) * sizeof(int16_t);
     const size_t at = l1_at + ((size_t) 3 * NNUE_L1 + 5) * NNUE_L1_INPUTS + 300;
     TEST_ASSERT_EQUAL_INT8(77, (int8_t) data[at]);
     TEST_ASSERT_EQUAL_INT8(-78, (int8_t) data[at + 1]);
-    const size_t l1_count = (size_t) NNUE_OUTPUT_BUCKETS * NNUE_L1 * NNUE_L1_INPUTS;
-    const size_t l2_count = (size_t) NNUE_OUTPUT_BUCKETS * NNUE_L2 * NNUE_L2_INPUTS;
-    const size_t l2_at = l1_at + l1_count + sizeof(nnue_net.l1_bias) + ((size_t) 3 * NNUE_L2 + 5) * NNUE_L2_INPUTS + 20;
-    TEST_ASSERT_EQUAL_INT8(55, (int8_t) data[l2_at]);
-    TEST_ASSERT_EQUAL_INT8(-56, (int8_t) data[l2_at + 1]);
     /* And every weight reads back where it was. */
-    int8_t* before = malloc(l1_count + l2_count);
+    int8_t* before = malloc((size_t) NNUE_OUTPUT_BUCKETS * NNUE_L1 * NNUE_L1_INPUTS);
     TEST_ASSERT_NOT_NULL(before);
-    memcpy(before, nnue_net.l1_weights, l1_count);
-    memcpy(before + l1_count, nnue_net.l2_weights, l2_count);
+    memcpy(before, nnue_net.l1_weights, (size_t) NNUE_OUTPUT_BUCKETS * NNUE_L1 * NNUE_L1_INPUTS);
     TEST_ASSERT_TRUE(nnue_load_memory(data, size, "order"));
-    TEST_ASSERT_EQUAL_INT8_ARRAY(before, nnue_net.l1_weights, l1_count);
-    TEST_ASSERT_EQUAL_INT8_ARRAY(before + l1_count, nnue_net.l2_weights, l2_count);
+    TEST_ASSERT_EQUAL_INT8_ARRAY(before, nnue_net.l1_weights, NNUE_OUTPUT_BUCKETS * NNUE_L1 * NNUE_L1_INPUTS);
     free(before);
     free(data);
     nnue_free();
 }
 
 void test_nnue_rejects_other_versions() {
-    /* Versions 1-6 (no hidden layer, PSQT, SCReLU inputs, one hidden layer and no pawn pairs) are another
-     * network: a current file with any other version in its header is rejected, keeping the current network. */
+    /* Versions 1-4 (no hidden layer, PSQT, SCReLU inputs) are another network, and version 5 the same layout
+     * with the output layer at another scale (read as version 6, its evaluations would be 32 times too small): a current file
+     * with any other version in its header is rejected, keeping the current network. */
     random_network(2024);
     size_t size;
     uint8_t* data = saved_network(&size);
     TEST_ASSERT_TRUE(nnue_load_memory(data, size, "current"));
-    for (uint32_t version = 1; version <= 8; version++) {
+    for (uint32_t version = 1; version <= 7; version++) {
         if (version == NNUE_VERSION) continue;
         memcpy(data + 8, &version, sizeof(version));
         TEST_ASSERT_FALSE(nnue_load_memory(data, size, "other version"));
         TEST_ASSERT_EQUAL_STRING("current", nnue_loaded_path());
     }
-    /* A different input count (version 6's 22528, without the pawn pairs) or width too. */
-    const uint32_t version = NNUE_VERSION, inputs = NNUE_INPUTS, hidden = 256;
+    /* A different width or input count too. */
+    const uint32_t version = NNUE_VERSION, hidden = 256;
     memcpy(data + 8, &version, sizeof(version));
-    memcpy(data + 12, &inputs, sizeof(inputs));
-    TEST_ASSERT_FALSE(nnue_load_memory(data, size, "other inputs"));
-    const uint32_t total = NNUE_TOTAL_INPUTS;
-    memcpy(data + 12, &total, sizeof(total));
-    TEST_ASSERT_TRUE(nnue_load_memory(data, size, "current"));
     memcpy(data + 16, &hidden, sizeof(hidden));
     TEST_ASSERT_FALSE(nnue_load_memory(data, size, "other width"));
     free(data);
@@ -660,9 +533,6 @@ void test_nnue_incremental_matches_refresh() {
             "6k1/6p1/6Pp/ppp5/3pn2P/1P3K2/1PP2P2/8 b - - 3 54",
             /* Mostly king moves, each one a refresh through the cache. */
             "8/2k5/8/3p4/4P3/8/5K2/8 w - - 0 1",
-            /* Pawns everywhere: pawn captures, levers, doubled pawns, the pairs changing at every move. */
-            "8/5k2/p1p1pp2/1pP1P1p1/1P3P1P/P3K3/6P1/8 w - - 0 1",
-            "rnbqkbnr/pp3ppp/4p3/2ppP3/3P4/2P5/PP3PPP/RNBQKBNR b KQkq - 0 5",
     };
     /* One stack for every position, so the refresh cache also starts from unrelated positions. */
     static nnue_stack_t stack;
@@ -703,16 +573,7 @@ void test_nnue_output_simd_matches_scalar() {
                                    : (int) (next_random_32(&rng) % 256) - 128);
             }
             nnue_net.l1_bias[bucket][u] = (int32_t) (next_random_32(&rng) % 1000001) - 500000;
-        }
-        for (int u = 0; u < NNUE_L2; u++) {
-            for (int i = 0; i < NNUE_L2_INPUTS; i++) {
-                *l2_weight(bucket, u, i) = (int8_t) (trial % 4 == 0 ? -128 : trial % 4 == 1 ? 127
-                                   : (int) (next_random_32(&rng) % 256) - 128);
-            }
-            nnue_net.l2_bias[bucket][u] = (int32_t) (next_random_32(&rng) % (4 * NNUE_QH)) - 2 * NNUE_QH;
-        }
-        for (int i = 0; i < NNUE_OUT_INPUTS; i++) {
-            nnue_net.out_weights[bucket][i] = (int16_t) (trial % 8 < 2 ? (trial & 1 ? 32767 : -32768)
+            nnue_net.out_weights[bucket][u] = (int16_t) (trial % 8 < 2 ? (trial & 1 ? 32767 : -32768)
                                                          : (int) (next_random_32(&rng) % 65536) - 32768);
         }
         /* Dense, mixed and sparse inputs: the plain C reference skips groups of 4 zero inputs, so mostly-zero,
@@ -760,26 +621,14 @@ void test_nnue_output_reference_formula() {
                 const int64_t y = v < 0 ? 0 : v > NNUE_QA ? NNUE_QA : v;
                 in[i] = (x * y) / 512;
             }
-            /* First layer, its activations (CReLU of each sum, then SqrCReLU of each), the second layer and its
-             * activations, the output over both, and the skip. */
-            int64_t h0[NNUE_L1], a[NNUE_OUT_INPUTS];
-            for (int u = 0; u < NNUE_L1; u++) {
-                h0[u] = nnue_net.l1_bias[bucket][u];
-                for (int i = 0; i < NNUE_L1_INPUTS; i++) h0[u] += in[i] * *l1_weight(bucket, u, i);
-                const int64_t x = h0[u] < 0 ? 0 : h0[u] > NNUE_QH ? NNUE_QH : h0[u];
-                a[u] = x / 64;
-                a[NNUE_L1 + u] = x * x / (1 << 19);
-            }
-            for (int u = 0; u < NNUE_L2; u++) {
-                int64_t h = nnue_net.l2_bias[bucket][u];
-                for (int i = 0; i < NNUE_L2_INPUTS; i++) h += a[i] * *l2_weight(bucket, u, i);
-                const int64_t x = h < 0 ? 0 : h > NNUE_QH ? NNUE_QH : h;
-                a[NNUE_L2_INPUTS + u] = x / 64;
-                a[NNUE_L2_INPUTS + NNUE_L2 + u] = x * x / (1 << 19);
-            }
             int64_t out = nnue_net.out_bias[bucket];
-            for (int i = 0; i < NNUE_OUT_INPUTS; i++) out += a[i] * nnue_net.out_weights[bucket][i];
-            const int expected = expected_eval(out, h0[NNUE_SKIP_PLUS] - h0[NNUE_SKIP_MINUS]);
+            for (int u = 0; u < NNUE_L1; u++) {
+                int64_t h = nnue_net.l1_bias[bucket][u];
+                for (int i = 0; i < NNUE_L1_INPUTS; i++) h += in[i] * *l1_weight(bucket, u, i);
+                h = h < 0 ? 0 : h > NNUE_QH ? NNUE_QH : h;
+                out += h * nnue_net.out_weights[bucket][u];
+            }
+            const int expected = (int) (out * NNUE_SCALE / ((int64_t) NNUE_QH * NNUE_QO));
             TEST_ASSERT_EQUAL_INT(expected, nnue_output_scalar(&accumulator, side, bucket));
         }
     }
@@ -789,7 +638,7 @@ void test_nnue_output_reference_formula() {
 void test_nnue_refresh_matches_plain_sum() {
     /* The accumulator code (SIMD if built) against a plain sum of the feature rows. */
     random_network(2718);
-    int features[NNUE_MAX_FEATURES];
+    int features[NNUE_MAX_ACTIVE];
     for (int i = 0; i < PROPERTY_POSITION_COUNT; i++) {
         board_t board;
         parse_fen(property_position(i), &board);
@@ -799,10 +648,7 @@ void test_nnue_refresh_matches_plain_sum() {
             int n = nnue_active_features(&board, c, features);
             for (int j = 0; j < NNUE_HIDDEN; j++) {
                 int sum = nnue_net.ft_bias[j];
-                for (int f = 0; f < n; f++) {
-                    sum += features[f] < NNUE_INPUTS ? nnue_net.ft_weights[(size_t) features[f] * NNUE_HIDDEN + j]
-                         : nnue_net.pair_weights[(size_t) (features[f] - NNUE_INPUTS) * NNUE_HIDDEN + j];
-                }
+                for (int f = 0; f < n; f++) sum += nnue_net.ft_weights[(size_t) features[f] * NNUE_HIDDEN + j];
                 TEST_ASSERT_EQUAL_INT16_MESSAGE((int16_t) sum, accumulator.values[c][j], property_position(i));
             }
         }

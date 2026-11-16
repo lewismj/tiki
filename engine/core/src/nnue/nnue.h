@@ -9,10 +9,9 @@
 #include "../board.h"
 
 /**
- * Tiki's NNUE: HalfKAv2_hm and PawnPairs features -> 512 x 2 accumulator -> pairwise products -> 512 -> 16
- * -> [CReLU, SqrCReLU] -> 32 -> [CReLU, SqrCReLU] -> 1 over both layers' activations, plus a skip from two of
- * the first layer's sums. The part after the accumulator (a layer stack) is one of 32 chosen by the number of
- * pieces on the board and which sides have a queen.
+ * Tiki's NNUE: HalfKAv2_hm features -> 512 x 2 accumulator -> pairwise products -> 512 -> 16 -> CReLU
+ * -> 1, the 512 -> 16 -> 1 part (a layer stack) one of 32 chosen by the number of pieces on the board
+ * and which sides have a queen.
  * The trainer (training/tiki_nnue) implements the same features and quantisation, any change
  * here must be made there too (training/tests check the two agree).
  *
@@ -26,17 +25,6 @@
  *     (type * 2 + (colour != perspective)), and 10 for either king ("A": both kings share one).
  *   - index = bucket * 704 + kind * 64 + oriented square. 32 * 11 * 64 = 22528 inputs.
  *
- * PawnPairs (N.B. Modelled off Stockfish's PP_3Wide - itself a copy from another engine), per perspective, 
- * after those: every unordered pair of pawns, of either
- * colour, whose files differ by at most one (levers, chains, phalanxes, rams, doubled pawns...).
- *   - A pawn's id = (its colour != perspective) * 48 + its oriented square - 8, the square oriented and
- *     mirrored as above (pawns are on ranks 2-7, oriented squares 8..55), so 0..95.
- *   - index = 22528 + hi * (hi - 1) / 2 + lo of the two ids, 4560 pairs: 27088 inputs in all. No king buckets.
- *   - At most C(16, 2) = 120 are active. Their rows are int8 (+-127), the pieces' int16 within +-505 (the
- *     trainer's clips), so the int16 accumulator can't overflow (33 * 505 + 120 * 127 < 32767), and a pawn
- *     move, which changes about 7 pairs per perspective (bench average), reads half the bytes.
- *   - They are in the same accumulator as the piece features: a move that changes no pawn changes no pair.
- *
  * Output bucket = piece bucket * 4 + (side to move has a queen ? 2 : 0) + (the other side has ? 1 : 0),
  * piece bucket = (pieces on the board, kings included, - 2) / 4: 2-5 pieces is 0 ... 30-32 is 7.
  * Both perspectives share the accumulator, only the layer stack depends on the bucket.
@@ -46,49 +34,33 @@
  *   in[i] = (x * y) >> 9 with x = clamp(acc[i], 0, QA), y = clamp(acc[i + 256], 0, QA), i < 256:
  *           the pairwise product of the accumulator's halves, 0..127 (scale QI = 127, rounded down), the side
  *           to move's 256 then the other side's.
- *   h0[j] = l1_bias[b][j] + sum(in[i] * l1_w[b][j][i]), 16 sums (int8 weights scale QW = 64, QH = QI * QW
- *           = 8128 is 1.0).
- *   act(h): x = clamp(h, 0, QH), x >> 6 (CReLU, 0..127) for every sum, then (x * x) >> 19 (SqrCReLU, 0..126)
- *           for every sum: u8, 1.0 is 127.
- *   a0 = act(h0) (32), h1[j] = l2_bias[b][j] + sum(a0[i] * l2_w[b][j][i]) (32, int8 weights at QW), a1 = act(h1)
- *   out = out_bias[b] + sum over the 96 of a0 ++ a1 times out_w[b][k] (int16 at QO = 2048, bias at 127 * QO)
- *   skip = h0[14] - h0[15]
- *   eval = (out * 64 + skip * QO) * SCALE / (QH * QO), int64 (out / (127 QO) + skip / QH, as QH = 127 * 64).
- *          The division truncates (C).
- *   Float model: a = pairwise_f(acc / QA), h0 = W1 a + b1, a0 = act_f(h0), a1 = act_f(W2 a0 + b2),
- *   y = w3 . (a0 ++ a1) + b3 + h0[14] - h0[15], eval = y * SCALE, act_f(x) = clamp(x, 0, 1) ++ clamp(x, 0, 1)^2
- *   * 127 / 128, with W1 = l1_w / QW, b1 = l1_bias / QH, W2 = l2_w / QW, b2 = l2_bias / QH, w3 = out_w / QO,
- *   b3 = out_bias / (127 * QO).
+ *   h[j] = clamp(l1_bias[b][j] + sum(in[i] * l1_w[b][j][i]), 0, QH) (CReLU, int8 weights scale QW = 64,
+ *          QH = QI * QW = 8128 is 1.0).
+ *   eval = (out_bias[b] + sum(h[j] * out_w[b][j])) * SCALE / (QH * QO). The division truncates (C).
+ *          Output weights are int16 at scale QO = 2048 (the trainer clips them to 127 / 64, so they
+ *          use up to +-4064): their rounding was the largest quantisation error at QW = 64.
+ *   Float model: a = pairwise_f(acc / QA), h = CReLU_f(W1 a + b1), y = w2 . h + b2, eval = y * SCALE,
+ *   with W1 = l1_w / QW, b1 = l1_bias / QH, w2 = out_w / QO, b2 = out_bias / (QH * QO).
  *
- * File format (little endian), version 7:
- *   char magic[8] = "TIKINNUE", uint32 version, uint32 inputs (27088: pieces and pairs), uint32 hidden,
- *   int16 ft_weights[22528][hidden] (row per piece feature), int8 pair_weights[4560][hidden] (row per pawn pair),
- *   int16 ft_bias[hidden],
+ * File format (little endian), version 6:
+ *   char magic[8] = "TIKINNUE", uint32 version, uint32 inputs, uint32 hidden,
+ *   int16 ft_weights[inputs][hidden] (row per feature), int16 ft_bias[hidden],
  *   int8 l1_weights[32][16][hidden] (per bucket and hidden unit, the side to move's inputs first),
- *   int32 l1_bias[32][16], int8 l2_weights[32][32][32], int32 l2_bias[32][32], int16 out_weights[32][96],
- *   int32 out_bias[32].
- * Earlier versions (6: no pawn pairs, one hidden layer 512 -> 16 -> 1; 5: the same at a coarser output
- * scale; 1-4 older still) are a different network. Only version 7 is loaded.
+ *   int32 l1_bias[32][16], int16 out_weights[32][16], int32 out_bias[32].
+ * Version 5 is the same layout with the output layer at scale QW (out_w / 64, out_bias / (QH * 64));
+ * the trainer's read_network converts one exactly (x 32). Earlier versions (1, 2: an output layer
+ * straight from the accumulator; 3: PSQT; 4: a hidden layer on SCReLU inputs, never released) are a
+ * different network. Only version 6 is loaded.
  */
 
 #define NNUE_KING_BUCKETS 32
 #define NNUE_PIECE_KINDS 11
 #define NNUE_PIECE_SQUARES (NNUE_PIECE_KINDS * 64)              /* 704   */
-#define NNUE_INPUTS (NNUE_KING_BUCKETS * NNUE_PIECE_SQUARES)    /* 22528 piece features */
-#define NNUE_PAWN_IDS 96                                        /* Own and their pawns on ranks 2-7. */
-#define NNUE_PAIR_FEATURES (NNUE_PAWN_IDS * (NNUE_PAWN_IDS - 1) / 2)    /* 4560 */
-#define NNUE_TOTAL_INPUTS (NNUE_INPUTS + NNUE_PAIR_FEATURES)    /* 27088 */
+#define NNUE_INPUTS (NNUE_KING_BUCKETS * NNUE_PIECE_SQUARES)    /* 22528 */
 #define NNUE_HIDDEN 512
-#define NNUE_MAX_ACTIVE 32                                      /* One piece feature per piece. */
-#define NNUE_MAX_PAIRS 120                                      /* C(16, 2): every pair of 16 pawns. */
-#define NNUE_MAX_FEATURES (NNUE_MAX_ACTIVE + NNUE_MAX_PAIRS)
-#define NNUE_L1 16                                              /* First hidden layer width, per bucket. */
+#define NNUE_MAX_ACTIVE 32                                      /* One feature per piece. */
+#define NNUE_L1 16                                              /* Hidden layer width, per bucket. */
 #define NNUE_L1_INPUTS NNUE_HIDDEN                              /* 2 x 256 pairwise products */
-#define NNUE_L2 32                                              /* Second hidden layer width, per bucket. */
-#define NNUE_L2_INPUTS (2 * NNUE_L1)                            /* The first layer's two activations. */
-#define NNUE_OUT_INPUTS (2 * NNUE_L1 + 2 * NNUE_L2)             /* 96: both layers' activations. */
-#define NNUE_SKIP_PLUS 14                                       /* skip = h0[14] - h0[15] */
-#define NNUE_SKIP_MINUS 15
 #define NNUE_PIECE_BUCKETS 8
 #define NNUE_OUTPUT_BUCKETS (NNUE_PIECE_BUCKETS * 4)            /* 32 layer stacks */
 
@@ -97,23 +69,19 @@
 #define NNUE_QW 64                                              /* Hidden layer weights. */
 #define NNUE_QH (NNUE_QI * NNUE_QW)                             /* Hidden activation 1.0, 8128. */
 #define NNUE_QO 2048                                            /* Output layer weights. */
-#define NNUE_QU 127                                             /* Hidden layer activations (u8), 1.0. */
 #define NNUE_SCALE 400
 
 #define NNUE_MAGIC "TIKINNUE"
-#define NNUE_VERSION 7
+#define NNUE_VERSION 6
 
 /* The weights and accumulators are 64 byte aligned (align, rows of 512 bytes), so no SIMD load
  * splits a cache line. */
 typedef struct {
-    int16_t* ft_weights;                    /* [NNUE_INPUTS][NNUE_HIDDEN], the piece features */
-    int8_t* pair_weights;                   /* [NNUE_PAIR_FEATURES][NNUE_HIDDEN], the pawn pairs */
+    int16_t* ft_weights;                    /* [NNUE_INPUTS][NNUE_HIDDEN] */
     int16_t ft_bias[NNUE_HIDDEN] align;
     int8_t* l1_weights;                     /* In memory as nnue_l1_index (below), not the file's order */
     int32_t l1_bias[NNUE_OUTPUT_BUCKETS][NNUE_L1];
-    int8_t* l2_weights;                     /* In memory as nnue_l2_index (below), not the file's order */
-    int32_t l2_bias[NNUE_OUTPUT_BUCKETS][NNUE_L2];
-    int16_t out_weights[NNUE_OUTPUT_BUCKETS][NNUE_OUT_INPUTS];
+    int16_t out_weights[NNUE_OUTPUT_BUCKETS][NNUE_L1];
     int32_t out_bias[NNUE_OUTPUT_BUCKETS];
 } nnue_network_t;
 
@@ -125,12 +93,6 @@ typedef struct {
  */
 static inline size_t nnue_l1_index(int bucket, int unit, int input) {
     return (((size_t) bucket * (NNUE_L1_INPUTS / 4) + (size_t) (input / 4)) * NNUE_L1 + (size_t) unit) * 4 +
-           (size_t) (input % 4);
-}
-
-/* The same for the second hidden layer: by group of 4 inputs, the 32 units' 4 weights each (128 bytes). */
-static inline size_t nnue_l2_index(int bucket, int unit, int input) {
-    return (((size_t) bucket * (NNUE_L2_INPUTS / 4) + (size_t) (input / 4)) * NNUE_L2 + (size_t) unit) * 4 +
            (size_t) (input % 4);
 }
 
@@ -148,11 +110,6 @@ typedef struct {
  * way (every one of its features changes), refreshes from the board (through the refresh cache) and
  * fills the entries back to the king move by undoing their changes, so the next position evaluated
  * below that move needn't refresh again. A null move changes no pieces, so it pushes nothing.
- *
- * The accumulators hold the pawn pairs too: an entry whose move changed the pawns also applies the
- * pairs that went and came, in the same pass as its pieces. Each entry keeps both sides' pawns before
- * and after its move for that. The pairs are mirrored with the king's half, so a king move (a refresh)
- * is the only thing that changes all of them, and the refresh cache handles that.
  */
 #define NNUE_STACK_SIZE 128                 /* More than the deepest search path (MAX_PLY). */
 
@@ -169,16 +126,13 @@ typedef struct {
     int8_t removed_count;
     nnue_piece_square_t added[2];
     nnue_piece_square_t removed[2];
-    bitboard pawns_before[2];               /* [colour] */
-    bitboard pawns_after[2];
 } nnue_entry_t;
 
 /**
  * Refresh cache ("Finny table"): when a king moves, every feature of its side changes, but most
  * pieces are where they were the last time that king stood on that square. Each entry holds a
  * perspective's accumulator for a king square and the pieces it was computed from, so a refresh
- * only applies the pieces that differ (usually a few) rather than adding all of them, and the pawn
- * pairs that differ (a king square is always in the same half, so the pairs' mirroring never changes).
+ * only applies the pieces that differ (usually a few) rather than adding all of them.
  */
 typedef struct {
     int16_t values[NNUE_HIDDEN] align;
@@ -189,7 +143,7 @@ typedef struct {
     nnue_entry_t entries[NNUE_STACK_SIZE];  /* entries[0] is the search root. */
     int top;
     nnue_cache_entry_t cache[2][64];        /* [perspective][that side's king square] */
-    uint32_t cache_generation;              /* The network the caches were built for (nnue_generation). */
+    uint32_t cache_generation;              /* The network the cache was built for (nnue_generation). */
 } nnue_stack_t;
 
 /* The loaded network, a single instance like the TT. */
@@ -198,13 +152,7 @@ extern nnue_network_t nnue_net;
 /* Feature index of piece 'pc' on 'sq', for 'perspective' whose king is on 'king'. */
 int nnue_feature_index(colour perspective, square king, piece pc, square sq);
 
-/* A pawn's PawnPairs id (0..95) and the feature index of a pair of them (two different ids), for
- * 'perspective' whose king is on 'king'. */
-int nnue_pawn_id(colour perspective, square king, colour pawn_colour, square sq);
-int nnue_pair_index(int id_a, int id_b);
-
-/* Writes the active feature indices for 'perspective' to 'features' (room for NNUE_MAX_FEATURES): the
- * pieces', then the pawn pairs'. Returns how many. */
+/* Writes the active feature indices for 'perspective' to 'features', returns how many. */
 int nnue_active_features(const board_t* board, colour perspective, int* features);
 
 /* Allocates (zeroed) weights, so a network can be built in code (tests). */

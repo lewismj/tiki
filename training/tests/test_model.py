@@ -13,12 +13,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import tiki_nnue.model as model_module
 from tiki_nnue.data import collate, parse_line
 from tiki_nnue.export import dequantise, export, quantise, quantised_eval, read_network, write_network
-from tiki_nnue.features import (INPUTS, OUTPUT_BUCKETS, TOTAL_INPUTS, bucket_of_features, output_bucket, parse_fen,
-                                piece_bucket, position_bucket)
-from tiki_nnue.model import (FT_CLIP, HIDDEN, L1, L1_CLIP, L2, OUT_CLIP, OUT_INPUTS, PAIR_CLIP, QA, QH, QI, QW, SCALE,
-                             SKIP, SQR_SCALE, TikiNNUE, loss_fn)
-
-NETWORK_KEYS = ("ft_weights", "pair_weights", "ft_bias", "l1_weights", "l1_bias", "l2_weights", "l2_bias", "out_weights", "out_bias")
+from tiki_nnue.features import (OUTPUT_BUCKETS, bucket_of_features, output_bucket, parse_fen, piece_bucket,
+                                position_bucket)
+from tiki_nnue.model import FT_CLIP, HIDDEN, L1, L1_CLIP, OUT_CLIP, QA, QH, QI, QO, QW, SCALE, TikiNNUE, loss_fn
 
 FENS = [
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
@@ -65,31 +62,10 @@ def randomise(model, seed=5):
         model.l1.bias.normal_(0.0, 0.3)
         model.l1_shared.weight.normal_(0.0, 0.05)
         model.l1_shared.bias.fill_(0.3)
-        model.l2_weight.normal_(0.0, 0.3)
-        model.l2_bias.normal_(0.3, 0.3)
-        model.out_weight.normal_(0.0, 0.5)
-        model.out_bias.normal_(0.0, 0.3)
+        model.out.weight.normal_(0.0, 0.5)
+        model.out.bias.normal_(0.0, 0.3)
     model.clip_weights()
     return model
-
-
-def stack_by_hand(model, a, b):
-    """The layer stack of bucket 'b' on the hidden layer inputs 'a' (one position), written out."""
-    def act(x):
-        c = torch.clamp(x, 0.0, 1.0)
-        return torch.cat([c, c * c * SQR_SCALE])
-    h0 = model.l1_weights()[b] @ a + model.l1_biases()[b]
-    a0 = act(h0)
-    a1 = act(model.l2_weight[b] @ a0 + model.l2_bias[b])
-    return torch.cat([a0, a1]) @ model.out_weight[b] + model.out_bias[b] + h0[SKIP[0]] - h0[SKIP[1]]
-
-
-def quantised_activations(x):
-    """activations as the engine computes them on a dequantised sum (a multiple of 1 / QH): the sum
-    clamped to 0..QH, then >> 6 and (x * x) >> 19, as fractions of 127."""
-    q = torch.round(torch.clamp(x.double(), 0.0, 1.0) * QH)
-    out = torch.cat([torch.floor(q / 64), torch.floor(q * q / 2 ** 19)], dim=-1) / 127
-    return out.to(x.dtype)
 
 
 def quantised_pairwise(acc):
@@ -148,7 +124,7 @@ class ModelTests(unittest.TestCase):
         changed = fen_bucket(FENS[2])           # No other position shares it.
         self.assertEqual(1, [fen_bucket(fen) for fen in FENS].count(changed))
         with torch.no_grad():
-            model.out_bias[changed] += 0.5
+            model.out.bias[changed] += 0.5
         for fen, a, b in zip(FENS, before, evaluate(model, FENS)):
             if fen_bucket(fen) == changed:
                 self.assertAlmostEqual(a + 0.5 * SCALE, b, places=2)
@@ -169,11 +145,7 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(0.0, self.model.l1.weight.abs().max().item())
         self.assertEqual(0.0, self.model.l1.bias.abs().max().item())
         for b in range(OUTPUT_BUCKETS):
-            torch.testing.assert_close(self.model.l2_weight[b], self.model.l2_weight[0])
-            torch.testing.assert_close(self.model.l2_bias[b], self.model.l2_bias[0])
-            torch.testing.assert_close(self.model.out_weight[b], self.model.out_weight[0])
-        # The pawn pair rows start at zero: a new net is a piece-only one.
-        self.assertEqual(0.0, self.model.ft.weight[INPUTS:].abs().max().item())
+            torch.testing.assert_close(self.model.out.weight[b], self.model.out.weight[0])
         batch = collate([parse_line(f"{FENS[1]} | 0 | 0.5")])
         with torch.no_grad():
             outputs = [self.model(*batch[:4], torch.tensor([b])).item() for b in range(OUTPUT_BUCKETS)]
@@ -197,8 +169,9 @@ class ModelTests(unittest.TestCase):
             return torch.clamp(acc[0, :HIDDEN // 2], 0, 1) * torch.clamp(acc[0, HIDDEN // 2:], 0, 1)
         a = torch.cat([pairs(us), pairs(them)])
         b = int(batch[4][0])
+        h = torch.clamp(weights[b] @ a + biases[b], 0.0, 1.0)
+        expected = (h @ model.out.weight[b] + model.out.bias[b]).item()
         with torch.no_grad():
-            expected = stack_by_hand(model, a, b).item()
             self.assertAlmostEqual(expected, model(*batch[:5]).item(), places=5)
 
     def test_clip_limits_the_sums(self):
@@ -209,18 +182,11 @@ class ModelTests(unittest.TestCase):
             self.model.l1_shared.weight.normal_(0.0, 2.0)
             self.model.l1.weight[5, 7] = 0.25
             self.model.l1_shared.weight[5, 7] = 0.5
-            self.model.l2_weight.normal_(0.0, 5.0)
-            self.model.out_weight.normal_(0.0, 5.0)
-            self.model.ft.weight.normal_(0.0, 5.0)
+            self.model.out.weight.normal_(0.0, 5.0)
         self.model.clip_weights()
         self.assertLessEqual(self.model.l1_weights().abs().max().item(), L1_CLIP + 1e-6)
         self.assertLessEqual(self.model.l1_shared.weight.abs().max().item(), L1_CLIP + 1e-6)
-        self.assertLessEqual(self.model.l2_weight.abs().max().item(), L1_CLIP + 1e-6)
-        self.assertLessEqual(self.model.out_weight.abs().max().item(), OUT_CLIP + 1e-6)
-        self.assertLessEqual(self.model.ft.weight[:INPUTS].abs().max().item(), FT_CLIP + 1e-6)
-        self.assertLessEqual(self.model.ft.weight[INPUTS:].abs().max().item(), PAIR_CLIP + 1e-6)
-        # The int16 accumulator can't overflow: every piece row, the bias and every possible pair at their limits.
-        self.assertLess(33 * round(FT_CLIP * QA) + 120 * round(PAIR_CLIP * QA), 32768)
+        self.assertLessEqual(self.model.out.weight.abs().max().item(), OUT_CLIP + 1e-6)
         self.assertAlmostEqual(0.75, self.model.l1_weights()[0, 5, 7].item(), places=6)
         quantise(self.model)        # In range for int8 / int16.
 
@@ -230,7 +196,7 @@ class ModelTests(unittest.TestCase):
             path = os.path.join(directory, "net.nnue")
             write_network(network, path)
             loaded = read_network(path)
-        for key in NETWORK_KEYS:
+        for key in ("ft_weights", "ft_bias", "l1_weights", "l1_bias", "out_weights", "out_bias"):
             self.assertEqual(network[key].dtype, loaded[key].dtype, key)
             np.testing.assert_array_equal(network[key], loaded[key])
 
@@ -246,36 +212,57 @@ class ModelTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "version 2"):
                 read_network(path)
 
-    def test_version_6_is_rejected(self):
-        """Version 6 (one hidden layer, no pawn pairs) is a different network: refused, not misread."""
-        network = quantise(self.model)
+    def test_version_5_converts_exactly(self):
+        """A version 5 network (the output layer at QW) reads as version 6 with that layer times QO / QW, the
+        same evaluations, and writes back as version 6. Values that wouldn't fit are an error."""
+        import tiki_nnue.export as export_module
+        model = randomise(TikiNNUE(factoriser=True))
+        v5 = dict(quantise(model))
+        v5["out_weights"] = np.rint(model.out.weight.detach().double().numpy() * QW).astype(np.int16)
+        v5["out_bias"] = np.rint(model.out.bias.detach().double().numpy() * QH * QW).astype(np.int32)
         with tempfile.TemporaryDirectory() as directory:
-            path = os.path.join(directory, "net.nnue")
-            write_network(network, path)
-            with open(path, "r+b") as file:
+            old, new = os.path.join(directory, "v5.nnue"), os.path.join(directory, "v6.nnue")
+            write_network(v5, old)
+            with open(old, "r+b") as file:
                 file.seek(8)
-                file.write(struct.pack("<II", 6, INPUTS))
-            with self.assertRaisesRegex(ValueError, "version 6"):
-                read_network(path)
+                file.write(struct.pack("<I", 5))
+            converted = read_network(old)
+            np.testing.assert_array_equal(v5["out_weights"].astype(np.int32) * (QO // QW), converted["out_weights"])
+            np.testing.assert_array_equal(v5["out_bias"].astype(np.int64) * (QO // QW), converted["out_bias"])
+            for key in ("ft_weights", "ft_bias", "l1_weights", "l1_bias"):
+                np.testing.assert_array_equal(v5[key], converted[key])
+            with mock.patch.object(export_module, "QO", QW):     # Version 5's formula.
+                before = [quantised_eval(v5, fen) for fen in FENS + FLIPPED]
+            self.assertEqual(before, [quantised_eval(converted, fen) for fen in FENS + FLIPPED])
+
+            write_network(converted, new)
+            with open(new, "rb") as file:
+                self.assertEqual(6, struct.unpack_from("<I", file.read(12), 8)[0])
+            np.testing.assert_array_equal(converted["out_weights"], read_network(new)["out_weights"])
+
+            v5["out_weights"][0, 0] = 1024          # 1024 * 32 is past int16.
+            write_network(v5, old)
+            with open(old, "r+b") as file:
+                file.seek(8)
+                file.write(struct.pack("<I", 5))
+            with self.assertRaisesRegex(ValueError, "doesn't fit"):
+                read_network(old)
 
     def test_quantised_matches_float(self):
         """The integer evaluation is the float model's on the quantised weights: exactly the same
-        computation once the hidden layers' inputs and activations are rounded as the engine rounds them
-        (only the final division truncates, under 1cp), and close to the float model without that rounding.
-        Catches QA / QI / QW / QH / QO / SCALE and activation mistakes."""
+        computation once the hidden layer inputs are rounded as the engine rounds them (only the final
+        division truncates, under 1cp), and close to the float model without that rounding. Catches
+        QA / QI / QW / QH / QO / SCALE mistakes."""
         for factoriser in (False, True):
             network = quantise(randomise(TikiNNUE(factoriser=factoriser)))
             float_model = dequantise(network)
-            with mock.patch.object(model_module, "pairwise", quantised_pairwise), \
-                 mock.patch.object(model_module, "activations", quantised_activations):
+            with mock.patch.object(model_module, "pairwise", quantised_pairwise):
                 exact = evaluate(float_model, FENS + FLIPPED)
             plain = evaluate(float_model, FENS + FLIPPED)
             for fen, a, b in zip(FENS + FLIPPED, exact, plain):
                 integer = quantised_eval(network, fen)
                 self.assertLess(abs(integer - a), 1.01, fen)
-                # Without the rounding: the activations of both hidden layers are rounded to 1/127 steps
-                # (as Stockfish's), a few cp on these large random weights.
-                self.assertLess(abs(integer - b), 30, fen)
+                self.assertLess(abs(integer - b), 15, fen)
 
     def test_quantised_close_to_trained_model(self):
         """Quantising (hidden weights to 1/64, output weights to 1/2048, the pairwise inputs to 1/127) keeps the evaluation in the same
@@ -284,7 +271,7 @@ class ModelTests(unittest.TestCase):
         model = randomise(TikiNNUE(factoriser=True))
         network = quantise(model)
         for fen, expected in zip(FENS, evaluate(model, FENS)):
-            self.assertLess(abs(quantised_eval(network, fen) - expected), 90, fen)
+            self.assertLess(abs(quantised_eval(network, fen) - expected), 60, fen)
 
     def test_hidden_inputs_fit_u8_and_int16_pairs(self):
         """The engine's inputs: pairwise products of the clamped halves, 0..127 (u8), 0 when either value
@@ -384,8 +371,7 @@ class ModelTests(unittest.TestCase):
             self.assertEqual(file_size(256), os.path.getsize(path))
             self.assertNotEqual(256, HIDDEN)
             loaded = read_network(path)
-        self.assertEqual((INPUTS, 256), loaded["ft_weights"].shape)
-        self.assertEqual((TOTAL_INPUTS - INPUTS, 256), loaded["pair_weights"].shape)
+        self.assertEqual((22528, 256), loaded["ft_weights"].shape)
         self.assertEqual((OUTPUT_BUCKETS, L1, 256), loaded["l1_weights"].shape)
         for fen in FENS:
             self.assertEqual(quantised_eval(network, fen), quantised_eval(loaded, fen))
@@ -396,15 +382,15 @@ class ModelTests(unittest.TestCase):
             export(self.model, path)
             with open(path, "rb") as file:
                 self.assertEqual(b"TIKINNUE", file.read(8))
-                self.assertEqual((7, TOTAL_INPUTS, HIDDEN), struct.unpack("<III", file.read(12)))
+                self.assertEqual((6, 22528, HIDDEN), struct.unpack("<III", file.read(12)))
             self.assertEqual(file_size(HIDDEN), os.path.getsize(path))
 
 
 def file_size(hidden):
-    """header + piece rows and bias (int16), pawn pair rows (int8) + per bucket: l1 and l2 weights (int8) and
-    biases (int32), output weights (int16) and bias (int32)."""
-    return (20 + 2 * (INPUTS * hidden + hidden) + (TOTAL_INPUTS - INPUTS) * hidden +
-            OUTPUT_BUCKETS * (L1 * hidden + 4 * L1 + L2 * 2 * L1 + 4 * L2 + 2 * OUT_INPUTS + 4))
+    """header + ft weights and bias (int16) + per bucket: l1 weights (int8) and biases (int32), output
+    weights (int16) and bias (int32)."""
+    return (20 + 2 * (22528 * hidden + hidden) +
+            OUTPUT_BUCKETS * (L1 * hidden + 4 * L1 + 2 * L1 + 4))
 
 
 class FactoriserTests(unittest.TestCase):
@@ -422,10 +408,8 @@ class FactoriserTests(unittest.TestCase):
             plain.l1.bias.copy_(self.model.l1.bias)
             plain.l1_shared.weight.copy_(self.model.l1_shared.weight)
             plain.l1_shared.bias.copy_(self.model.l1_shared.bias)
-            plain.l2_weight.copy_(self.model.l2_weight)
-            plain.l2_bias.copy_(self.model.l2_bias)
-            plain.out_weight.copy_(self.model.out_weight)
-            plain.out_bias.copy_(self.model.out_bias)
+            plain.out.weight.copy_(self.model.out.weight)
+            plain.out.bias.copy_(self.model.out.bias)
         return plain
 
     def test_starts_as_unfactorised(self):
@@ -444,8 +428,6 @@ class FactoriserTests(unittest.TestCase):
         for feature in (0, 703, 704, 5 * 704 + 321, 22527):
             expected = self.model.ft.weight[feature] + self.model.factor.weight[feature % 704]
             torch.testing.assert_close(weights[feature], expected)
-        # The pawn pair rows have no shared rows.
-        torch.testing.assert_close(weights[INPUTS:], self.model.ft.weight[INPUTS:])
 
     def test_forward_matches_folded_weights(self):
         """Evaluating with the shared rows is the same as evaluating with them added into each bucket."""
@@ -456,7 +438,7 @@ class FactoriserTests(unittest.TestCase):
         """The exported net is an ordinary one, the same as exporting the folded model."""
         network = quantise(self.model)
         folded = quantise(self.folded())
-        for key in NETWORK_KEYS:
+        for key in ("ft_weights", "ft_bias", "l1_weights", "l1_bias", "out_weights", "out_bias"):
             np.testing.assert_array_equal(folded[key], network[key])
 
     def test_clip_limits_the_sums(self):
@@ -514,9 +496,6 @@ class FactoriserTests(unittest.TestCase):
             load_model(TikiNNUE(factoriser=True), plain, parser.parse_args(["--factoriser"]), parser)
         # A checkpoint from before the hidden layer: a clear error, not load_state_dict's.
         old = {key: value for key, value in plain.items() if not key.startswith("l1")}
-        one_layer = {key: value for key, value in plain.items() if not key.startswith(("l2", "out"))}
-        with self.assertRaisesRegex(ValueError, "one hidden layer"):
-            load_model(TikiNNUE(), one_layer, parser.parse_args([]), parser)
         with self.assertRaisesRegex(ValueError, "before the hidden layer"):
             load_model(TikiNNUE(), old, parser.parse_args([]), parser)
         # One whose hidden layer has another number of inputs (format 4's SCReLU inputs): also clear.

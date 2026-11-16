@@ -10,6 +10,8 @@ rem
 rem fastchess (the latest release) and the opening book are downloaded into tools\ the first time.
 rem Games and results go to matches\. Settings, from the environment (set NAME=value first):
 rem     TC=8+0.08            time control, seconds+increment
+rem     NODES=N              a fixed number of nodes per move instead of TC (compares evaluations without
+rem                          their speed: each engine searches the same tree size whatever its nps)
 rem     CONCURRENCY=N        games at once, default physical cores - 1
 rem     HASH=16 THREADS=1    UCI options for every engine
 rem     BOOK=<file>          openings (.epd or .pgn), default tools\books\uho\UHO_Lichess_4852_v1.epd
@@ -128,10 +130,12 @@ set engines=%engines% -sprt elo0=%ELO0% elo1=%ELO1% alpha=0.05 beta=0.05 model=n
 set "summary=SPRT [%ELO0%, %ELO1%]: %new% (network %new_network%) vs %base% (network %base_network%)"
 
 :run
-echo %summary%, %CONCURRENCY% at once
+set "limit=tc=%TC%"
+if defined NODES set "limit=nodes=%NODES%"
+echo %summary%, %limit%, %CONCURRENCY% at once
 "%fastchess%" %engines% -rounds %rounds% ^
     -openings "file=%book%" format=%book_format% order=random -repeat ^
-    -each tc=%TC% option.Hash=%HASH% option.Threads=%THREADS% ^
+    -each %limit% option.Hash=%HASH% option.Threads=%THREADS% ^
     -concurrency %CONCURRENCY% -recover ^
     -draw movenumber=40 movecount=8 score=10 -resign movecount=3 score=600 twosided=true ^
     -pgnout "file=%root%\matches\%name%.pgn" -config "outname=%root%\matches\%name%.json"
