@@ -135,7 +135,11 @@ bool can_null_move(const board_t* board, const search_state_t* search_state, int
                    bool in_check, bool is_pv_node);
 int null_move_depth(int depth, int static_eval, int beta);
 bool can_reverse_futility_prune(int depth, int static_eval, int beta, bool in_check, bool is_pv_node, int ply,
-                                bool improving);
+                                int margin);
+int rfp_margin(int depth, bool improving_safe, bool opp_worsening, bool tt_hit);
+int rfp_score(int static_eval, int beta);
+bool opp_can_win_material(const board_t* board);
+bool is_opp_worsening(int raw_eval, int parent_raw_eval);
 bool is_futile(int depth, int static_eval, int alpha, bool in_check, bool is_pv_node);
 bool can_late_move_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node, bool improving);
 bool can_see_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node);

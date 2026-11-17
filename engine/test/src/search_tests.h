@@ -14,6 +14,7 @@ void test_tm_falling_scale();
 void test_tm_instability_scale();
 void test_tm_complexity_scale();
 void test_only_legal_move();
+void test_opp_can_win_material();
 void test_tm_falling_previous_kept_between_searches();
 void test_clock_search_within_hard_limit();
 void test_pick_next_move_order();

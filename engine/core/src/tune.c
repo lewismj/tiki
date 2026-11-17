@@ -14,6 +14,11 @@ int tune_see_quiet_margin = SEE_QUIET_MARGIN_DEFAULT;
 int tune_see_capture_margin = SEE_CAPTURE_MARGIN_DEFAULT;
 int tune_se_margin = SE_MARGIN_DEFAULT;
 int tune_rfp_improving = RFP_IMPROVING_DEFAULT;
+int tune_rfp_opp_worsening = RFP_OPP_WORSENING_DEFAULT;
+int tune_rfp_opp_worsening_margin = RFP_OPP_WORSENING_MARGIN_DEFAULT;
+int tune_rfp_no_tt = RFP_NO_TT_DEFAULT;
+int tune_rfp_min_margin = RFP_MIN_MARGIN_DEFAULT;
+int tune_rfp_beta_blend = RFP_BETA_BLEND_DEFAULT;
 int tune_futility_base = FUTILITY_BASE_DEFAULT;
 int tune_lmp_not_improving_pct = LMP_NOT_IMPROVING_PCT_DEFAULT;
 int tune_nmp_min_depth = NMP_MIN_DEPTH_DEFAULT;
@@ -68,9 +73,14 @@ int tune_probcut_improving = PROBCUT_IMPROVING_DEFAULT;
 /* name, variable, min, max, c_end, r_end. c_end is about a twentieth of the range, at least 0.5
  * (OpenBench's minimum for integers); r_end is OpenBench's usual 0.002. */
 const tunable_t tunables[] = {
-    { "RFP_MARGIN",         &tune_rfp_margin,         40, 200,  8.0, 0.002 },
+    { "RFP_MARGIN",         &tune_rfp_margin,         40, 300, 12.0, 0.002 },
     { "RFP_MAX_DEPTH",      &tune_rfp_max_depth,       3,  10,  0.5, 0.002 },
-    { "RFP_IMPROVING",      &tune_rfp_improving,       0, 100,  5.0, 0.002 },
+    { "RFP_IMPROVING",      &tune_rfp_improving,       0, 500, 25.0, 0.002 },
+    { "RFP_OPP_WORSENING",  &tune_rfp_opp_worsening,   0, 200, 10.0, 0.002 },
+    { "RFP_OPP_WORSENING_MARGIN", &tune_rfp_opp_worsening_margin, 0, 400, 20.0, 0.002 },
+    { "RFP_NO_TT",          &tune_rfp_no_tt,           0, 120,  6.0, 0.002 },
+    { "RFP_MIN_MARGIN",     &tune_rfp_min_margin,      0, 100,  5.0, 0.002 },
+    { "RFP_BETA_BLEND",     &tune_rfp_beta_blend,      0, 1024, 50.0, 0.002 },
     { "FUTILITY_BASE",      &tune_futility_base,       0, 150,  8.0, 0.002 },
     { "FUTILITY_MARGIN",    &tune_futility_margin,    40, 250, 10.0, 0.002 },
     { "FUTILITY_MAX_DEPTH", &tune_futility_max_depth,  1,  12,  0.5, 0.002 },
@@ -119,7 +129,7 @@ const tunable_t tunables[] = {
     { "LMR_KILLER_MAX",      &tune_lmr_killer_max,    0,    3,    0.5, 0.002 },
     { "LMR_BASE",            &tune_lmr_base,    0,  150,    7.5, 0.002 },
     { "LMR_DIVISOR",         &tune_lmr_divisor,  150,  400,   12.5, 0.002 },
-    { "LMR_MIN_DEPTH",       &tune_lmr_min_depth,    3,    6,    0.5, 0.002 },
+    { "LMR_MIN_DEPTH",       &tune_lmr_min_depth,    2,    6,    0.5, 0.002 },
     { "LMR_MIN_MOVES",       &tune_lmr_min_moves,    1,    6,    0.5, 0.002 },
     { "HIST_BONUS_SCALE",    &tune_hist_bonus_scale,    4,   40,    1.8, 0.002 },
     { "HIST_BONUS_MAX",      &tune_hist_bonus_max,  400, 4000,  180.0, 0.002 },

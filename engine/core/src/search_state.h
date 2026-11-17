@@ -71,6 +71,16 @@ typedef struct {
      * the two schemes order differently. [lower type][higher type]. */
     uint64_t victim_pairs[5][5];
     uint64_t victim_pair_flips[5][5];
+    /* Where the nodes are: qsearch nodes below a qsearch root, and main search nodes by the depth they
+     * were entered with ([16]: 16 or more; [0]: depth 0, a qsearch root), those entered and those that
+     * reached the move loop (not cut off by the TT, a draw, pruning or the qsearch). */
+    uint64_t qsearch_nodes;
+    uint64_t nodes_at_depth[17];
+    uint64_t expanded_at_depth[17];
+    /* Why a main search node ended before its move loop, by entered depth: [0] draw, [1] TT cutoff,
+     * [2] tablebase, [3] reverse futility, [4] null move, [5] ProbCut, [6] multi-cut. And null moves tried. */
+    uint64_t exit_at_depth[7][17];
+    uint64_t null_tried_at_depth[17];
 } search_stats_t;
 
 /* Only 64-bit counters, so the bench can sum two of them word by word. */

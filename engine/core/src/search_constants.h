@@ -38,7 +38,7 @@ void init_lmr_table();
 #define NMP_R_EVAL_DIV 200       /* depth term is depth / 3 rounded down, below depth 512) (null_move_depth):*/
 #define NMP_R_EVAL_MAX 3072      /* 3 plies, a third per ply of depth, a ply per 200 cp above beta (max 3). */
 #define NMP_VERIFY_DEPTH 14      /* From this depth a null move cutoff is verified by a normal search.      */
-#define LMR_MIN_DEPTH 3          /* Late move reduction from this depth...                                   */
+#define LMR_MIN_DEPTH 2          /* Late move reduction from this depth...                                   */
 #define LMR_MIN_MOVES 1          /* ...after this many moves have been searched at the node.                 */
 #define LMR_TABLE_SIZE 64
 #define PLY_GRAIN 1024           /* Depth adjustments that sum several terms (LMR, null move R) are worked   */
@@ -76,9 +76,14 @@ void init_lmr_table();
                                    /* two victims in MVV-LVA, whose victims are 100 apart).                  */
 #define BAD_CAPTURE_SCORE (-20000) /* Ordering offset for losing captures (SEE < 0), below every quiet move.  */
 #define DELTA_MARGIN 200         /* Qsearch delta pruning, skip a capture if eval + victim + margin <= alpha. */
-#define RFP_MAX_DEPTH 6          /* Reverse futility pruning up to this depth...                             */
-#define RFP_MARGIN 100           /* ...when static eval - margin * depth >= beta...                          */
-#define RFP_IMPROVING 50         /* ...the margin this much smaller when the position is improving.         */
+#define RFP_MAX_DEPTH 6          /* Reverse futility pruning up to this depth, when static eval - margin     */
+#define RFP_MARGIN 80            /* >= beta (rfp_margin): margin * depth, less RFP_IMPROVING when the        */
+#define RFP_IMPROVING 280        /* position is improving and the opponent can't win material...            */
+#define RFP_OPP_WORSENING 62     /* ...less this when the opponent's last move cost them (the two sides'     */
+#define RFP_OPP_WORSENING_MARGIN 145 /* network evals sum to more than this)...                              */
+#define RFP_NO_TT 50             /* ...less this * depth without a TT entry, at least RFP_MIN_MARGIN.        */
+#define RFP_MIN_MARGIN 31
+#define RFP_BETA_BLEND 525       /* The pruned node returns static eval moved this / 1024 of the way to beta. */
 #define FUTILITY_MAX_DEPTH 8     /* Futility pruning of quiet moves up to this depth...                      */
 #define FUTILITY_BASE 50         /* ...when static eval + base + margin * depth <= alpha.                    */
 #define FUTILITY_MARGIN 100
