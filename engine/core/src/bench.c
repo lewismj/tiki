@@ -166,12 +166,12 @@ uint64_t bench(int depth) {
         }
 
         /* LMR, three views of stats.lmr: by depth band and PV, by reduction, by the move's place. */
-        static const char* places[4] = { "4-5 ", "6-8 ", "9-16", "17+ " };
+        static const char* places[6] = { "2   ", "3   ", "4-5 ", "6-8 ", "9-16", "17+ " };
         static const char* reductions[4] = { "1 ", "2 ", "3 ", "4+" };
-        uint64_t by_depth[3][2][5] = {{{0}}}, by_reduction[4][5] = {{0}}, by_place[4][5] = {{0}};
+        uint64_t by_depth[3][2][5] = {{{0}}}, by_reduction[4][5] = {{0}}, by_place[6][5] = {{0}};
         for (int b = 0; b < 3; b++)
             for (int pv = 0; pv < 2; pv++)
-                for (int pl = 0; pl < 4; pl++)
+                for (int pl = 0; pl < 6; pl++)
                     for (int r = 0; r < 4; r++)
                         for (int k = 0; k < 5; k++) {
                             const uint64_t v = stats.lmr[b][pv][pl][r][k];
@@ -196,7 +196,7 @@ uint64_t bench(int depth) {
                    reductions[r], row[0], row[0] ? 100.0 * (double) row[1] / (double) row[0] : 0.0,
                    beat * (double) row[2], beat * (double) row[3], beat * (double) row[4]);
         }
-        for (int pl = 0; pl < 4; pl++) {
+        for (int pl = 0; pl < 6; pl++) {
             const uint64_t* row = by_place[pl];
             const double beat = row[1] ? 100.0 / (double) row[1] : 0.0;
             printf("                  move #%s    | %11" PRIu64 "  %9.2f%% |             %6.1f%%    %6.1f%%  %6.1f%%\n",

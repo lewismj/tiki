@@ -14,7 +14,7 @@ extern const search_const_t search_const;
 
 /**
  * Late move reductions by [depth][moves searched], 0.75 + log(depth) * log(moves) / 2.25 plies, in
- * 1/LMR_GRAIN ply (rounded down). Filled by init_lmr_table(), called at startup (on_startup).
+ * 1/PLY_GRAIN ply (rounded down). Filled by init_lmr_table(), called at startup (on_startup).
  */
 extern int16_t lmr_table[64][64];
 void init_lmr_table();
@@ -33,15 +33,16 @@ void init_lmr_table();
 #define MAX_PLY 64               /* Maximum ply we can search.                                               */
 #define MAX_SEARCH_DEPTH 32      /* Iterative deepening limit when no depth is given (e.g. 'go infinite').   */
 #define NMP_MIN_DEPTH 2          /* Null move pruning from this depth, searched at depth - R (at least 0,    */
-#define NMP_R_BASE 3             /* qsearch), R = base + depth / depth_div + min((eval - beta) / eval_div,  */
-#define NMP_R_DEPTH_DIV 3        /* eval_max) (null_move_depth).                                            */
-#define NMP_R_EVAL_DIV 200
-#define NMP_R_EVAL_MAX 3
+#define NMP_R_BASE 3072          /* qsearch), R = base + depth * depth_rate + min((eval - beta) * PLY_GRAIN  */
+#define NMP_R_DEPTH_RATE 342     /* / eval_div, eval_max), in 1/PLY_GRAIN ply, rounded down once (342: the  */
+#define NMP_R_EVAL_DIV 200       /* depth term is depth / 3 rounded down, below depth 512) (null_move_depth):*/
+#define NMP_R_EVAL_MAX 3072      /* 3 plies, a third per ply of depth, a ply per 200 cp above beta (max 3). */
 #define NMP_VERIFY_DEPTH 14      /* From this depth a null move cutoff is verified by a normal search.      */
 #define LMR_MIN_DEPTH 3          /* Late move reduction from this depth...                                   */
-#define LMR_MIN_MOVES 3          /* ...after this many moves have been searched at the node.                 */
+#define LMR_MIN_MOVES 1          /* ...after this many moves have been searched at the node.                 */
 #define LMR_TABLE_SIZE 64
-#define LMR_GRAIN 1024           /* LMR is worked out in 1/this ply, the sum rounded down once (lmr_reduction). */
+#define PLY_GRAIN 1024           /* Depth adjustments that sum several terms (LMR, null move R) are worked   */
+                                 /* out in 1/this ply and rounded down once.                                 */
 #define LMR_BASE 75              /* lmr_table: (base + ln(depth) * ln(moves) * 100 / divisor) / 100 plies,   */
 #define LMR_DIVISOR 225          /* i.e. 0.75 + ln(depth) * ln(moves) / 2.25 (init_lmr_table).               */
 #define LMR_KILLER_MAX 0         /* The killers are reduced by at most this (0: never reduced).              */
@@ -58,8 +59,8 @@ void init_lmr_table();
 #define CORR_ERROR_MAX 256       /* An update's error (score - corrected eval) within +-this (cp)...         */
 #define CORR_DEPTH_MAX 8         /* ...weighted by min(depth, this)...                                       */
 #define CORR_RATE 32             /* ...the correction moving by 2 * error * weight / this per update.        */
-#define LMR_PV_NODE 1024         /* 1/LMR_GRAIN plies less reduction in a PV node (lmr_reduction).           */
-#define LMR_CUT_NODE 1024        /* 1/LMR_GRAIN plies more reduction at an expected cut node...              */
+#define LMR_PV_NODE 1024         /* 1/PLY_GRAIN plies less reduction in a PV node (lmr_reduction).           */
+#define LMR_CUT_NODE 1024        /* 1/PLY_GRAIN plies more reduction at an expected cut node...              */
 #define LMR_NOT_IMPROVING 1024   /* ...and more when the position isn't improving.                           */
 #define HIST_PRUNE_MAX_DEPTH 4   /* History pruning of quiet moves up to this depth, when quiet_history...   */
 #define HIST_PRUNE_MARGIN 300    /* ...< -margin * depth (can_history_prune).                                */
@@ -82,7 +83,7 @@ void init_lmr_table();
 #define FUTILITY_BASE 50         /* ...when static eval + base + margin * depth <= alpha.                    */
 #define FUTILITY_MARGIN 100
 #define LMP_MAX_DEPTH 6          /* Late move pruning of quiet moves up to this depth...                     */
-#define LMP_BASE 3               /* ...after base + depth^2 moves have been searched at the node...          */
+#define LMP_BASE 300             /* ...after base / 100 + depth^2 moves (rounded up) have been searched...   */
 #define LMP_NOT_IMPROVING_PCT 67 /* ...this percentage of them (rounded up) when not improving.              */
 #define SEE_PRUNE_MAX_DEPTH 8    /* SEE pruning in the main search up to this depth, skipping...             */
 #define SEE_QUIET_MARGIN 60      /* ...quiet moves with SEE < -margin * depth...                             */
@@ -97,7 +98,8 @@ void init_lmr_table();
 #define SE_TT_DEPTH_MARGIN 3     /* ...this much shallower than the node, if every other move scores below...*/
 #define SE_REDUCTION 1           /* A TT move that isn't singular but beat beta is searched this much        */
                                  /* shallower (singular_reduce).                                             */
-#define SE_MARGIN 2              /* ...the TT score - margin * depth (cp) in a search of half the depth.      */
+#define SE_MARGIN 32             /* ...the TT score - margin * depth / SE_MARGIN_GRAIN (cp) in a search of   */
+#define SE_MARGIN_GRAIN 16       /* half the depth: SE_MARGIN in 1/16 cp per ply.                            */
 
 /* Move ordering (score_move), highest first. Each category is an offset, the bands mustn't overlap. */
 #define TT_MOVE_SCORE 30000      /* The TT move...                                                           */

@@ -488,20 +488,23 @@ void test_null_move_guards() {
 }
 
 void test_null_move_depth() {
-    /* depth - (base + depth / div + min((eval - beta) / eval_div, eval_max)), at least 0. */
+    /* depth - (base + depth * rate + min((eval - beta) * PLY_GRAIN / eval_div, eval_max)) / PLY_GRAIN, at least 0. */
     for (int depth = NMP_MIN_DEPTH; depth <= 30; depth++) {
-        const int base = depth - NMP_R_BASE - depth / NMP_R_DEPTH_DIV;
+        const int base = depth - (NMP_R_BASE + depth * NMP_R_DEPTH_RATE) / PLY_GRAIN;
         TEST_ASSERT_EQUAL_INT(base > 0 ? base : 0, null_move_depth(depth, 0, 0));
-        const int far = depth - NMP_R_BASE - depth / NMP_R_DEPTH_DIV - NMP_R_EVAL_MAX;
+        const int far = depth - (NMP_R_BASE + depth * NMP_R_DEPTH_RATE + NMP_R_EVAL_MAX) / PLY_GRAIN;
         TEST_ASSERT_EQUAL_INT(far > 0 ? far : 0, null_move_depth(depth, 100000, 0));
-        /* The eval term grows by one per NMP_R_EVAL_DIV above beta. */
+        /* Half of NMP_R_EVAL_DIV above beta adds half a ply, summed with the other terms before rounding. */
+        const int half = depth - (NMP_R_BASE + depth * NMP_R_DEPTH_RATE + PLY_GRAIN / 2) / PLY_GRAIN;
+        TEST_ASSERT_EQUAL_INT(half > 0 ? half : 0, null_move_depth(depth, NMP_R_EVAL_DIV / 2, 0));
+        /* More eval above beta, never a deeper null search. */
         TEST_ASSERT_TRUE(null_move_depth(depth, NMP_R_EVAL_DIV, 0) <= null_move_depth(depth, NMP_R_EVAL_DIV - 1, 0));
         /* Always shallower than the node, never below qsearch. */
         TEST_ASSERT_TRUE(null_move_depth(depth, 0, 0) < depth && null_move_depth(depth, 100000, 0) >= 0);
         TEST_ASSERT_TRUE(null_move_depth(depth + 1, 0, 0) >= null_move_depth(depth, 0, 0));
     }
     /* At the shallowest depths (up to NMP_R_BASE) the null move goes straight to qsearch. */
-    for (int depth = 1; depth <= NMP_R_BASE; depth++) TEST_ASSERT_EQUAL_INT(0, null_move_depth(depth, 0, 0));
+    for (int depth = 1; depth <= NMP_R_BASE / PLY_GRAIN; depth++) TEST_ASSERT_EQUAL_INT(0, null_move_depth(depth, 0, 0));
 }
 
 void test_null_move_verification_restores_state() {
@@ -779,10 +782,11 @@ void test_futility_guards() {
 }
 
 void test_late_move_pruning_guards() {
-    /* Depth 2: pruned from the 3 + 4 = 7th move searched. */
-    TEST_ASSERT_FALSE(can_late_move_prune(2, LMP_BASE + 3, 0, false, false, true));
-    TEST_ASSERT_TRUE(can_late_move_prune(2, LMP_BASE + 4, 0, false, false, true));
-    TEST_ASSERT_TRUE(can_late_move_prune(1, LMP_BASE + 1, 0, false, false, true));
+    /* Improving: from LMP_BASE / 100 + depth^2 moves, rounded up (depth 2: 3 + 4 = 7 by default). */
+    const int at_2 = (LMP_BASE + 400 + 99) / 100;
+    TEST_ASSERT_FALSE(can_late_move_prune(2, at_2 - 1, 0, false, false, true));
+    TEST_ASSERT_TRUE(can_late_move_prune(2, at_2, 0, false, false, true));
+    TEST_ASSERT_TRUE(can_late_move_prune(1, (LMP_BASE + 100 + 99) / 100, 0, false, false, true));
     /* Too deep, in check, PV node, mate bound. */
     TEST_ASSERT_FALSE(can_late_move_prune(LMP_MAX_DEPTH + 1, 200, 0, false, false, true));
     TEST_ASSERT_FALSE(can_late_move_prune(2, 50, 0, true, false, true));
@@ -792,9 +796,9 @@ void test_late_move_pruning_guards() {
     TEST_ASSERT_FALSE(can_late_move_prune(0, 0, 0, false, false, true));
     /* Not improving: LMP_NOT_IMPROVING_PCT of the limit, rounded up. */
     for (int depth = 1; depth <= LMP_MAX_DEPTH; depth++) {
-        const int limit = LMP_BASE + depth * depth;
-        const int reduced = (limit * LMP_NOT_IMPROVING_PCT + 99) / 100;
-        TEST_ASSERT_TRUE(reduced >= 1 && reduced <= limit);
+        const int limit = LMP_BASE + 100 * depth * depth;
+        const int reduced = (limit * LMP_NOT_IMPROVING_PCT + 9999) / 10000;
+        TEST_ASSERT_TRUE(reduced >= 1 && reduced <= (limit + 99) / 100);
         TEST_ASSERT_FALSE(can_late_move_prune(depth, reduced - 1, 0, false, false, false));
         TEST_ASSERT_TRUE(can_late_move_prune(depth, reduced, 0, false, false, false));
     }
@@ -865,7 +869,7 @@ void test_lmr_reduction() {
             TEST_ASSERT_TRUE(depth - 1 - r >= 1);
             /* PV nodes are reduced less, by at most LMR_PV_NODE rounded up. */
             int pv = lmr_reduction(depth, moves, true, 0, false, true);
-            TEST_ASSERT_TRUE(pv <= r && pv >= r - (LMR_PV_NODE + LMR_GRAIN - 1) / LMR_GRAIN);
+            TEST_ASSERT_TRUE(pv <= r && pv >= r - (LMR_PV_NODE + PLY_GRAIN - 1) / PLY_GRAIN);
         }
     }
 
@@ -875,25 +879,26 @@ void test_lmr_reduction() {
     /* Moves past the end of the table use the last column. */
     TEST_ASSERT_EQUAL_INT(lmr_reduction(20, LMR_TABLE_SIZE - 1, false, 0, false, true), lmr_reduction(20, 200, false, 0, false, true));
 
-    /* History: a ply less per LMR_HISTORY_DIVISOR of a good score, a ply more per one of a bad score. */
-    const int r = lmr_reduction(12, 20, false, 0, false, true);
-    TEST_ASSERT_EQUAL_INT(r, lmr_reduction(12, 20, false, LMR_HISTORY_DIVISOR - 1, false, true));
-    TEST_ASSERT_EQUAL_INT(r - 1, lmr_reduction(12, 20, false, LMR_HISTORY_DIVISOR, false, true));
-    TEST_ASSERT_EQUAL_INT(r + 1, lmr_reduction(12, 20, false, -LMR_HISTORY_DIVISOR, false, true));
-    /* Still within [0, depth - 2] at the history bounds. */
-    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(12, 20, false, HISTORY_MAX, false, true));
-    const int worst = r + HISTORY_MAX / LMR_HISTORY_DIVISOR;
-    TEST_ASSERT_EQUAL_INT(worst < 10 ? worst : 10, lmr_reduction(12, 20, false, -HISTORY_MAX, false, true));
+    /* History: PLY_GRAIN / LMR_HISTORY_DIVISOR of a ply less per point of a good score, more per point
+     * of a bad one, summed with the table's fraction before rounding down; within [0, depth - 2]. */
+    const int t = lmr_table[12][20];
+    const int histories[] = { 0, LMR_HISTORY_DIVISOR / 4, LMR_HISTORY_DIVISOR - 1, LMR_HISTORY_DIVISOR,
+                              -LMR_HISTORY_DIVISOR / 4, -LMR_HISTORY_DIVISOR, HISTORY_MAX, -HISTORY_MAX };
+    for (int i = 0; i < (int) (sizeof(histories) / sizeof(*histories)); i++) {
+        const int g = t - histories[i] * PLY_GRAIN / LMR_HISTORY_DIVISOR;
+        const int plies = g <= 0 ? 0 : g / PLY_GRAIN;
+        TEST_ASSERT_EQUAL_INT(plies < 10 ? plies : 10, lmr_reduction(12, 20, false, histories[i], false, true));
+    }
 }
 
 void test_lmr_cut_node_and_improving() {
     /* LMR_CUT_NODE more at a cut node, LMR_NOT_IMPROVING more when not improving, both added to the
      * table's fraction and rounded down once. */
     const int t = lmr_table[12][20];
-    TEST_ASSERT_EQUAL_INT(t / LMR_GRAIN, lmr_reduction(12, 20, false, 0, false, true));
-    TEST_ASSERT_EQUAL_INT((t + LMR_CUT_NODE) / LMR_GRAIN, lmr_reduction(12, 20, false, 0, true, true));
-    TEST_ASSERT_EQUAL_INT((t + LMR_NOT_IMPROVING) / LMR_GRAIN, lmr_reduction(12, 20, false, 0, false, false));
-    TEST_ASSERT_EQUAL_INT((t + LMR_CUT_NODE + LMR_NOT_IMPROVING) / LMR_GRAIN,
+    TEST_ASSERT_EQUAL_INT(t / PLY_GRAIN, lmr_reduction(12, 20, false, 0, false, true));
+    TEST_ASSERT_EQUAL_INT((t + LMR_CUT_NODE) / PLY_GRAIN, lmr_reduction(12, 20, false, 0, true, true));
+    TEST_ASSERT_EQUAL_INT((t + LMR_NOT_IMPROVING) / PLY_GRAIN, lmr_reduction(12, 20, false, 0, false, false));
+    TEST_ASSERT_EQUAL_INT((t + LMR_CUT_NODE + LMR_NOT_IMPROVING) / PLY_GRAIN,
                           lmr_reduction(12, 20, false, 0, true, false));
     /* Still clamped: at least one ply is left to search, and never negative. */
     for (int depth = 2; depth < 40; depth++) {
@@ -1370,7 +1375,7 @@ void test_singular_extension_conditions() {
     TEST_ASSERT_FALSE(can_singular_extend(8, 3, 10, mv, 6, tt_alpha, 50));      /* only an upper bound */
     TEST_ASSERT_FALSE(can_singular_extend(8, 3, 10, mv, 6, tt_beta, MATE_VALUE - 10));
 
-    TEST_ASSERT_EQUAL_INT(50 - SE_MARGIN * 8, singular_beta(50, 8));
+    TEST_ASSERT_EQUAL_INT(50 - SE_MARGIN * 8 / SE_MARGIN_GRAIN, singular_beta(50, 8));
 }
 
 void test_singular_result() {

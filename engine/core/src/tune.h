@@ -52,7 +52,7 @@ enum {
     LMP_NOT_IMPROVING_PCT_DEFAULT = LMP_NOT_IMPROVING_PCT,
     NMP_MIN_DEPTH_DEFAULT = NMP_MIN_DEPTH,
     NMP_R_BASE_DEFAULT = NMP_R_BASE,
-    NMP_R_DEPTH_DIV_DEFAULT = NMP_R_DEPTH_DIV,
+    NMP_R_DEPTH_RATE_DEFAULT = NMP_R_DEPTH_RATE,
     NMP_R_EVAL_DIV_DEFAULT = NMP_R_EVAL_DIV,
     NMP_R_EVAL_MAX_DEFAULT = NMP_R_EVAL_MAX,
     NMP_VERIFY_DEPTH_DEFAULT = NMP_VERIFY_DEPTH,
@@ -113,7 +113,7 @@ extern int tune_futility_base;
 extern int tune_lmp_not_improving_pct;
 extern int tune_nmp_min_depth;
 extern int tune_nmp_r_base;
-extern int tune_nmp_r_depth_div;
+extern int tune_nmp_r_depth_rate;
 extern int tune_nmp_r_eval_div;
 extern int tune_nmp_r_eval_max;
 extern int tune_nmp_verify_depth;
@@ -173,7 +173,7 @@ extern int tune_probcut_improving;
 #undef LMP_NOT_IMPROVING_PCT
 #undef NMP_MIN_DEPTH
 #undef NMP_R_BASE
-#undef NMP_R_DEPTH_DIV
+#undef NMP_R_DEPTH_RATE
 #undef NMP_R_EVAL_DIV
 #undef NMP_R_EVAL_MAX
 #undef NMP_VERIFY_DEPTH
@@ -232,7 +232,7 @@ extern int tune_probcut_improving;
 #define LMP_NOT_IMPROVING_PCT tune_lmp_not_improving_pct
 #define NMP_MIN_DEPTH tune_nmp_min_depth
 #define NMP_R_BASE tune_nmp_r_base
-#define NMP_R_DEPTH_DIV tune_nmp_r_depth_div
+#define NMP_R_DEPTH_RATE tune_nmp_r_depth_rate
 #define NMP_R_EVAL_DIV tune_nmp_r_eval_div
 #define NMP_R_EVAL_MAX tune_nmp_r_eval_max
 #define NMP_VERIFY_DEPTH tune_nmp_verify_depth

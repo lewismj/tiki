@@ -28,7 +28,7 @@ void init_lmr_table() {
         for (int moves = 0; moves < LMR_TABLE_SIZE; moves++) {
             /* Scaled by a power of two, exact in a double, so the whole plies are as before. */
             lmr_table[depth][moves] = (depth == 0 || moves == 0) ? 0 :
-                (int16_t) ((LMR_BASE / 100.0 + log(depth) * log(moves) / (LMR_DIVISOR / 100.0)) * LMR_GRAIN);
+                (int16_t) ((LMR_BASE / 100.0 + log(depth) * log(moves) / (LMR_DIVISOR / 100.0)) * PLY_GRAIN);
         }
     }
 }

@@ -39,10 +39,10 @@ typedef struct {
     uint64_t quiets_searched[3][2][2];
     uint64_t quiet_cut_nodes[3][2][2];
     uint64_t quiet_cut_rank[3][2][2][5];
-    /* Reduced searches by [depth band][non-PV, PV][move place 4-5, 6-8, 9-16, 17+][reduction 1, 2, 3, 4+]:
+    /* Reduced searches by [depth band][non-PV, PV][move place 2, 3, 4-5, 6-8, 9-16, 17+][reduction 1, 2, 3, 4+]:
      * [0] searches, [1] beat alpha (so re-searched at full depth), and what the full depth search
      * then found: [2] at or below alpha, [3] between alpha and beta, [4] at or above beta. */
-    uint64_t lmr[3][2][4][4][5];
+    uint64_t lmr[3][2][6][4][5];
     /* Capture history's effect on ordering, by [depth band][non-PV, PV][no TT move, TT move], over the
      * captures other than the TT move at move loops with at least two of them: the loops, those
      * where it changed the top capture, the captures, those whose place among the captures it

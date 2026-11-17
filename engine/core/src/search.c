@@ -467,7 +467,7 @@ static inline_always void stat_quiet_node(search_state_t* search_state, int dept
 static inline_always void stat_lmr(search_state_t* search_state, int depth, bool is_pv_node, int place, int reduction,
                                    bool beat_alpha, int score, int alpha, int beta) {
 #ifdef TIKI_SEARCH_STATS
-    const int pl = place <= 5 ? 0 : place <= 8 ? 1 : place <= 16 ? 2 : 3;
+    const int pl = place <= 2 ? 0 : place == 3 ? 1 : place <= 5 ? 2 : place <= 8 ? 3 : place <= 16 ? 4 : 5;
     const int r = reduction >= 4 ? 3 : reduction - 1;
     uint64_t* cell = search_state->stats.lmr[stat_depth_band(depth)][is_pv_node][pl][r];
     cell[0]++;
@@ -564,14 +564,17 @@ bool can_null_move(const board_t* board,
 }
 
 /**
- * The null move search's depth: depth - R, R = NMP_R_BASE + depth / NMP_R_DEPTH_DIV + min((eval -
- * beta) / NMP_R_EVAL_DIV, NMP_R_EVAL_MAX), at least 0 (qsearch). Larger the deeper the node and the
- * further its eval is above beta (the more likely the cutoff).
+ * The null move search's depth: depth - R, R = NMP_R_BASE + depth * NMP_R_DEPTH_RATE + min((eval -
+ * beta) * PLY_GRAIN / NMP_R_EVAL_DIV, NMP_R_EVAL_MAX), in 1/PLY_GRAIN ply and rounded down once, at
+ * least 0 (qsearch). Larger the deeper the node and the further its eval is above beta (the more
+ * likely the cutoff).
  */
 int null_move_depth(int depth, int static_eval, int beta) {
-    int eval_term = (static_eval - beta) / NMP_R_EVAL_DIV;
+    const int64_t above = static_eval > beta ? (int64_t) static_eval - beta : 0;
+    int64_t eval_term = above * PLY_GRAIN / NMP_R_EVAL_DIV;
     if (eval_term > NMP_R_EVAL_MAX) eval_term = NMP_R_EVAL_MAX;
-    const int reduced = depth - (NMP_R_BASE + depth / NMP_R_DEPTH_DIV + eval_term);
+    const int r = (int) ((NMP_R_BASE + (int64_t) depth * NMP_R_DEPTH_RATE + eval_term) / PLY_GRAIN);
+    const int reduced = depth - r;
     return reduced > 0 ? reduced : 0;
 }
 
@@ -598,16 +601,17 @@ bool is_futile(int depth, int static_eval, int alpha, bool in_check, bool is_pv_
 }
 
 /**
- * Late move pruning: at low depth, once base + depth^2 moves have been searched (LMP_NOT_IMPROVING_PCT
+ * Late move pruning: at low depth, once LMP_BASE / 100 + depth^2 moves have been searched (LMP_NOT_IMPROVING_PCT
  * of them, rounded up, when the position isn't improving), the remaining quiet moves (sorted last,
  * after the killers and the best history) are very unlikely to raise alpha, so they're skipped.
  * Captures and promotions are still searched.
  */
 bool can_late_move_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node, bool improving) {
     if (in_check || is_pv_node || depth > LMP_MAX_DEPTH || is_mate_score(alpha)) return false;
-    int limit = LMP_BASE + depth * depth;
-    if (!improving) limit = (limit * LMP_NOT_IMPROVING_PCT + 99) / 100;
-    return moves_searched >= limit;
+    /* In 1/100 move, rounded up once. */
+    const int limit = LMP_BASE + 100 * depth * depth;
+    const int moves = improving ? (limit + 99) / 100 : (limit * LMP_NOT_IMPROVING_PCT + 9999) / 10000;
+    return moves_searched >= moves;
 }
 
 /**
@@ -662,8 +666,8 @@ bool can_history_prune(int depth, int history, int moves_searched, int alpha, bo
  * LMR_CUT_NODE more at an expected cut node (cut_node, see negamax_node): a late move there is
  * expected to fail low, the cutoff should come from an earlier move. LMR_NOT_IMPROVING more when
  * the position isn't improving (is_improving), a late move is then less likely to help.
- * Worked out in 1/LMR_GRAIN ply, so each term can be a fraction of a ply, and rounded down to whole
- * plies once. The history term is still whole plies (truncated toward zero), as before.
+ * Worked out in 1/PLY_GRAIN ply, so each term, the history's included, can be a fraction of a ply,
+ * and rounded down to whole plies once.
  */
 int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history, bool cut_node, bool improving) {
     int r = lmr_table[depth < LMR_TABLE_SIZE ? depth : LMR_TABLE_SIZE - 1]
@@ -671,9 +675,9 @@ int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history, b
     if (is_pv_node) r -= LMR_PV_NODE;
     if (cut_node) r += LMR_CUT_NODE;
     if (!improving) r += LMR_NOT_IMPROVING;
-    r -= history / LMR_HISTORY_DIVISOR * LMR_GRAIN;
+    r -= history * PLY_GRAIN / LMR_HISTORY_DIVISOR;
     if (r <= 0) return 0;
-    r /= LMR_GRAIN;
+    r /= PLY_GRAIN;
     return r < depth - 2 ? r : (depth - 2 > 0 ? depth - 2 : 0);
 }
 
@@ -717,7 +721,7 @@ bool can_singular_extend(int depth, int ply, int root_depth, move_t tt_move, int
 
 /* The other moves must all score below this for the TT move to be singular. */
 int singular_beta(int tt_score, int depth) {
-    return tt_score - SE_MARGIN * depth;
+    return tt_score - SE_MARGIN * depth / SE_MARGIN_GRAIN;
 }
 
 /**

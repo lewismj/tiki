@@ -18,7 +18,7 @@ int tune_futility_base = FUTILITY_BASE_DEFAULT;
 int tune_lmp_not_improving_pct = LMP_NOT_IMPROVING_PCT_DEFAULT;
 int tune_nmp_min_depth = NMP_MIN_DEPTH_DEFAULT;
 int tune_nmp_r_base = NMP_R_BASE_DEFAULT;
-int tune_nmp_r_depth_div = NMP_R_DEPTH_DIV_DEFAULT;
+int tune_nmp_r_depth_rate = NMP_R_DEPTH_RATE_DEFAULT;
 int tune_nmp_r_eval_div = NMP_R_EVAL_DIV_DEFAULT;
 int tune_nmp_r_eval_max = NMP_R_EVAL_MAX_DEFAULT;
 int tune_nmp_verify_depth = NMP_VERIFY_DEPTH_DEFAULT;
@@ -74,21 +74,22 @@ const tunable_t tunables[] = {
     { "FUTILITY_BASE",      &tune_futility_base,       0, 150,  8.0, 0.002 },
     { "FUTILITY_MARGIN",    &tune_futility_margin,    40, 250, 10.0, 0.002 },
     { "FUTILITY_MAX_DEPTH", &tune_futility_max_depth,  1,  12,  0.5, 0.002 },
-    { "LMP_BASE",           &tune_lmp_base,            1,   8,  0.5, 0.002 },
+    { "LMP_BASE",           &tune_lmp_base,          100, 800, 50.0, 0.002 },  /* 1/100 move */
     { "LMP_NOT_IMPROVING_PCT", &tune_lmp_not_improving_pct, 40, 100, 3.0, 0.002 },
     { "SEE_QUIET_MARGIN",   &tune_see_quiet_margin,   20, 150,  6.0, 0.002 },
     { "SEE_CAPTURE_MARGIN", &tune_see_capture_margin,  5,  60,  3.0, 0.002 },
-    { "SE_MARGIN",          &tune_se_margin,           1,   6,  0.5, 0.002 },
+    { "SE_MARGIN",          &tune_se_margin,          16,  96,  8.0, 0.002 },  /* 1/16 cp per ply */
     { "NMP_MIN_DEPTH",      &tune_nmp_min_depth,       1,   6,  0.5, 0.002 },
-    { "NMP_R_BASE",         &tune_nmp_r_base,          2,   6,  0.5, 0.002 },
-    { "NMP_R_DEPTH_DIV",    &tune_nmp_r_depth_div,     2,   8,  0.5, 0.002 },
-    { "NMP_R_EVAL_DIV",     &tune_nmp_r_eval_div,    100, 400, 15.0, 0.002 },
-    { "NMP_R_EVAL_MAX",     &tune_nmp_r_eval_max,      1,   6,  0.5, 0.002 },
+    /* Null move R in 1/PLY_GRAIN ply (the depth rate per ply of depth). */
+    { "NMP_R_BASE",         &tune_nmp_r_base,       2048, 6144, 512.0, 0.002 },
+    { "NMP_R_DEPTH_RATE",   &tune_nmp_r_depth_rate,  128,  512,  32.0, 0.002 },
+    { "NMP_R_EVAL_DIV",     &tune_nmp_r_eval_div,    100,  400,  15.0, 0.002 },
+    { "NMP_R_EVAL_MAX",     &tune_nmp_r_eval_max,   1024, 6144, 512.0, 0.002 },
     { "NMP_VERIFY_DEPTH",   &tune_nmp_verify_depth,    8,  24,  1.0, 0.002 },
     { "LMR_HISTORY_DIVISOR", &tune_lmr_history_divisor, 400, 4000, 150.0, 0.002 },
     { "HIST_PRUNE_MAX_DEPTH", &tune_hist_prune_max_depth, 1, 8,  0.5, 0.002 },
     { "HIST_PRUNE_MARGIN",  &tune_hist_prune_margin,  50,  2000,  100.0, 0.002 },
-    /* In 1/LMR_GRAIN ply: 0 to 3 plies, c_end half a ply. */
+    /* In 1/PLY_GRAIN ply: 0 to 3 plies, c_end half a ply. */
     { "LMR_PV_NODE",        &tune_lmr_pv_node,         0, 3072, 512.0, 0.002 },
     { "LMR_CUT_NODE",       &tune_lmr_cut_node,        0, 3072, 512.0, 0.002 },
     { "LMR_NOT_IMPROVING",  &tune_lmr_not_improving,   0, 3072, 512.0, 0.002 },
