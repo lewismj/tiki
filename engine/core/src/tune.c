@@ -38,6 +38,9 @@ int tune_tm_falling_iter = TM_FALLING_ITER_DEFAULT;
 int tune_tm_falling_max = TM_FALLING_MAX_DEFAULT;
 int tune_tm_instability_base = TM_INSTABILITY_BASE_DEFAULT;
 int tune_tm_instability_per_change = TM_INSTABILITY_PER_CHANGE_DEFAULT;
+int tune_tm_complexity_base = TM_COMPLEXITY_BASE_DEFAULT;
+int tune_tm_complexity_scale = TM_COMPLEXITY_SCALE_DEFAULT;
+int tune_tm_complexity_cap = TM_COMPLEXITY_CAP_DEFAULT;
 int tune_corr_pawn_weight = CORR_PAWN_WEIGHT_DEFAULT;
 int tune_corr_nonpawn_weight = CORR_NONPAWN_WEIGHT_DEFAULT;
 int tune_corr_max = CORR_MAX_DEFAULT;
@@ -101,6 +104,9 @@ const tunable_t tunables[] = {
     { "TM_FALLING_MAX",     &tune_tm_falling_max,    100, 400, 15.0, 0.002 },
     { "TM_INSTABILITY_BASE", &tune_tm_instability_base, 50, 200, 8.0, 0.002 },
     { "TM_INSTABILITY_PER_CHANGE", &tune_tm_instability_per_change, 0, 500, 20.0, 0.002 },
+    { "TM_COMPLEXITY_BASE", &tune_tm_complexity_base, 40, 100, 3.0, 0.002 },
+    { "TM_COMPLEXITY_SCALE", &tune_tm_complexity_scale, 0, 100, 5.0, 0.002 },
+    { "TM_COMPLEXITY_CAP",  &tune_tm_complexity_cap, 100, 600, 25.0, 0.002 },
     /* Correction history (search_constants.h). */
     { "CORR_PAWN_WEIGHT",   &tune_corr_pawn_weight,    0, 200, 10.0, 0.002 },
     { "CORR_NONPAWN_WEIGHT", &tune_corr_nonpawn_weight, 0, 200, 10.0, 0.002 },

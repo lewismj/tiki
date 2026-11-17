@@ -72,6 +72,15 @@ double tm_falling_scale(int score, bool has_previous, int previous, bool has_ear
  */
 double tm_instability_scale(double changes);
 
+/**
+ * A further factor on the soft time limit, for a complex position: (TM_COMPLEXITY_BASE + TM_COMPLEXITY_SCALE *
+ * complexity / TM_COMPLEXITY_CAP) / 100, the complexity |'score' - 'root_eval'| * ln('depth') (cp), at most
+ * TM_COMPLEXITY_CAP. A search that has moved far from the static eval has found something the eval
+ * doesn't see, and gets more time; one that agrees with it gets less. 1 without a root eval
+ * ('has_eval' false: the root is in check) and with mate or tablebase scores, which are no estimate.
+ */
+double tm_complexity_scale(int score, bool has_eval, int root_eval, int depth);
+
 /* The static eval refined by the position's TT entry (NULL for none): the TT score when its bound
  * says the true score is on that side of the eval, otherwise the eval. Mate scores are ignored. */
 int adjusted_eval(int eval, const tt_info_t* tt);
@@ -92,6 +101,9 @@ int aspiration_search(board_t* board, search_state_t* search_state, limits_t* li
 
 /* Used when no iteration completed (stopped very early), 0 if there are no legal moves. */
 move_t first_legal_move(board_t* board);
+
+/* The only legal move, 0 if there are none or more than one (find_best_move plays it at once on the clock). */
+move_t only_legal_move(board_t* board);
 
 /* Move ordering score: TT move, PV move, winning captures, killers, history, losing captures. */
 int score_move(move_t move, move_t tt_move, board_t* board, search_state_t* search_state);

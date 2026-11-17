@@ -72,6 +72,9 @@ enum {
     TM_FALLING_MAX_DEFAULT = TM_FALLING_MAX,
     TM_INSTABILITY_BASE_DEFAULT = TM_INSTABILITY_BASE,
     TM_INSTABILITY_PER_CHANGE_DEFAULT = TM_INSTABILITY_PER_CHANGE,
+    TM_COMPLEXITY_BASE_DEFAULT = TM_COMPLEXITY_BASE,
+    TM_COMPLEXITY_SCALE_DEFAULT = TM_COMPLEXITY_SCALE,
+    TM_COMPLEXITY_CAP_DEFAULT = TM_COMPLEXITY_CAP,
     CORR_PAWN_WEIGHT_DEFAULT = CORR_PAWN_WEIGHT,
     CORR_NONPAWN_WEIGHT_DEFAULT = CORR_NONPAWN_WEIGHT,
     CORR_MAX_DEFAULT = CORR_MAX,
@@ -130,6 +133,9 @@ extern int tune_tm_falling_iter;
 extern int tune_tm_falling_max;
 extern int tune_tm_instability_base;
 extern int tune_tm_instability_per_change;
+extern int tune_tm_complexity_base;
+extern int tune_tm_complexity_scale;
+extern int tune_tm_complexity_cap;
 extern int tune_corr_pawn_weight;
 extern int tune_corr_nonpawn_weight;
 extern int tune_corr_max;
@@ -187,6 +193,9 @@ extern int tune_probcut_improving;
 #undef TM_FALLING_MAX
 #undef TM_INSTABILITY_BASE
 #undef TM_INSTABILITY_PER_CHANGE
+#undef TM_COMPLEXITY_BASE
+#undef TM_COMPLEXITY_SCALE
+#undef TM_COMPLEXITY_CAP
 #undef CORR_PAWN_WEIGHT
 #undef CORR_NONPAWN_WEIGHT
 #undef CORR_MAX
@@ -243,6 +252,9 @@ extern int tune_probcut_improving;
 #define TM_FALLING_MAX tune_tm_falling_max
 #define TM_INSTABILITY_BASE tune_tm_instability_base
 #define TM_INSTABILITY_PER_CHANGE tune_tm_instability_per_change
+#define TM_COMPLEXITY_BASE tune_tm_complexity_base
+#define TM_COMPLEXITY_SCALE tune_tm_complexity_scale
+#define TM_COMPLEXITY_CAP tune_tm_complexity_cap
 #define CORR_PAWN_WEIGHT tune_corr_pawn_weight
 #define CORR_NONPAWN_WEIGHT tune_corr_nonpawn_weight
 #define CORR_MAX tune_corr_max

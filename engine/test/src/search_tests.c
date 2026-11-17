@@ -244,6 +244,33 @@ void test_tm_instability_scale() {
     TEST_ASSERT_TRUE(tm_instability_scale(3.0) >= tm_instability_scale(1.5));
 }
 
+void test_only_legal_move() {
+    board_t board;
+    /* In check from an unprotected queen, the king can only take it. */
+    parse_fen("k7/8/8/8/8/8/6q1/7K w - - 0 1", &board);
+    const move_t only = only_legal_move(&board);
+    TEST_ASSERT_EQUAL_INT(h1, get_source_square(only));
+    TEST_ASSERT_EQUAL_INT(g2, get_target_square(only));
+    /* More than one move, or none (stalemate): 0. */
+    parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
+    TEST_ASSERT_EQUAL_INT(0, only_legal_move(&board));
+    parse_fen("k7/8/8/8/8/8/5q2/7K w - - 0 1", &board);
+    TEST_ASSERT_EQUAL_INT(0, only_legal_move(&board));
+}
+
+void test_tm_complexity_scale() {
+    /* No root eval, a mate score: the usual time. */
+    TEST_ASSERT_TRUE(tm_complexity_scale(100, false, 0, 10) == 1.0);
+    TEST_ASSERT_TRUE(tm_complexity_scale(MATE_SCORE, true, 0, 10) == 1.0);
+    /* Search agrees with the eval: the base; at the cap or beyond: base + scale. */
+    TEST_ASSERT_TRUE(tm_complexity_scale(30, true, 30, 10) == TM_COMPLEXITY_BASE / 100.0);
+    TEST_ASSERT_TRUE(tm_complexity_scale(1000, true, 0, 10) == (TM_COMPLEXITY_BASE + TM_COMPLEXITY_SCALE) / 100.0);
+    /* Symmetric in the difference, growing with it and with the depth. */
+    TEST_ASSERT_TRUE(tm_complexity_scale(-20, true, 20, 8) == tm_complexity_scale(20, true, -20, 8));
+    TEST_ASSERT_TRUE(tm_complexity_scale(40, true, 0, 8) > tm_complexity_scale(20, true, 0, 8));
+    TEST_ASSERT_TRUE(tm_complexity_scale(20, true, 0, 12) > tm_complexity_scale(20, true, 0, 6));
+}
+
 void test_tm_falling_scale() {
     /* Nothing to compare with, or a rising score: the usual time. */
     TEST_ASSERT_TRUE(tm_falling_scale(0, false, 0, false, 0) == 1.0);

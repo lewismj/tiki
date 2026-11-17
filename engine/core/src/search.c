@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
+#include <math.h>
 
 #include "search.h"
 #include "evaluation.h"
@@ -1673,6 +1674,21 @@ move_t first_legal_move(board_t* board) {
     return 0;
 }
 
+/* The only legal move, 0 if there are none or more than one. */
+move_t only_legal_move(board_t* board) {
+    move_buffer_t buffer;
+    generate_moves(board, &buffer);
+    move_t only = 0;
+    for (int i = 0; i < buffer.index; i++) {
+        bool legal = make_move(board, buffer.moves[i]);
+        pop_move(board);
+        if (!legal) continue;
+        if (only) return 0;
+        only = buffer.moves[i];
+    }
+    return only;
+}
+
 /* The fallback move when no depth completed: the first legal move the root restriction allows
  * (syzygy_rank_root). Not first_legal_move, which the search uses at any node (the fifty-move rule's
  * checkmate test), where the root's restriction doesn't apply. */
@@ -1930,6 +1946,14 @@ double tm_instability_scale(double changes) {
     return (TM_INSTABILITY_BASE + TM_INSTABILITY_PER_CHANGE * changes) / 100.0;
 }
 
+double tm_complexity_scale(int score, bool has_eval, int root_eval, int depth) {
+    if (!has_eval || is_mate_score(score) || depth < 1) return 1.0;
+    const int difference = score > root_eval ? score - root_eval : root_eval - score;
+    double complexity = difference * log((double) depth);
+    if (complexity > TM_COMPLEXITY_CAP) complexity = TM_COMPLEXITY_CAP;
+    return (TM_COMPLEXITY_BASE + TM_COMPLEXITY_SCALE * complexity / TM_COMPLEXITY_CAP) / 100.0;
+}
+
 int vote_best_thread(const thread_result_t* results, int count) {
     int best = -1;
     int min_score = INF;
@@ -2011,6 +2035,13 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
     /* The last search's score, if it was for this side (a search for the previous move, normally). */
     const bool has_previous = search_state->previous_side == (int) board->side;
 
+    /* On the clock, a forced move is played at once, saving the time for later moves. Not with
+     * 'movetime', a depth or node limit or 'infinite' (analysis, bench), which search as asked. */
+    if (limits->adaptive) {
+        const move_t only = only_legal_move(board);
+        if (only) return only;
+    }
+
     search_state->thread_id = 0;
     /* Before the helpers start: they read the root restriction it sets. */
     syzygy_rank_root(board);
@@ -2046,11 +2077,15 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
             uint64_t soft_stop = limits->soft_stop_time;
             if (limits->adaptive && i >= TM_SCALE_MIN_DEPTH) {
                 const bool has_earlier = i > TM_FALLING_DEPTHS;
+                /* The root's static eval (negamax_node stores the network's, -INF in check), corrected. */
+                const bool has_root_eval = search_state->static_evals[0] != -INF;
+                const int root_eval = has_root_eval ? search_state->static_evals[0] + eval_correction(board, search_state) : 0;
                 const double scale = tm_scale(stability, search_state->best_move_nodes,
                                               search_state->nodes - nodes_before) *
                                      tm_falling_scale(score, has_previous, search_state->previous_score, has_earlier,
                                                       has_earlier ? depth_scores[i - TM_FALLING_DEPTHS] : 0) *
-                                     tm_instability_scale(best_move_changes);
+                                     tm_instability_scale(best_move_changes) *
+                                     tm_complexity_scale(score, has_root_eval, root_eval, i);
                 soft_stop = limits->start_time +
                             (uint64_t) ((double) (limits->soft_stop_time - limits->start_time) * scale);
                 if (soft_stop > limits->stop_time) soft_stop = limits->stop_time;

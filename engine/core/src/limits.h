@@ -23,7 +23,8 @@
  *     and larger again when the score is falling (tm_falling_scale): against the previous search's
  *     score and against the score TM_FALLING_DEPTHS depths prior; and when the best move has changed
  *     often within recent depths (tm_instability_scale), each change at the root counted, the count
- *     halved after each depth.
+ *     halved after each depth; and by the position's complexity (tm_complexity_scale): more time when the
+ *     search's score has moved far from the root's static eval, less when they agree.
  *   - hard = base * TM_HARD_PERCENT / 100, never more than half of what's left, stops the search
  *     wherever it is.
  */
@@ -44,6 +45,11 @@
  */
 #define TM_INSTABILITY_BASE 83
 #define TM_INSTABILITY_PER_CHANGE 172
+/* tm_complexity_scale (%): TM_COMPLEXITY_BASE plus TM_COMPLEXITY_SCALE * complexity / TM_COMPLEXITY_CAP, the complexity
+ * |score - root static eval| * ln(depth), at most TM_COMPLEXITY_CAP (cp). */
+#define TM_COMPLEXITY_BASE 70
+#define TM_COMPLEXITY_SCALE 50
+#define TM_COMPLEXITY_CAP 250
 
 
 typedef struct align {
