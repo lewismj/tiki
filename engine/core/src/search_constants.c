@@ -21,13 +21,14 @@ const search_const_t search_const = {
     }
 };
 
-uint8_t lmr_table[LMR_TABLE_SIZE][LMR_TABLE_SIZE];
+int16_t lmr_table[LMR_TABLE_SIZE][LMR_TABLE_SIZE];
 
 void init_lmr_table() {
     for (int depth = 0; depth < LMR_TABLE_SIZE; depth++) {
         for (int moves = 0; moves < LMR_TABLE_SIZE; moves++) {
+            /* Scaled by a power of two, exact in a double, so the whole plies are as before. */
             lmr_table[depth][moves] = (depth == 0 || moves == 0) ? 0 :
-                                      (uint8_t) (LMR_BASE / 100.0 + log(depth) * log(moves) / (LMR_DIVISOR / 100.0));
+                (int16_t) ((LMR_BASE / 100.0 + log(depth) * log(moves) / (LMR_DIVISOR / 100.0)) * LMR_GRAIN);
         }
     }
 }

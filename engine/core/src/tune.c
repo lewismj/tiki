@@ -25,6 +25,7 @@ int tune_nmp_verify_depth = NMP_VERIFY_DEPTH_DEFAULT;
 int tune_lmr_history_divisor = LMR_HISTORY_DIVISOR_DEFAULT;
 int tune_hist_prune_max_depth = HIST_PRUNE_MAX_DEPTH_DEFAULT;
 int tune_hist_prune_margin = HIST_PRUNE_MARGIN_DEFAULT;
+int tune_lmr_pv_node = LMR_PV_NODE_DEFAULT;
 int tune_lmr_cut_node = LMR_CUT_NODE_DEFAULT;
 int tune_lmr_not_improving = LMR_NOT_IMPROVING_DEFAULT;
 int tune_tm_moves_left = TM_MOVES_LEFT_DEFAULT;
@@ -84,8 +85,10 @@ const tunable_t tunables[] = {
     { "LMR_HISTORY_DIVISOR", &tune_lmr_history_divisor, 400, 4000, 150.0, 0.002 },
     { "HIST_PRUNE_MAX_DEPTH", &tune_hist_prune_max_depth, 1, 8,  0.5, 0.002 },
     { "HIST_PRUNE_MARGIN",  &tune_hist_prune_margin,  50,  2000,  100.0, 0.002 },
-    { "LMR_CUT_NODE",       &tune_lmr_cut_node,        0,   3,  0.5, 0.002 },
-    { "LMR_NOT_IMPROVING",  &tune_lmr_not_improving,   0,   3,  0.5, 0.002 },
+    /* In 1/LMR_GRAIN ply: 0 to 3 plies, c_end half a ply. */
+    { "LMR_PV_NODE",        &tune_lmr_pv_node,         0, 3072, 512.0, 0.002 },
+    { "LMR_CUT_NODE",       &tune_lmr_cut_node,        0, 3072, 512.0, 0.002 },
+    { "LMR_NOT_IMPROVING",  &tune_lmr_not_improving,   0, 3072, 512.0, 0.002 },
     /* Time management (limits.h). Tuned at one time control, they fit that one best. The stability
      * factor stays above the next one (1.2), so a changed best move always gets the most time. */
     { "TM_MOVES_LEFT",      &tune_tm_moves_left,      10,  40,  1.5, 0.002 },

@@ -658,19 +658,22 @@ bool can_history_prune(int depth, int history, int moves_searched, int alpha, bo
  * average moves a ply. Clamped so the reduced search still has at least one ply (depth - 1 - r >= 1).
  * With the history alone, against the same search without it (both with persistent history): SPRT
  * +15.0 +- 7.4 after 3388 games, H1 accepted [0, 5].
- * LMR_CUT_NODE plies more at an expected cut node (cut_node, see negamax_node): a late move there
- * is expected to fail low, the cutoff should come from an earlier move. LMR_NOT_IMPROVING plies
- * more when the position isn't improving (is_improving), a late move is then less likely to help.
+ * LMR_CUT_NODE more at an expected cut node (cut_node, see negamax_node): a late move there is
+ * expected to fail low, the cutoff should come from an earlier move. LMR_NOT_IMPROVING more when
+ * the position isn't improving (is_improving), a late move is then less likely to help.
+ * Worked out in 1/LMR_GRAIN ply, so each term can be a fraction of a ply, and rounded down to whole
+ * plies once. The history term is still whole plies (truncated toward zero), as before.
  */
 int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history, bool cut_node, bool improving) {
     int r = lmr_table[depth < LMR_TABLE_SIZE ? depth : LMR_TABLE_SIZE - 1]
                      [moves_searched < LMR_TABLE_SIZE ? moves_searched : LMR_TABLE_SIZE - 1];
-    if (is_pv_node) r--;
+    if (is_pv_node) r -= LMR_PV_NODE;
     if (cut_node) r += LMR_CUT_NODE;
     if (!improving) r += LMR_NOT_IMPROVING;
-    r -= history / LMR_HISTORY_DIVISOR;
-    if (r > depth - 2) r = depth - 2;
-    return r > 0 ? r : 0;
+    r -= history / LMR_HISTORY_DIVISOR * LMR_GRAIN;
+    if (r <= 0) return 0;
+    r /= LMR_GRAIN;
+    return r < depth - 2 ? r : (depth - 2 > 0 ? depth - 2 : 0);
 }
 
 /**

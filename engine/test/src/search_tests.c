@@ -836,9 +836,9 @@ void test_lmr_reduction() {
             TEST_ASSERT_TRUE(r >= lmr_reduction(depth, moves - 1, false, 0, false, true));
             /* At least one ply is left to search. */
             TEST_ASSERT_TRUE(depth - 1 - r >= 1);
-            /* PV nodes are reduced less, by one ply. */
+            /* PV nodes are reduced less, by at most LMR_PV_NODE rounded up. */
             int pv = lmr_reduction(depth, moves, true, 0, false, true);
-            TEST_ASSERT_TRUE(pv == r || pv == r - 1);
+            TEST_ASSERT_TRUE(pv <= r && pv >= r - (LMR_PV_NODE + LMR_GRAIN - 1) / LMR_GRAIN);
         }
     }
 
@@ -860,11 +860,14 @@ void test_lmr_reduction() {
 }
 
 void test_lmr_cut_node_and_improving() {
-    const int r = lmr_reduction(12, 20, false, 0, false, true);
-    /* LMR_CUT_NODE plies more at a cut node, LMR_NOT_IMPROVING more when not improving, both added. */
-    TEST_ASSERT_EQUAL_INT(r + LMR_CUT_NODE, lmr_reduction(12, 20, false, 0, true, true));
-    TEST_ASSERT_EQUAL_INT(r + LMR_NOT_IMPROVING, lmr_reduction(12, 20, false, 0, false, false));
-    TEST_ASSERT_EQUAL_INT(r + LMR_CUT_NODE + LMR_NOT_IMPROVING, lmr_reduction(12, 20, false, 0, true, false));
+    /* LMR_CUT_NODE more at a cut node, LMR_NOT_IMPROVING more when not improving, both added to the
+     * table's fraction and rounded down once. */
+    const int t = lmr_table[12][20];
+    TEST_ASSERT_EQUAL_INT(t / LMR_GRAIN, lmr_reduction(12, 20, false, 0, false, true));
+    TEST_ASSERT_EQUAL_INT((t + LMR_CUT_NODE) / LMR_GRAIN, lmr_reduction(12, 20, false, 0, true, true));
+    TEST_ASSERT_EQUAL_INT((t + LMR_NOT_IMPROVING) / LMR_GRAIN, lmr_reduction(12, 20, false, 0, false, false));
+    TEST_ASSERT_EQUAL_INT((t + LMR_CUT_NODE + LMR_NOT_IMPROVING) / LMR_GRAIN,
+                          lmr_reduction(12, 20, false, 0, true, false));
     /* Still clamped: at least one ply is left to search, and never negative. */
     for (int depth = 2; depth < 40; depth++) {
         for (int moves = 1; moves < 60; moves++) {

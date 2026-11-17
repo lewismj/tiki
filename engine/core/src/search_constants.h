@@ -13,10 +13,10 @@ typedef struct align {
 extern const search_const_t search_const;
 
 /**
- * Late move reductions by [depth][moves searched], 0.75 + log(depth) * log(moves) / 2.25.
- * Filled by init_lmr_table(), called at startup (on_startup).
+ * Late move reductions by [depth][moves searched], 0.75 + log(depth) * log(moves) / 2.25 plies, in
+ * 1/LMR_GRAIN ply (rounded down). Filled by init_lmr_table(), called at startup (on_startup).
  */
-extern uint8_t lmr_table[64][64];
+extern int16_t lmr_table[64][64];
 void init_lmr_table();
 
 #define INF 900000
@@ -41,6 +41,7 @@ void init_lmr_table();
 #define LMR_MIN_DEPTH 3          /* Late move reduction from this depth...                                   */
 #define LMR_MIN_MOVES 3          /* ...after this many moves have been searched at the node.                 */
 #define LMR_TABLE_SIZE 64
+#define LMR_GRAIN 1024           /* LMR is worked out in 1/this ply, the sum rounded down once (lmr_reduction). */
 #define LMR_BASE 75              /* lmr_table: (base + ln(depth) * ln(moves) * 100 / divisor) / 100 plies,   */
 #define LMR_DIVISOR 225          /* i.e. 0.75 + ln(depth) * ln(moves) / 2.25 (init_lmr_table).               */
 #define LMR_KILLER_MAX 0         /* The killers are reduced by at most this (0: never reduced).              */
@@ -57,8 +58,9 @@ void init_lmr_table();
 #define CORR_ERROR_MAX 256       /* An update's error (score - corrected eval) within +-this (cp)...         */
 #define CORR_DEPTH_MAX 8         /* ...weighted by min(depth, this)...                                       */
 #define CORR_RATE 32             /* ...the correction moving by 2 * error * weight / this per update.        */
-#define LMR_CUT_NODE 1           /* Plies more reduction at an expected cut node (lmr_reduction).            */
-#define LMR_NOT_IMPROVING 1      /* Plies more reduction when the position isn't improving.                  */
+#define LMR_PV_NODE 1024         /* 1/LMR_GRAIN plies less reduction in a PV node (lmr_reduction).           */
+#define LMR_CUT_NODE 1024        /* 1/LMR_GRAIN plies more reduction at an expected cut node...              */
+#define LMR_NOT_IMPROVING 1024   /* ...and more when the position isn't improving.                           */
 #define HIST_PRUNE_MAX_DEPTH 4   /* History pruning of quiet moves up to this depth, when quiet_history...   */
 #define HIST_PRUNE_MARGIN 300    /* ...< -margin * depth (can_history_prune).                                */
 #define IIR_MIN_DEPTH 4          /* Internal iterative reduction (no TT move) from this depth.               */
