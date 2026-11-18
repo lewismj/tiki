@@ -1210,20 +1210,21 @@ void test_history_pruning_guards() {
 void test_can_reduce() {
     /* A late quiet move at depth is reduced. */
     TEST_ASSERT_TRUE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, false, false, false));
-    /* Too early in the list, too shallow, not quiet, a check, in check, a killer: not reduced. */
+    /* Too early in the list, too shallow, not quiet, in check, a killer: not reduced. A check only
+     * with LMR_REDUCE_CHECKS. */
     TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES - 1, true, false, false, false, false));
     TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH - 1, LMR_MIN_MOVES, true, false, false, false, false));
     TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, false, false, false, false));
-    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, true, false, false, false));
+    TEST_ASSERT_EQUAL_INT(LMR_REDUCE_CHECKS != 0, can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, true, false, false, false));
     TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, true, false, false));
     TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, false, true, false));
     /* A losing capture late in the list is reduced (a killer flag doesn't matter for it), unless it's
-     * too early, too shallow, a check or made in check. */
+     * too early, too shallow or made in check (a check only with LMR_REDUCE_CHECKS). */
     TEST_ASSERT_TRUE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, false, false, false, true));
     TEST_ASSERT_TRUE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, false, false, true, true));
     TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES - 1, false, false, false, false, true));
     TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH - 1, LMR_MIN_MOVES, false, false, false, false, true));
-    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, true, false, false, true));
+    TEST_ASSERT_EQUAL_INT(LMR_REDUCE_CHECKS != 0, can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, true, false, false, true));
     TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, false, true, false, true));
 }
 

@@ -60,7 +60,7 @@ void init_lmr_table();
 #define CORR_DEPTH_MAX 8         /* ...weighted by min(depth, this)...                                       */
 #define CORR_RATE 32             /* ...the correction moving by 2 * error * weight / this per update.        */
 #define LMR_PV_NODE 1024         /* 1/PLY_GRAIN plies less reduction in a PV node (lmr_reduction).           */
-#define LMR_REDUCE_CHECKS 0      /* 1: moves that give check can be reduced too...                           */
+#define LMR_REDUCE_CHECKS 1      /* 1: moves that give check can be reduced too...                           */
 #define LMR_GIVES_CHECK 1024     /* ...by this much (1/PLY_GRAIN ply) less than a quiet move.                */
 #define LMR_ROUND_OFFSET 0       /* Added (1/PLY_GRAIN ply) before the reduction is rounded down: 512 rounds  */
                                  /* to the nearest ply.                                                      */
