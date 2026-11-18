@@ -685,11 +685,13 @@ int see_prune_threshold(int depth, bool is_quiet) {
 
 /**
  * Whether a move is reduced: quiet moves (not the killers) and losing captures (SEE < 0) late in
- * the list at enough depth. Checks and moves made in check are searched at full depth.
+ * the list at enough depth. Moves made in check are searched at full depth, and so are checks unless
+ * LMR_REDUCE_CHECKS (they're then reduced LMR_GIVES_CHECK less, lmr_reduction_full).
  */
 bool can_reduce(int depth, int moves_searched, bool is_quiet, bool gives_check, bool in_check, bool is_killer,
                 bool is_bad_capture) {
-    return moves_searched >= LMR_MIN_MOVES && depth >= LMR_MIN_DEPTH && !gives_check && !in_check &&
+    return moves_searched >= LMR_MIN_MOVES && depth >= LMR_MIN_DEPTH && (!gives_check || LMR_REDUCE_CHECKS) &&
+           !in_check &&
            ((is_quiet && !is_killer) || is_bad_capture);
 }
 
@@ -723,16 +725,24 @@ bool can_history_prune(int depth, int history, int moves_searched, int alpha, bo
  * Worked out in 1/PLY_GRAIN ply, so each term, the history's included, can be a fraction of a ply,
  * and rounded down to whole plies once.
  */
-int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history, bool cut_node, bool improving) {
+int lmr_reduction_full(int depth, int moves_searched, bool is_pv_node, int history, bool cut_node, bool improving,
+                       bool gives_check) {
     int r = lmr_table[depth < LMR_TABLE_SIZE ? depth : LMR_TABLE_SIZE - 1]
                      [moves_searched < LMR_TABLE_SIZE ? moves_searched : LMR_TABLE_SIZE - 1];
     if (is_pv_node) r -= LMR_PV_NODE;
     if (cut_node) r += LMR_CUT_NODE;
     if (!improving) r += LMR_NOT_IMPROVING;
+    if (gives_check) r -= LMR_GIVES_CHECK;
     r -= history * PLY_GRAIN / LMR_HISTORY_DIVISOR;
+    r += LMR_ROUND_OFFSET;
     if (r <= 0) return 0;
     r /= PLY_GRAIN;
     return r < depth - 1 ? r : (depth - 1 > 0 ? depth - 1 : 0);
+}
+
+/* A move that doesn't give check (lmr_reduction_full). */
+int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history, bool cut_node, bool improving) {
+    return lmr_reduction_full(depth, moves_searched, is_pv_node, history, cut_node, improving, false);
 }
 
 /**
@@ -1562,7 +1572,7 @@ static int negamax_node(int alpha,
         const bool prune_candidate = (futile && num_moves_searched > 0 && is_quiet) || history_prunable;
         const bool check_known = prune_candidate && get_piece_moved(mv) != K && get_piece_moved(mv) != k;
         const bool known_check = check_known && move_gives_check(board, mv);
-        if (check_known && !known_check && quiet_move_is_legal(board, mv)) {
+        if (check_known && (!known_check || PRUNE_CHECKS) && quiet_move_is_legal(board, mv)) {
             if (futile) {
                 const int futility_value = static_eval + FUTILITY_BASE + FUTILITY_MARGIN * depth;
                 if (futility_value > best_score) best_score = futility_value;
@@ -1583,9 +1593,9 @@ static int negamax_node(int alpha,
         const bool gives_check = check_known ? known_check : may_prune && side_in_check(board);
         assert(!check_known || known_check == side_in_check(board));
 
-        /* Futility and history pruning, quiet moves that don't give check. The first move is always
-         * searched. */
-        if (((futile && num_moves_searched > 0 && is_quiet) || history_prunable) && !gives_check) {
+        /* Futility and history pruning, quiet moves that don't give check (any, with PRUNE_CHECKS). The
+         * first move is always searched. */
+        if (((futile && num_moves_searched > 0 && is_quiet) || history_prunable) && (!gives_check || PRUNE_CHECKS)) {
             /* Fail-soft: a futility-pruned move is assumed to score at most the futility value (at or
              * below alpha), so it counts towards the best score; otherwise a fail low would return,
              * and save as an upper bound, the lower score of the moves searched. */
@@ -1616,7 +1626,7 @@ static int negamax_node(int alpha,
          * The killers by at most LMR_KILLER_MAX (by default 0, never reduced). */
         int reduction =
             can_reduce(depth, num_moves_searched, is_quiet, gives_check, in_check, is_killer, is_bad_capture) ?
-            lmr_reduction(depth, num_moves_searched, is_pv_node, history, cut_node, improving) : 0;
+            lmr_reduction_full(depth, num_moves_searched, is_pv_node, history, cut_node, improving, gives_check) : 0;
         if (LMR_KILLER_MAX > 0 && is_killer &&
             can_reduce(depth, num_moves_searched, is_quiet, gives_check, in_check, false, is_bad_capture)) {
             const int r = lmr_reduction(depth, num_moves_searched, is_pv_node, history, cut_node, improving);
@@ -1624,6 +1634,15 @@ static int negamax_node(int alpha,
         }
         /* The TT move a ply deeper if it's singular, shallower if it isn't but beat beta (see above). */
         const int new_depth = depth - 1 + (mv == tt_move ? extension : 0);
+#ifdef TIKI_SEARCH_STATS
+        if (stat_entry_depth >= 2 && stat_entry_depth <= 4) {
+            const bool stat_check = side_in_check(board);
+            const int kind = (mv == tt_move || num_moves_searched == 0) ? 0 : stat_check ? 1 :
+                             ((is_capture && !is_bad_capture) || get_promoted_piece(mv)) ? 2 : is_killer ? 3 :
+                             is_bad_capture ? 4 : 5;
+            search_state->stats.move_kind[stat_entry_depth - 2][kind][reduction > 0]++;
+        }
+#endif
 
         /* Set before every search of the child, each one changes it further down the tree. */
         const bool child_on_pv = pv_move != 0 && mv == pv_move;

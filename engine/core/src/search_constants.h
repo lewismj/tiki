@@ -60,8 +60,13 @@ void init_lmr_table();
 #define CORR_DEPTH_MAX 8         /* ...weighted by min(depth, this)...                                       */
 #define CORR_RATE 32             /* ...the correction moving by 2 * error * weight / this per update.        */
 #define LMR_PV_NODE 1024         /* 1/PLY_GRAIN plies less reduction in a PV node (lmr_reduction).           */
+#define LMR_REDUCE_CHECKS 0      /* 1: moves that give check can be reduced too...                           */
+#define LMR_GIVES_CHECK 1024     /* ...by this much (1/PLY_GRAIN ply) less than a quiet move.                */
+#define LMR_ROUND_OFFSET 0       /* Added (1/PLY_GRAIN ply) before the reduction is rounded down: 512 rounds  */
+                                 /* to the nearest ply.                                                      */
 #define LMR_CUT_NODE 1024        /* 1/PLY_GRAIN plies more reduction at an expected cut node...              */
 #define LMR_NOT_IMPROVING 1024   /* ...and more when the position isn't improving.                           */
+#define PRUNE_CHECKS 0           /* 1: futility and history pruning also skip quiet moves that give check.   */
 #define HIST_PRUNE_MAX_DEPTH 4   /* History pruning of quiet moves up to this depth, when quiet_history...   */
 #define HIST_PRUNE_MARGIN 300    /* ...< -margin * depth (can_history_prune).                                */
 #define IIR_MIN_DEPTH 4          /* Internal iterative reduction (no TT move) from this depth.               */

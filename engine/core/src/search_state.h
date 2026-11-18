@@ -81,6 +81,9 @@ typedef struct {
      * [2] tablebase, [3] reverse futility, [4] null move, [5] ProbCut, [6] multi-cut. And null moves tried. */
     uint64_t exit_at_depth[7][17];
     uint64_t null_tried_at_depth[17];
+    /* Moves searched at nodes entered with depth 2-4, by [depth - 2][kind: TT or first move, check, good
+     * capture or promotion, killer, bad capture, other quiet][full depth, reduced]. */
+    uint64_t move_kind[3][6][2];
 } search_stats_t;
 
 /* Only 64-bit counters, so the bench can sum two of them word by word. */

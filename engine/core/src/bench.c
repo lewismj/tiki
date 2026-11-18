@@ -149,6 +149,14 @@ uint64_t bench(int depth) {
             printf("                  %2d%s %12" PRIu64 " (%5.1f%%)   %5.1f%%\n", d, d == 16 ? "+" : " ", e,
                    t * (double) e, 100.0 * (double) stats.expanded_at_depth[d] / (double) e);
         }
+        printf("Moves searched  : depth   TT/first      check   good capt     killer    bad capt      quiet   (full / reduced)\n");
+        for (int d = 0; d < 3; d++) {
+            printf("                  %d    ", d + 2);
+            for (int k = 0; k < 6; k++)
+                printf(" %5.2f/%-5.2f", stats.expanded_at_depth[d + 2] ? (double) stats.move_kind[d][k][0] / (double) stats.expanded_at_depth[d + 2] : 0.0,
+                       stats.expanded_at_depth[d + 2] ? (double) stats.move_kind[d][k][1] / (double) stats.expanded_at_depth[d + 2] : 0.0);
+            printf("   per expanded node\n");
+        }
         printf("Exits (%% of nodes entered at the depth): depth  draw    TT    TB   RFP  null  probcut  multicut  move loop"
                " | null tried\n");
         for (int d = 1; d <= 8; d++) {

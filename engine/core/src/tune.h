@@ -65,6 +65,10 @@ enum {
     HIST_PRUNE_MAX_DEPTH_DEFAULT = HIST_PRUNE_MAX_DEPTH,
     HIST_PRUNE_MARGIN_DEFAULT = HIST_PRUNE_MARGIN,
     LMR_PV_NODE_DEFAULT = LMR_PV_NODE,
+    LMR_REDUCE_CHECKS_DEFAULT = LMR_REDUCE_CHECKS,
+    PRUNE_CHECKS_DEFAULT = PRUNE_CHECKS,
+    LMR_GIVES_CHECK_DEFAULT = LMR_GIVES_CHECK,
+    LMR_ROUND_OFFSET_DEFAULT = LMR_ROUND_OFFSET,
     LMR_CUT_NODE_DEFAULT = LMR_CUT_NODE,
     LMR_NOT_IMPROVING_DEFAULT = LMR_NOT_IMPROVING,
     TM_MOVES_LEFT_DEFAULT = TM_MOVES_LEFT,
@@ -131,6 +135,10 @@ extern int tune_lmr_history_divisor;
 extern int tune_hist_prune_max_depth;
 extern int tune_hist_prune_margin;
 extern int tune_lmr_pv_node;
+extern int tune_lmr_reduce_checks;
+extern int tune_prune_checks;
+extern int tune_lmr_gives_check;
+extern int tune_lmr_round_offset;
 extern int tune_lmr_cut_node;
 extern int tune_lmr_not_improving;
 extern int tune_tm_moves_left;
@@ -196,6 +204,10 @@ extern int tune_probcut_improving;
 #undef HIST_PRUNE_MAX_DEPTH
 #undef HIST_PRUNE_MARGIN
 #undef LMR_PV_NODE
+#undef LMR_REDUCE_CHECKS
+#undef PRUNE_CHECKS
+#undef LMR_GIVES_CHECK
+#undef LMR_ROUND_OFFSET
 #undef LMR_CUT_NODE
 #undef LMR_NOT_IMPROVING
 #undef TM_MOVES_LEFT
@@ -260,6 +272,10 @@ extern int tune_probcut_improving;
 #define HIST_PRUNE_MAX_DEPTH tune_hist_prune_max_depth
 #define HIST_PRUNE_MARGIN tune_hist_prune_margin
 #define LMR_PV_NODE tune_lmr_pv_node
+#define LMR_REDUCE_CHECKS tune_lmr_reduce_checks
+#define PRUNE_CHECKS tune_prune_checks
+#define LMR_GIVES_CHECK tune_lmr_gives_check
+#define LMR_ROUND_OFFSET tune_lmr_round_offset
 #define LMR_CUT_NODE tune_lmr_cut_node
 #define LMR_NOT_IMPROVING tune_lmr_not_improving
 #define TM_MOVES_LEFT tune_tm_moves_left

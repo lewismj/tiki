@@ -933,6 +933,10 @@ void test_lmr_cut_node_and_improving() {
     TEST_ASSERT_EQUAL_INT((t + LMR_NOT_IMPROVING) / PLY_GRAIN, lmr_reduction(12, 20, false, 0, false, false));
     TEST_ASSERT_EQUAL_INT((t + LMR_CUT_NODE + LMR_NOT_IMPROVING) / PLY_GRAIN,
                           lmr_reduction(12, 20, false, 0, true, false));
+    /* A checking move: LMR_GIVES_CHECK less, with LMR_ROUND_OFFSET added before rounding down. */
+    const int c = t - LMR_GIVES_CHECK + LMR_ROUND_OFFSET;
+    TEST_ASSERT_EQUAL_INT(c <= 0 ? 0 : c / PLY_GRAIN, lmr_reduction_full(12, 20, false, 0, false, true, true));
+    TEST_ASSERT_EQUAL_INT(lmr_reduction(12, 20, false, 0, false, true), lmr_reduction_full(12, 20, false, 0, false, true, false));
     /* Still clamped: never below the qsearch, and never negative. */
     for (int depth = 2; depth < 40; depth++) {
         for (int moves = 1; moves < 60; moves++) {
@@ -1498,7 +1502,7 @@ void test_probcut_conditions() {
 void test_tunable_parameters() {
 #ifdef TIKI_TUNE
     /* A tuning build: the parameters are variables, set by name (any case) and kept in range. */
-    TEST_ASSERT_EQUAL_INT(64, tunable_count);
+    TEST_ASSERT_EQUAL_INT(68, tunable_count);
     const int saved = RFP_MARGIN;
     TEST_ASSERT_TRUE(set_tunable("rfp_margin", 10, 120));
     TEST_ASSERT_EQUAL_INT(120, RFP_MARGIN);

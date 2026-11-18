@@ -31,6 +31,10 @@ int tune_lmr_history_divisor = LMR_HISTORY_DIVISOR_DEFAULT;
 int tune_hist_prune_max_depth = HIST_PRUNE_MAX_DEPTH_DEFAULT;
 int tune_hist_prune_margin = HIST_PRUNE_MARGIN_DEFAULT;
 int tune_lmr_pv_node = LMR_PV_NODE_DEFAULT;
+int tune_lmr_reduce_checks = LMR_REDUCE_CHECKS_DEFAULT;
+int tune_prune_checks = PRUNE_CHECKS_DEFAULT;
+int tune_lmr_gives_check = LMR_GIVES_CHECK_DEFAULT;
+int tune_lmr_round_offset = LMR_ROUND_OFFSET_DEFAULT;
 int tune_lmr_cut_node = LMR_CUT_NODE_DEFAULT;
 int tune_lmr_not_improving = LMR_NOT_IMPROVING_DEFAULT;
 int tune_tm_moves_left = TM_MOVES_LEFT_DEFAULT;
@@ -96,11 +100,15 @@ const tunable_t tunables[] = {
     { "NMP_R_EVAL_DIV",     &tune_nmp_r_eval_div,    100,  400,  15.0, 0.002 },
     { "NMP_R_EVAL_MAX",     &tune_nmp_r_eval_max,   1024, 6144, 512.0, 0.002 },
     { "NMP_VERIFY_DEPTH",   &tune_nmp_verify_depth,    8,  24,  1.0, 0.002 },
-    { "LMR_HISTORY_DIVISOR", &tune_lmr_history_divisor, 400, 4000, 150.0, 0.002 },
+    { "LMR_HISTORY_DIVISOR", &tune_lmr_history_divisor, 400, 16000, 400.0, 0.002 },
     { "HIST_PRUNE_MAX_DEPTH", &tune_hist_prune_max_depth, 1, 8,  0.5, 0.002 },
     { "HIST_PRUNE_MARGIN",  &tune_hist_prune_margin,  50,  2000,  100.0, 0.002 },
     /* In 1/PLY_GRAIN ply: 0 to 3 plies, c_end half a ply. */
     { "LMR_PV_NODE",        &tune_lmr_pv_node,         0, 3072, 512.0, 0.002 },
+    { "LMR_REDUCE_CHECKS",  &tune_lmr_reduce_checks,   0,    1,   0.5, 0.002 },
+    { "PRUNE_CHECKS",       &tune_prune_checks,        0,    1,   0.5, 0.002 },
+    { "LMR_GIVES_CHECK",    &tune_lmr_gives_check,     0, 3072, 256.0, 0.002 },
+    { "LMR_ROUND_OFFSET",   &tune_lmr_round_offset,    0, 1023,  64.0, 0.002 },
     { "LMR_CUT_NODE",       &tune_lmr_cut_node,        0, 3072, 512.0, 0.002 },
     { "LMR_NOT_IMPROVING",  &tune_lmr_not_improving,   0, 3072, 512.0, 0.002 },
     /* Time management (limits.h). Tuned at one time control, they fit that one best. The stability
