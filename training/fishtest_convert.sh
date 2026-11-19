@@ -42,6 +42,5 @@ for month in "$@"; do
     # shellcheck disable=SC2086
     zcat "${files[@]}" | "$CONVERT" --fishtest $CONVERT_OPTIONS /dev/stdin "$out"
     rm -rf "$PGN"/"$year-$month"-*
-    rm -rf "$PGN/.cache"
     echo "20$year-$month: done, $(du -h "$out" | cut -f1)"
 done
