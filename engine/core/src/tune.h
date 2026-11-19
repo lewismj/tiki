@@ -48,6 +48,11 @@ enum {
     SEE_CAPTURE_MARGIN_DEFAULT = SEE_CAPTURE_MARGIN,
     SE_MARGIN_DEFAULT = SE_MARGIN,
     RFP_IMPROVING_DEFAULT = RFP_IMPROVING,
+    RFP_OPP_WORSENING_DEFAULT = RFP_OPP_WORSENING,
+    RFP_OPP_WORSENING_MARGIN_DEFAULT = RFP_OPP_WORSENING_MARGIN,
+    RFP_NO_TT_DEFAULT = RFP_NO_TT,
+    RFP_MIN_MARGIN_DEFAULT = RFP_MIN_MARGIN,
+    RFP_BETA_BLEND_DEFAULT = RFP_BETA_BLEND,
     FUTILITY_BASE_DEFAULT = FUTILITY_BASE,
     LMP_NOT_IMPROVING_PCT_DEFAULT = LMP_NOT_IMPROVING_PCT,
     NMP_MIN_DEPTH_DEFAULT = NMP_MIN_DEPTH,
@@ -60,6 +65,10 @@ enum {
     HIST_PRUNE_MAX_DEPTH_DEFAULT = HIST_PRUNE_MAX_DEPTH,
     HIST_PRUNE_MARGIN_DEFAULT = HIST_PRUNE_MARGIN,
     LMR_PV_NODE_DEFAULT = LMR_PV_NODE,
+    LMR_REDUCE_CHECKS_DEFAULT = LMR_REDUCE_CHECKS,
+    PRUNE_CHECKS_DEFAULT = PRUNE_CHECKS,
+    LMR_GIVES_CHECK_DEFAULT = LMR_GIVES_CHECK,
+    LMR_ROUND_OFFSET_DEFAULT = LMR_ROUND_OFFSET,
     LMR_CUT_NODE_DEFAULT = LMR_CUT_NODE,
     LMR_NOT_IMPROVING_DEFAULT = LMR_NOT_IMPROVING,
     TM_MOVES_LEFT_DEFAULT = TM_MOVES_LEFT,
@@ -109,6 +118,11 @@ extern int tune_see_quiet_margin;
 extern int tune_see_capture_margin;
 extern int tune_se_margin;
 extern int tune_rfp_improving;
+extern int tune_rfp_opp_worsening;
+extern int tune_rfp_opp_worsening_margin;
+extern int tune_rfp_no_tt;
+extern int tune_rfp_min_margin;
+extern int tune_rfp_beta_blend;
 extern int tune_futility_base;
 extern int tune_lmp_not_improving_pct;
 extern int tune_nmp_min_depth;
@@ -121,6 +135,10 @@ extern int tune_lmr_history_divisor;
 extern int tune_hist_prune_max_depth;
 extern int tune_hist_prune_margin;
 extern int tune_lmr_pv_node;
+extern int tune_lmr_reduce_checks;
+extern int tune_prune_checks;
+extern int tune_lmr_gives_check;
+extern int tune_lmr_round_offset;
 extern int tune_lmr_cut_node;
 extern int tune_lmr_not_improving;
 extern int tune_tm_moves_left;
@@ -169,6 +187,11 @@ extern int tune_probcut_improving;
 #undef SEE_CAPTURE_MARGIN
 #undef SE_MARGIN
 #undef RFP_IMPROVING
+#undef RFP_OPP_WORSENING
+#undef RFP_OPP_WORSENING_MARGIN
+#undef RFP_NO_TT
+#undef RFP_MIN_MARGIN
+#undef RFP_BETA_BLEND
 #undef FUTILITY_BASE
 #undef LMP_NOT_IMPROVING_PCT
 #undef NMP_MIN_DEPTH
@@ -181,6 +204,10 @@ extern int tune_probcut_improving;
 #undef HIST_PRUNE_MAX_DEPTH
 #undef HIST_PRUNE_MARGIN
 #undef LMR_PV_NODE
+#undef LMR_REDUCE_CHECKS
+#undef PRUNE_CHECKS
+#undef LMR_GIVES_CHECK
+#undef LMR_ROUND_OFFSET
 #undef LMR_CUT_NODE
 #undef LMR_NOT_IMPROVING
 #undef TM_MOVES_LEFT
@@ -228,6 +255,11 @@ extern int tune_probcut_improving;
 #define SEE_CAPTURE_MARGIN tune_see_capture_margin
 #define SE_MARGIN tune_se_margin
 #define RFP_IMPROVING tune_rfp_improving
+#define RFP_OPP_WORSENING tune_rfp_opp_worsening
+#define RFP_OPP_WORSENING_MARGIN tune_rfp_opp_worsening_margin
+#define RFP_NO_TT tune_rfp_no_tt
+#define RFP_MIN_MARGIN tune_rfp_min_margin
+#define RFP_BETA_BLEND tune_rfp_beta_blend
 #define FUTILITY_BASE tune_futility_base
 #define LMP_NOT_IMPROVING_PCT tune_lmp_not_improving_pct
 #define NMP_MIN_DEPTH tune_nmp_min_depth
@@ -240,6 +272,10 @@ extern int tune_probcut_improving;
 #define HIST_PRUNE_MAX_DEPTH tune_hist_prune_max_depth
 #define HIST_PRUNE_MARGIN tune_hist_prune_margin
 #define LMR_PV_NODE tune_lmr_pv_node
+#define LMR_REDUCE_CHECKS tune_lmr_reduce_checks
+#define PRUNE_CHECKS tune_prune_checks
+#define LMR_GIVES_CHECK tune_lmr_gives_check
+#define LMR_ROUND_OFFSET tune_lmr_round_offset
 #define LMR_CUT_NODE tune_lmr_cut_node
 #define LMR_NOT_IMPROVING tune_lmr_not_improving
 #define TM_MOVES_LEFT tune_tm_moves_left

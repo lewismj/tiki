@@ -298,6 +298,23 @@ syzygy_relabel/syzygy_relabel --tb /mnt/f/syzygy/wdl /mnt/f/lichess2/decisive-20
 
 A month gives about a twentieth as many positions as its normal conversion: about a third of them with 6
 pieces or fewer, and a quarter with 15 or more (mostly mating attacks).
+
+#### Fishtest games (`--fishtest`)
+
+[Fishtest's game PGNs](https://huggingface.co/datasets/official-stockfish/fishtest_pgns) are Stockfish's own
+long time control test games, about 60M of them in 2026, each move commented with the mover's search score and
+depth (`{-0.92/19 0.323s}`, depth 14-22). `lichess_convert --fishtest` reads them: the comment of a move is the
+score of the position it was played from, from the mover's point of view, so that position is written with it
+(quiet moves only, as for Lichess). The opening book's plies count towards `--skip-plies`. A game gives about
+97 positions, 95% of them distinct. The scores are Stockfish's centipawns, on the same scale as the rescaled
+Lichess data (fitted against Stockfish at 1M nodes: 83 against 81), so they're neither rescaled nor relabelled.
+`fishtest_convert.sh` downloads and converts a month at a time and deletes the PGNs after each:
+
+```bash
+training/fishtest_convert.sh 26 01 02 03 04 05 06 07 08 09 10 11     # -> /mnt/f/fishtest-data/fishtest-2026-MM.bin
+```
+
+`make -C lichess_convert test-fishtest PGN=<file.pgn.gz>` checks the conversion against python-chess.
 - **Downloads:** with `--download-dir`, each tar is downloaded first (with a progress bar, resuming
   a partial `.part` file) and kept, so it can be converted again later with other options.
 - **Re-running:** tars already converted are skipped, so you can run the same command again.

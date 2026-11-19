@@ -738,23 +738,56 @@ void test_losing_capture_ordered_after_quiet_moves() {
 }
 
 void test_reverse_futility_guards() {
-    /* Eval 500 above beta 0 at depth 3: 500 - 3 * RFP_MARGIN >= 0. */
-    TEST_ASSERT_TRUE(can_reverse_futility_prune(3, 500, 0, false, false, 1, false));
-    /* Margin grows with depth. */
-    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 3 * RFP_MARGIN - 1, 0, false, false, 1, false));
-    TEST_ASSERT_TRUE(can_reverse_futility_prune(3, 3 * RFP_MARGIN, 0, false, false, 1, false));
+    const int m3 = rfp_margin(3, false, false, true);
+    TEST_ASSERT_EQUAL_INT(3 * RFP_MARGIN, m3);
+    /* The margin: eval this far above beta is pruned, one less isn't. */
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, m3 - 1, 0, false, false, 1, m3));
+    TEST_ASSERT_TRUE(can_reverse_futility_prune(3, m3, 0, false, false, 1, m3));
     /* Too deep, in check, PV node, root, mate bound. */
-    TEST_ASSERT_FALSE(can_reverse_futility_prune(RFP_MAX_DEPTH + 1, 5000, 0, false, false, 1, false));
-    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 500, 0, true, false, 1, false));
-    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 500, 0, false, true, 1, false));
-    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 500, 0, false, false, 0, false));
-    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, MATE_VALUE, MATE_VALUE - 10, false, false, 1, false));
-    /* Improving: the margin is RFP_IMPROVING smaller. */
-    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 3 * RFP_MARGIN - RFP_IMPROVING - 1, 0, false, false, 1, true));
-    TEST_ASSERT_TRUE(can_reverse_futility_prune(3, 3 * RFP_MARGIN - RFP_IMPROVING, 0, false, false, 1, true));
-    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 3 * RFP_MARGIN - RFP_IMPROVING, 0, false, false, 1, false));
-    /* At depth 1 an improving position still needs a positive margin (RFP_IMPROVING < RFP_MARGIN). */
-    TEST_ASSERT_FALSE(can_reverse_futility_prune(1, 0, 0, false, false, 1, true));
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(RFP_MAX_DEPTH + 1, 5000, 0, false, false, 1, m3));
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 5000, 0, true, false, 1, m3));
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 5000, 0, false, true, 1, m3));
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 5000, 0, false, false, 0, m3));
+    TEST_ASSERT_FALSE(can_reverse_futility_prune(3, MATE_VALUE, MATE_VALUE - 10, false, false, 1, m3));
+    /* Each term makes the margin smaller, down to RFP_MIN_MARGIN. */
+    int expected = 3 * RFP_MARGIN - RFP_IMPROVING;
+    TEST_ASSERT_EQUAL_INT(expected > RFP_MIN_MARGIN ? expected : RFP_MIN_MARGIN, rfp_margin(3, true, false, true));
+    expected = 3 * RFP_MARGIN - RFP_OPP_WORSENING;
+    TEST_ASSERT_EQUAL_INT(expected > RFP_MIN_MARGIN ? expected : RFP_MIN_MARGIN, rfp_margin(3, false, true, true));
+    expected = 3 * RFP_MARGIN - 3 * RFP_NO_TT;
+    TEST_ASSERT_EQUAL_INT(expected > RFP_MIN_MARGIN ? expected : RFP_MIN_MARGIN, rfp_margin(3, false, false, false));
+    TEST_ASSERT_TRUE(rfp_margin(1, true, true, false) >= RFP_MIN_MARGIN);
+    /* The score: static eval moved RFP_BETA_BLEND / 1024 of the way to beta, between the two. */
+    const int score = rfp_score(400, 0);
+    TEST_ASSERT_TRUE(score >= 0 && score <= 400);
+    TEST_ASSERT_EQUAL_INT((int) ((400LL * (1024 - RFP_BETA_BLEND)) / 1024), score);
+    /* Opponent worsening: the two evals sum to more than the margin; never after a check (-INF). */
+    TEST_ASSERT_TRUE(is_opp_worsening(RFP_OPP_WORSENING_MARGIN, 1));
+    TEST_ASSERT_FALSE(is_opp_worsening(RFP_OPP_WORSENING_MARGIN, 0));
+    TEST_ASSERT_FALSE(is_opp_worsening(5000, -INF));
+}
+
+void test_opp_can_win_material() {
+    board_t board;
+    /* Quiet start: nothing attacked. */
+    parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
+    TEST_ASSERT_FALSE(opp_can_win_material(&board));
+    /* A black pawn attacks the white knight on d4. */
+    parse_fen("4k3/8/8/4p3/3N4/8/8/4K3 w - - 0 1", &board);
+    TEST_ASSERT_TRUE(opp_can_win_material(&board));
+    /* A black knight attacks the white rook on d1; a pawn attacking only a pawn doesn't count. */
+    parse_fen("4k3/8/8/8/8/4n3/3P4/3RK3 w - - 0 1", &board);
+    TEST_ASSERT_TRUE(opp_can_win_material(&board));
+    parse_fen("4k3/8/8/8/8/4p3/3P4/4K3 w - - 0 1", &board);
+    TEST_ASSERT_FALSE(opp_can_win_material(&board));
+    /* A black rook attacks the white queen along the file; blocked, it doesn't. */
+    parse_fen("3rk3/8/8/8/8/8/8/3QK3 w - - 0 1", &board);
+    TEST_ASSERT_TRUE(opp_can_win_material(&board));
+    parse_fen("3rk3/8/8/8/3P4/8/8/3QK3 w - - 0 1", &board);
+    TEST_ASSERT_FALSE(opp_can_win_material(&board));
+    /* From black's side: a white bishop attacks the black rook. */
+    parse_fen("r3k3/8/8/8/8/8/6B1/4K3 b - - 0 1", &board);
+    TEST_ASSERT_TRUE(opp_can_win_material(&board));
 }
 
 void test_improving() {
@@ -865,8 +898,8 @@ void test_lmr_reduction() {
             int r = lmr_reduction(depth, moves, false, 0, false, true);
             TEST_ASSERT_TRUE(r >= lmr_reduction(depth - 1, moves, false, 0, false, true));
             TEST_ASSERT_TRUE(r >= lmr_reduction(depth, moves - 1, false, 0, false, true));
-            /* At least one ply is left to search. */
-            TEST_ASSERT_TRUE(depth - 1 - r >= 1);
+            /* Never below the qsearch: the reduced search has depth - 1 - r >= 0. */
+            TEST_ASSERT_TRUE(depth - 1 - r >= 0);
             /* PV nodes are reduced less, by at most LMR_PV_NODE rounded up. */
             int pv = lmr_reduction(depth, moves, true, 0, false, true);
             TEST_ASSERT_TRUE(pv <= r && pv >= r - (LMR_PV_NODE + PLY_GRAIN - 1) / PLY_GRAIN);
@@ -880,14 +913,14 @@ void test_lmr_reduction() {
     TEST_ASSERT_EQUAL_INT(lmr_reduction(20, LMR_TABLE_SIZE - 1, false, 0, false, true), lmr_reduction(20, 200, false, 0, false, true));
 
     /* History: PLY_GRAIN / LMR_HISTORY_DIVISOR of a ply less per point of a good score, more per point
-     * of a bad one, summed with the table's fraction before rounding down; within [0, depth - 2]. */
+     * of a bad one, summed with the table's fraction before rounding down; within [0, depth - 1]. */
     const int t = lmr_table[12][20];
     const int histories[] = { 0, LMR_HISTORY_DIVISOR / 4, LMR_HISTORY_DIVISOR - 1, LMR_HISTORY_DIVISOR,
                               -LMR_HISTORY_DIVISOR / 4, -LMR_HISTORY_DIVISOR, HISTORY_MAX, -HISTORY_MAX };
     for (int i = 0; i < (int) (sizeof(histories) / sizeof(*histories)); i++) {
         const int g = t - histories[i] * PLY_GRAIN / LMR_HISTORY_DIVISOR;
         const int plies = g <= 0 ? 0 : g / PLY_GRAIN;
-        TEST_ASSERT_EQUAL_INT(plies < 10 ? plies : 10, lmr_reduction(12, 20, false, histories[i], false, true));
+        TEST_ASSERT_EQUAL_INT(plies < 11 ? plies : 11, lmr_reduction(12, 20, false, histories[i], false, true));
     }
 }
 
@@ -900,11 +933,15 @@ void test_lmr_cut_node_and_improving() {
     TEST_ASSERT_EQUAL_INT((t + LMR_NOT_IMPROVING) / PLY_GRAIN, lmr_reduction(12, 20, false, 0, false, false));
     TEST_ASSERT_EQUAL_INT((t + LMR_CUT_NODE + LMR_NOT_IMPROVING) / PLY_GRAIN,
                           lmr_reduction(12, 20, false, 0, true, false));
-    /* Still clamped: at least one ply is left to search, and never negative. */
+    /* A checking move: LMR_GIVES_CHECK less, with LMR_ROUND_OFFSET added before rounding down. */
+    const int c = t - LMR_GIVES_CHECK + LMR_ROUND_OFFSET;
+    TEST_ASSERT_EQUAL_INT(c <= 0 ? 0 : c / PLY_GRAIN, lmr_reduction_full(12, 20, false, 0, false, true, true));
+    TEST_ASSERT_EQUAL_INT(lmr_reduction(12, 20, false, 0, false, true), lmr_reduction_full(12, 20, false, 0, false, true, false));
+    /* Still clamped: never below the qsearch, and never negative. */
     for (int depth = 2; depth < 40; depth++) {
         for (int moves = 1; moves < 60; moves++) {
             const int most = lmr_reduction(depth, moves, false, -HISTORY_MAX, true, false);
-            TEST_ASSERT_TRUE(depth - 1 - most >= 1);
+            TEST_ASSERT_TRUE(depth - 1 - most >= 0);
             TEST_ASSERT_TRUE(lmr_reduction(depth, moves, true, HISTORY_MAX, false, true) >= 0);
         }
     }
@@ -1173,20 +1210,21 @@ void test_history_pruning_guards() {
 void test_can_reduce() {
     /* A late quiet move at depth is reduced. */
     TEST_ASSERT_TRUE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, false, false, false));
-    /* Too early in the list, too shallow, not quiet, a check, in check, a killer: not reduced. */
+    /* Too early in the list, too shallow, not quiet, in check, a killer: not reduced. A check only
+     * with LMR_REDUCE_CHECKS. */
     TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES - 1, true, false, false, false, false));
     TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH - 1, LMR_MIN_MOVES, true, false, false, false, false));
     TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, false, false, false, false));
-    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, true, false, false, false));
+    TEST_ASSERT_EQUAL_INT(LMR_REDUCE_CHECKS != 0, can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, true, false, false, false));
     TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, true, false, false));
     TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, false, true, false));
     /* A losing capture late in the list is reduced (a killer flag doesn't matter for it), unless it's
-     * too early, too shallow, a check or made in check. */
+     * too early, too shallow or made in check (a check only with LMR_REDUCE_CHECKS). */
     TEST_ASSERT_TRUE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, false, false, false, true));
     TEST_ASSERT_TRUE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, false, false, true, true));
     TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES - 1, false, false, false, false, true));
     TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH - 1, LMR_MIN_MOVES, false, false, false, false, true));
-    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, true, false, false, true));
+    TEST_ASSERT_EQUAL_INT(LMR_REDUCE_CHECKS != 0, can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, true, false, false, true));
     TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, false, true, false, true));
 }
 
@@ -1319,20 +1357,47 @@ void test_smp_helpers_grow_and_shrink() {
     }
 }
 
+void test_search_moves_restrict_root() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+    const char* fen = "4kr2/8/8/3q4/8/8/3R4/4K3 w - - 0 1";
+
+    /* Rxd5 wins the queen, the search plays it when it may. */
+    setup_position(fen, &board, &search_state, &limits, 6);
+    limits.quiet = true;
+    parse_search_moves("go depth 6", &board, &limits);
+    TEST_ASSERT_EQUAL_INT(0, limits.search_move_count);
+    TEST_ASSERT_EQUAL_UINT32(parse_move("d2d5", &board), find_best_move(&board, &search_state, &limits));
+
+    /* With 'searchmoves' it plays one of those. Ke1-f1 is illegal (the f8 rook) and dropped, and the list ends
+     * at the next 'go' parameter. */
+    setup_position(fen, &board, &search_state, &limits, 6);
+    limits.quiet = true;
+    parse_search_moves("go searchmoves e1f1 e1e2 e1d1 depth 6", &board, &limits);
+    TEST_ASSERT_EQUAL_INT(2, limits.search_move_count);
+    const move_t mv = find_best_move(&board, &search_state, &limits);
+    TEST_ASSERT_TRUE(mv == parse_move("e1e2", &board) || mv == parse_move("e1d1", &board));
+}
+
 void test_node_limit_stops_search() {
     board_t board;
     search_state_t search_state;
     limits_t limits;
 
-    /* 'go nodes 5000': stopped at the first check past the limit (every 2048 nodes). */
-    setup_position("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
-                   &board, &search_state, &limits, MAX_SEARCH_DEPTH);
-    limits.nodes = 5000;
-    limits.quiet = true;
-    const move_t mv = find_best_move(&board, &search_state, &limits);
-    TEST_ASSERT_TRUE(limits.stop_search_flag);
-    TEST_ASSERT_TRUE(search_state.nodes >= 5000 && search_state.nodes < 5000 + 2048 + MAX_PLY);
-    TEST_ASSERT_TRUE(make_move(&board, mv));
+    /* 'go nodes': stopped at the node that reaches the limit, whether or not it's a multiple of 2048 (the
+     * batch check), so a budget below 2048 isn't overshot. */
+    const uint64_t budgets[] = { 1000, 5000 };
+    for (int i = 0; i < 2; i++) {
+        setup_position("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+                       &board, &search_state, &limits, MAX_SEARCH_DEPTH);
+        limits.nodes = budgets[i];
+        limits.quiet = true;
+        const move_t mv = find_best_move(&board, &search_state, &limits);
+        TEST_ASSERT_TRUE(limits.stop_search_flag);
+        TEST_ASSERT_TRUE(search_state.nodes >= budgets[i] && search_state.nodes < budgets[i] + MAX_PLY);
+        TEST_ASSERT_TRUE(make_move(&board, mv));
+    }
 }
 
 void test_tt_lookup() {
@@ -1465,12 +1530,12 @@ void test_probcut_conditions() {
 void test_tunable_parameters() {
 #ifdef TIKI_TUNE
     /* A tuning build: the parameters are variables, set by name (any case) and kept in range. */
-    TEST_ASSERT_EQUAL_INT(53, tunable_count);
+    TEST_ASSERT_EQUAL_INT(68, tunable_count);
     const int saved = RFP_MARGIN;
     TEST_ASSERT_TRUE(set_tunable("rfp_margin", 10, 120));
     TEST_ASSERT_EQUAL_INT(120, RFP_MARGIN);
     TEST_ASSERT_TRUE(set_tunable("RFP_MARGIN", 10, 100000));
-    TEST_ASSERT_EQUAL_INT(200, RFP_MARGIN);
+    TEST_ASSERT_EQUAL_INT(300, RFP_MARGIN);
     TEST_ASSERT_TRUE(set_tunable("RFP_MARGIN", 10, saved));
     TEST_ASSERT_EQUAL_INT(saved, RFP_MARGIN);
     /* The whole name must match. */

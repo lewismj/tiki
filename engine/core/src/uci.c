@@ -348,10 +348,29 @@ void parse_go_limits(const char* command, const board_t* board, limits_t* limits
     }
 }
 
+void parse_search_moves(const char* command, board_t* board, limits_t* limits) {
+    limits->search_move_count = 0;
+    const char* arg = strstr(command, "searchmoves");
+    if (!arg) return;
+    /* The moves follow up to the end or the next token that isn't a legal move (another 'go' parameter). */
+    const char* ptr = arg + strlen("searchmoves");
+    while (*ptr && limits->search_move_count < LIMITS_MAX_SEARCH_MOVES) {
+        while (*ptr && isspace((unsigned char) *ptr)) ptr++;
+        if (strlen(ptr) < 4) break;
+        const move_t mv = parse_move(ptr, board);
+        if (!mv) break;
+        const bool legal = make_move(board, mv);
+        pop_move(board);
+        if (legal) limits->search_moves[limits->search_move_count++] = mv;
+        while (*ptr && !isspace((unsigned char) *ptr)) ptr++;
+    }
+}
+
 void parse_go(const char* command, board_t* board, search_state_t* search_state, limits_t* limits) {
     clear_pv_table(search_state); /* Preserves the game history from 'position' for repetition checks. */
     tt_new_search(); /* The TT is kept between moves, it's only cleared on 'ucinewgame'. */
     parse_go_limits(command, board, limits);
+    parse_search_moves(command, board, limits);
     limits->threads = search_threads;
     input_search_started(limits); /* After the limits are reset, a queued 'stop' may set the flag. */
 

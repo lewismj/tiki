@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "bench.h"
@@ -74,13 +75,33 @@ uint64_t bench(int depth) {
 #endif
     const uint64_t start = clock_time_ms();
 
-    for (int i = 0; i < bench_position_count; i++) {
-        printf("\nPosition: %d/%d (%s)\n", i + 1, bench_position_count, bench_positions[i]);
+    /* Stats builds: TIKI_BENCH_FENS names a file of FENs, one per line, searched instead. */
+    const char* const* positions = bench_positions;
+    int position_count = bench_position_count;
+#ifdef TIKI_SEARCH_STATS
+    static char fen_lines[1024][128];
+    static const char* fen_list[1024];
+    const char* fen_file = getenv("TIKI_BENCH_FENS");
+    FILE* f = fen_file ? fopen(fen_file, "r") : NULL;
+    if (f) {
+        int n = 0;
+        while (n < 1024 && fgets(fen_lines[n], sizeof(fen_lines[n]), f)) {
+            fen_lines[n][strcspn(fen_lines[n], "\r\n")] = 0;
+            if (fen_lines[n][0]) { fen_list[n] = fen_lines[n]; n++; }
+        }
+        fclose(f);
+        positions = fen_list;
+        position_count = n;
+    }
+#endif
+
+    for (int i = 0; i < position_count; i++) {
+        printf("\nPosition: %d/%d (%s)\n", i + 1, position_count, positions[i]);
 
         /* Same state as 'ucinewgame', so each result only depends on the position. */
         tt_clear();
         init_search_state(&search_state);
-        snprintf(command, sizeof(command), "position fen %s", bench_positions[i]);
+        snprintf(command, sizeof(command), "position fen %s", positions[i]);
         parse_position(command, &board, &search_state);
 
         reset_time_control(&limits);
@@ -113,6 +134,41 @@ uint64_t bench(int depth) {
     printf("Nodes searched  : %" PRIu64 "\n", nodes);
     printf("Nodes/second    : %" PRIu64 "\n", elapsed ? nodes * 1000 / elapsed : nodes);
 #ifdef TIKI_SEARCH_STATS
+    /* Where the nodes are. */
+    {
+        uint64_t main_nodes = 0;
+        for (int d = 0; d <= 16; d++) main_nodes += stats.nodes_at_depth[d];
+        const double t = nodes ? 100.0 / (double) nodes : 0.0;
+        printf("Node share      : qsearch below its root %.1f%%, qsearch roots (depth 0) %.1f%%, main search %.1f%%\n",
+               t * (double) stats.qsearch_nodes, t * (double) stats.nodes_at_depth[0],
+               t * (double) (main_nodes - stats.nodes_at_depth[0]));
+        printf("By depth        : depth   entered (%% of all)   reached the move loop\n");
+        for (int d = 0; d <= 16; d++) {
+            const uint64_t e = stats.nodes_at_depth[d];
+            if (!e) continue;
+            printf("                  %2d%s %12" PRIu64 " (%5.1f%%)   %5.1f%%\n", d, d == 16 ? "+" : " ", e,
+                   t * (double) e, 100.0 * (double) stats.expanded_at_depth[d] / (double) e);
+        }
+        printf("Moves searched  : depth   TT/first      check   good capt     killer    bad capt      quiet   (full / reduced)\n");
+        for (int d = 0; d < 3; d++) {
+            printf("                  %d    ", d + 2);
+            for (int k = 0; k < 6; k++)
+                printf(" %5.2f/%-5.2f", stats.expanded_at_depth[d + 2] ? (double) stats.move_kind[d][k][0] / (double) stats.expanded_at_depth[d + 2] : 0.0,
+                       stats.expanded_at_depth[d + 2] ? (double) stats.move_kind[d][k][1] / (double) stats.expanded_at_depth[d + 2] : 0.0);
+            printf("   per expanded node\n");
+        }
+        printf("Exits (%% of nodes entered at the depth): depth  draw    TT    TB   RFP  null  probcut  multicut  move loop"
+               " | null tried\n");
+        for (int d = 1; d <= 8; d++) {
+            const uint64_t e = stats.nodes_at_depth[d];
+            if (!e) continue;
+            const double p = 100.0 / (double) e;
+            const uint64_t (*x)[17] = stats.exit_at_depth;
+            printf("                                          %2d %5.1f %5.1f %5.1f %5.1f %5.1f %8.1f %9.1f %10.1f | %5.1f\n",
+                   d, p * x[0][d], p * x[1][d], p * x[2][d], p * x[3][d], p * x[4][d], p * x[5][d], p * x[6][d],
+                   p * stats.expanded_at_depth[d], p * stats.null_tried_at_depth[d]);
+        }
+    }
     /* Move ordering: the higher the first move share and the fewer quiets tried, the better. */
     printf("Cutoffs         : %" PRIu64 ", %.1f%% on the first move\n", stats.cutoffs,
            stats.cutoffs ? 100.0 * (double) stats.first_move_cutoffs / (double) stats.cutoffs : 0.0);
