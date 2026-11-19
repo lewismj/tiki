@@ -46,6 +46,7 @@ void test_pv_flag_applies_to_one_node();
 void test_search_at_max_ply();
 void test_search_tables_cleared_between_searches();
 void test_node_limit_stops_search();
+void test_search_moves_restrict_root();
 void test_smp_helpers_grow_and_shrink();
 void test_fifty_move_rule_and_mate();
 void test_quiescence_in_check();

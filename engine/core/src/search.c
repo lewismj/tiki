@@ -492,7 +492,7 @@ static inline_always move_t find_pv_move(const move_buffer_t* buffer, const sear
     return 0;
 }
 
-/* Stops the search when out of time, or past the node limit ('go nodes', so up to 2047 over).
+/* Stops the search when out of time, or past the node limit ('go nodes', also checked at every node, count_node).
  * 'stop' and 'quit' set the flag from the input thread. */
 static inline_always void check_limits(const search_state_t* search_state, limits_t* limits) {
     ++limits->time_checks;
@@ -513,6 +513,16 @@ static inline_always void node_batch(search_state_t* search_state, limits_t* lim
         check_limits(search_state, limits);
     } else {
         atomic_store_explicit(&search_state->shared_nodes, search_state->nodes, memory_order_relaxed);
+    }
+}
+
+/* Counts a node: the limits every 2048 nodes, and a 'go nodes' limit exactly (the main thread's count), so a
+ * small node budget isn't overshot by up to 2047 nodes. */
+static inline_always void count_node(search_state_t* search_state, limits_t* limits) {
+    if ((++search_state->nodes & 2047) == 0) {
+        node_batch(search_state, limits);
+    } else if (limits->nodes && search_state->thread_id == 0 && search_state->nodes >= limits->nodes) {
+        limits->stop_search_flag = true;
     }
 }
 
@@ -962,7 +972,7 @@ static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* 
 }
 
 int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state, limits_t* limits) {
-    if ((++search_state->nodes & 2047) == 0) node_batch(search_state, limits);
+    count_node(search_state, limits);
     COUNT_STAT(search_state, qsearch_nodes);
     return quiescence_node(alpha, beta, board, search_state, limits);
 }
@@ -1244,8 +1254,8 @@ static int negamax_node(int alpha,
                         limits_t* limits) {
 
     /* Every node, including those that return early (TT, draw, pruning). Checked straight after
-     * counting, so the check runs once per 2048 counted nodes. */
-    if ((++search_state->nodes & 2047) == 0) node_batch(search_state, limits);
+     * counting (count_node). */
+    count_node(search_state, limits);
 #ifdef TIKI_SEARCH_STATS
     const int stat_entry_depth = depth < 0 ? 0 : depth > 16 ? 16 : depth;
     search_state->stats.nodes_at_depth[stat_entry_depth]++;
@@ -1535,8 +1545,9 @@ static int negamax_node(int alpha,
         if (mv == excluded_move) continue;
         /* The child's TT entry starts loading now, before the move is pruned or made (hash_after_move). */
         tt_prefetch(hash_after_move(board, mv));
-        /* At a root in the tablebases, only the moves that keep its best result (syzygy_rank_root). */
-        if (search_state->ply == 0 && !syzygy_root_allows(mv)) continue;
+        /* At a root in the tablebases, only the moves that keep its best result (syzygy_rank_root), and only
+         * those given with 'go searchmoves'. */
+        if (search_state->ply == 0 && (!syzygy_root_allows(mv) || !limits_root_allows(limits, mv))) continue;
         bool is_capture = get_capture_flag(mv);
         const bool is_quiet = !is_capture && !get_promoted_piece(mv);
 
@@ -1804,13 +1815,15 @@ move_t only_legal_move(board_t* board) {
 /* The fallback move when no depth completed: the first legal move the root restriction allows
  * (syzygy_rank_root). Not first_legal_move, which the search uses at any node (the fifty-move rule's
  * checkmate test), where the root's restriction doesn't apply. */
-static move_t first_root_move(board_t* board) {
+static move_t first_root_move(board_t* board, const limits_t* limits) {
     move_buffer_t buffer;
     generate_moves(board, &buffer);
     for (int i = 0; i < buffer.index; i++) {
         bool legal = make_move(board, buffer.moves[i]);
         pop_move(board);
-        if (legal && syzygy_root_allows(buffer.moves[i])) return buffer.moves[i];
+        if (legal && syzygy_root_allows(buffer.moves[i]) && limits_root_allows(limits, buffer.moves[i])) {
+            return buffer.moves[i];
+        }
     }
     return 0;
 }
@@ -2212,7 +2225,7 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
         const thread_result_t main_result = { move, search_state->score, completed_depth };
         move = vote_move(search_state, limits, helpers, helper_count, main_result);
     }
-    if (!move) move = first_root_move(board);
+    if (!move) move = first_root_move(board, limits);
     if (completed_depth > 0) {
         search_state->previous_score = search_state->score;
         search_state->previous_side = board->side;

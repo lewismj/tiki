@@ -16,6 +16,8 @@ void board_to_fen(const board_t* board, int fullmove, char* fen, size_t size);
 void parse_position(const char* position, board_t* board, search_state_t* search_state);
 void parse_go(const char* command, board_t* board, search_state_t* search_state, limits_t* limits);
 void parse_go_limits(const char* command, const board_t* board, limits_t* limits);
+/* 'go searchmoves m1 m2 ...': the legal ones become the root's moves (limits->search_moves), none without it. */
+void parse_search_moves(const char* command, board_t* board, limits_t* limits);
 void new_game(board_t* board, search_state_t* search_state);
 
 

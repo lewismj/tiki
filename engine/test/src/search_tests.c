@@ -1357,20 +1357,47 @@ void test_smp_helpers_grow_and_shrink() {
     }
 }
 
+void test_search_moves_restrict_root() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+    const char* fen = "4kr2/8/8/3q4/8/8/3R4/4K3 w - - 0 1";
+
+    /* Rxd5 wins the queen, the search plays it when it may. */
+    setup_position(fen, &board, &search_state, &limits, 6);
+    limits.quiet = true;
+    parse_search_moves("go depth 6", &board, &limits);
+    TEST_ASSERT_EQUAL_INT(0, limits.search_move_count);
+    TEST_ASSERT_EQUAL_UINT32(parse_move("d2d5", &board), find_best_move(&board, &search_state, &limits));
+
+    /* With 'searchmoves' it plays one of those. Ke1-f1 is illegal (the f8 rook) and dropped, and the list ends
+     * at the next 'go' parameter. */
+    setup_position(fen, &board, &search_state, &limits, 6);
+    limits.quiet = true;
+    parse_search_moves("go searchmoves e1f1 e1e2 e1d1 depth 6", &board, &limits);
+    TEST_ASSERT_EQUAL_INT(2, limits.search_move_count);
+    const move_t mv = find_best_move(&board, &search_state, &limits);
+    TEST_ASSERT_TRUE(mv == parse_move("e1e2", &board) || mv == parse_move("e1d1", &board));
+}
+
 void test_node_limit_stops_search() {
     board_t board;
     search_state_t search_state;
     limits_t limits;
 
-    /* 'go nodes 5000': stopped at the first check past the limit (every 2048 nodes). */
-    setup_position("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
-                   &board, &search_state, &limits, MAX_SEARCH_DEPTH);
-    limits.nodes = 5000;
-    limits.quiet = true;
-    const move_t mv = find_best_move(&board, &search_state, &limits);
-    TEST_ASSERT_TRUE(limits.stop_search_flag);
-    TEST_ASSERT_TRUE(search_state.nodes >= 5000 && search_state.nodes < 5000 + 2048 + MAX_PLY);
-    TEST_ASSERT_TRUE(make_move(&board, mv));
+    /* 'go nodes': stopped at the node that reaches the limit, whether or not it's a multiple of 2048 (the
+     * batch check), so a budget below 2048 isn't overshot. */
+    const uint64_t budgets[] = { 1000, 5000 };
+    for (int i = 0; i < 2; i++) {
+        setup_position("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+                       &board, &search_state, &limits, MAX_SEARCH_DEPTH);
+        limits.nodes = budgets[i];
+        limits.quiet = true;
+        const move_t mv = find_best_move(&board, &search_state, &limits);
+        TEST_ASSERT_TRUE(limits.stop_search_flag);
+        TEST_ASSERT_TRUE(search_state.nodes >= budgets[i] && search_state.nodes < budgets[i] + MAX_PLY);
+        TEST_ASSERT_TRUE(make_move(&board, mv));
+    }
 }
 
 void test_tt_lookup() {

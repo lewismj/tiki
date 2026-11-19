@@ -164,6 +164,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_fifty_move_rule_and_mate);
     RUN_TEST(test_smp_helpers_grow_and_shrink);
     RUN_TEST(test_node_limit_stops_search);
+    RUN_TEST(test_search_moves_restrict_root);
     RUN_TEST(test_lmr_reduction);
     RUN_TEST(test_lmr_cut_node_and_improving);
     RUN_TEST(test_correction_history_learns_without_overshoot);

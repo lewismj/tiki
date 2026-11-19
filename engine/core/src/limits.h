@@ -12,6 +12,9 @@
 #define MOVE_OVERHEAD_DEFAULT 30
 #define MOVE_OVERHEAD_MAX 5000
 
+/* 'go searchmoves': at most this many root moves (more than any position's legal moves). */
+#define LIMITS_MAX_SEARCH_MOVES 256
+
 /*
  * Time management for a clock ('wtime'/'btime', not 'movetime'). From what's left (less the move
  * overhead) and the increment, a base time per move:
@@ -68,6 +71,8 @@ typedef struct align {
     bool adaptive;            /* The soft limit is scaled by the search's stability (a clock, not 'movetime'). */
     bool infinite;
     bool quiet;               /* No 'info' output (datagen, bench tools).           */
+    int search_move_count;    /* 'go searchmoves': the root searches only these moves, 0 for all. */
+    move_t search_moves[LIMITS_MAX_SEARCH_MOVES];
     /* Set by the input thread ('stop', 'quit') while the search reads them. */
     atomic_bool stop_search_flag;
     atomic_bool stop_engine_flag;
@@ -90,6 +95,16 @@ static inline_always void reset_time_control(limits_t* limits) {
     limits->soft_stop_time = 0ULL;
     limits->time_checks = 0ULL;
     limits->nodes = 0ULL;
+    limits->search_move_count = 0;
+}
+
+/* Whether the root may search 'mv' under 'go searchmoves' (any move without it). */
+static inline_always bool limits_root_allows(const limits_t* limits, move_t mv) {
+    if (limits->search_move_count == 0) return true;
+    for (int i = 0; i < limits->search_move_count; i++) {
+        if (limits->search_moves[i] == mv) return true;
+    }
+    return false;
 }
 
 static inline_always uint64_t clock_time_ms() {
