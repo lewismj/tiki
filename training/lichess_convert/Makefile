@@ -2,6 +2,8 @@
 #
 #     make            builds ./lichess_convert (needs libzstd.so.1, the zstd library; no headers needed)
 #     make test       checks it on the small PGNs in tests/ against python-chess (lichess.py's reader)
+#     make test-fishtest PGN=<file.pgn.gz>
+#                     checks --fishtest on a Fishtest PGN against python-chess (tests/compare_fishtest.py)
 
 CORE    := ../../engine/core/src
 CC      ?= clang
@@ -20,7 +22,10 @@ lichess_convert: $(SOURCES) $(wildcard $(CORE)/*.h)
 test: lichess_convert
 	python3 tests/compare.py ./lichess_convert
 
+test-fishtest: lichess_convert
+	python3 tests/compare_fishtest.py ./lichess_convert $(PGN)
+
 clean:
 	rm -f lichess_convert
 
-.PHONY: test clean
+.PHONY: test test-fishtest clean

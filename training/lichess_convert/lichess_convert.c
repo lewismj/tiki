@@ -20,6 +20,14 @@
  *                       The scores are final: don't put these files through rescale.py, whose fit needs
  *                       ordinary evals (syzygy_relabel is fine).
  *     --mate-step S     with --decisive-only, the score per move closer to mate (default 10)
+ *     --fishtest        Fishtest PGNs (Stockfish's test games, fastchess/cutechess comments) instead: each move's
+ *                       comment '{-0.92/19 0.323s}' is the score of the side that made the move, from its point of
+ *                       view, for the position it searched (the one before the move). So a position is written with
+ *                       the comment of the move played from it, when that move is quiet and the comment has a
+ *                       centipawn score ('+M5' mates and comments without a score are skipped). --skip-plies
+ *                       counts from the start of the game, not from the FEN header (the opening book's line), so
+ *                       the book's plies are skipped too. No [%eval] is needed. The input is plain text: pipe
+ *                       the .pgn.gz files of a month in with zcat and give /dev/stdin as the input.
  *
  * Positions kept, as lichess.py: mainline positions after ply 'skip-plies' with a Lichess '[%eval]' that isn't
  * a mate and is within 'max-score' (with --decisive-only: the other evals), not in check, and whose next move is neither a capture nor a promotion.
@@ -31,6 +39,7 @@
  */
 #define _GNU_SOURCE
 #include <errno.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -68,6 +77,7 @@ static int opt_min_elo = 0;
 static int opt_skip_plies = 16;
 static int opt_max_score = 3000;
 static int opt_decisive = 0;        /* --decisive-only: 0 for the normal output. */
+static bool opt_fishtest = false;   /* --fishtest: the comments' scores, not [%eval]. */
 static int opt_mate_step = 10;
 static double opt_sample = 1.0;
 static uint64_t opt_seed = 1;
@@ -486,6 +496,44 @@ static int result_x2(const char* s, size_t n) {       /* White's result * 2, -1 
  */
 enum { MATE_RAMP_MOVES = 20 };
 
+/* A Fishtest comment's centipawn score: optional whitespace, '[+-]?<digits>.<digits>' then '/' (the depth), as the
+ * mover's score in pawns. False for anything else (a mate '+M5/30', 'book', an empty comment). */
+static bool fishtest_score(const char* s, const char* end, int64_t* cp) {
+    while (s < end && is_space(*s)) s++;
+    const char* q = s;
+    if (q < end && (*q == '+' || *q == '-')) q++;
+    const char* int_start = q;
+    while (q < end && is_digit(*q)) q++;
+    if (q == int_start || q >= end || *q != '.') return false;
+    const char* frac_start = ++q;
+    while (q < end && is_digit(*q)) q++;
+    if (q == frac_start || q >= end || *q != '/') return false;
+    char buf[64];
+    const size_t n = (size_t) (q - s);
+    if (n >= sizeof(buf)) return false;
+    memcpy(buf, s, n);
+    buf[n] = 0;
+    const double cents = strtod(buf, NULL) * 100;
+    if (!(cents < 1e9 && cents > -1e9)) return false;
+    *cp = (int64_t) nearbyint(cents);        /* Round half to even, as Python's round(). */
+    return true;
+}
+
+/* The game's ply at a FEN header's position: from its full move number (the last field) and side to move. */
+static int fen_ply(const char* fen, size_t len, int side) {
+    size_t e = len;
+    while (e > 0 && is_space(fen[e - 1])) e--;
+    size_t b = e;
+    while (b > 0 && is_digit(fen[b - 1])) b--;
+    long fullmove = 1;
+    if (b < e) {
+        fullmove = 0;
+        for (size_t i = b; i < e && fullmove < 100000; i++) fullmove = fullmove * 10 + (fen[i] - '0');
+    }
+    if (fullmove < 1) fullmove = 1;
+    return (int) ((fullmove - 1) * 2 + (side == black));
+}
+
 static bool eval_score(int eval_kind, int64_t eval_cp, int64_t* score) {
     const int64_t magnitude = eval_cp < 0 ? -eval_cp : eval_cp;
     const int64_t sign = eval_cp < 0 ? -1 : 1;
@@ -567,7 +615,7 @@ static token_kind next_token(const char* s, const char* e, san_t* san, size_t* l
 /* Converts one game's text (from its '[Event ' line to the next game's). Returns whether lichess.py counts it
  * (it has '[%eval '). */
 static bool convert_game(worker_t* w, const char* text, const char* end) {
-    if (!memmem(text, (size_t) (end - text), "[%eval ", 7)) return false;
+    if (!opt_fishtest && !memmem(text, (size_t) (end - text), "[%eval ", 7)) return false;
     output_t* out = &w->out;
 
     /* Headers. */
@@ -625,6 +673,12 @@ static bool convert_game(worker_t* w, const char* text, const char* end) {
     int eval_kind = EVAL_NONE;
     int64_t eval_cp = 0;
     const uint64_t game_key = opt_sample < 1.0 ? text_hash(text, end) : 0;
+    /* --fishtest: the game's ply at the start (the FEN's), and the position before the last mainline move while
+     * it waits for that move's comment ('pending': it qualified). */
+    const int ply_base = opt_fishtest && fen ? fen_ply(fen, fen_len, main_line->board.side) : 0;
+    uint8_t pending_pos[POS_BYTES];
+    bool pending = false;
+    int pending_ply = 0;
 
     /* Movetext. */
     bool fresh_line = true;
@@ -645,7 +699,16 @@ static bool convert_game(worker_t* w, const char* text, const char* end) {
                 const char* body = s + 1;
                 const char* close = memchr(body, '}', (size_t) (end - body));
                 const char* body_end = close ? close : end;
-                if (!skip && node_depth == 0 && in_variation && eval_kind == EVAL_NONE)
+                if (opt_fishtest) {
+                    int64_t cp;
+                    if (!skip && node_depth == 0 && pending && fishtest_score(body, body_end, &cp) &&
+                        (cp < 0 ? -cp : cp) <= opt_max_score) {
+                        board_t before;
+                        load_pos(pending_pos, &before);
+                        emit(out, &before, before.side == white ? cp : -cp, game_key, pending_ply);
+                    }
+                    if (!skip && node_depth == 0) pending = false;      /* Only the move's first comment. */
+                } else if (!skip && node_depth == 0 && in_variation && eval_kind == EVAL_NONE)
                     eval_kind = find_eval(body, body_end, &eval_cp);
                 if (close) { line = close + 1; line_end = next_line(line, end); }
                 else { line = line_end = end; }
@@ -690,7 +753,13 @@ static bool convert_game(worker_t* w, const char* text, const char* end) {
             else if (kind == T_CASTLE_SHORT || kind == T_CASTLE_LONG) mv = parse_castle(&cur->board, kind == T_CASTLE_SHORT);
             if (!mv && kind != T_NULL) { skip = 1; continue; }
 
-            if (node_depth == 0) {
+            if (node_depth == 0 && opt_fishtest) {
+                /* The position before this move waits for the move's comment, if it qualifies. */
+                pending = mv && ply_base + ply >= opt_skip_plies && !side_in_check(&cur->board) &&
+                          !get_capture_flag(mv) && !get_promoted_piece(mv);
+                if (pending) { save_pos(&cur->board, pending_pos); pending_ply = ply; }
+                ply++;
+            } else if (node_depth == 0) {
                 /* The mainline node 'ply' has its next move: keep its position if it qualifies. */
                 if (ply > opt_skip_plies && !side_in_check(&cur->board) &&
                     !(mv && (get_capture_flag(mv) || get_promoted_piece(mv)))) {
@@ -866,7 +935,7 @@ static double now_seconds(void) {
 static void usage(void) {
     fprintf(stderr, "usage: lichess_convert [--min-elo N] [--skip-plies N] [--max-score N] [--sample F] [--seed N]\n"
                     "                       [--max-positions N] [--threads N]\n"
-                    "                       [--decisive-only N [--mate-step S]] <dump.pgn.zst|dump.pgn> <out.bin>\n");
+                    "                       [--decisive-only N [--mate-step S]] [--fishtest] <dump.pgn.zst|dump.pgn> <out.bin>\n");
     exit(2);
 }
 
@@ -875,7 +944,8 @@ int main(int argc, char** argv) {
     const char* out_path = NULL;
     for (int i = 1; i < argc; i++) {
         const char* a = argv[i];
-        if (a[0] == '-' && a[1] == '-') {
+        if (!strcmp(a, "--fishtest")) opt_fishtest = true;
+        else if (a[0] == '-' && a[1] == '-') {
             if (i + 1 >= argc) usage();
             const char* v = argv[++i];
             if (!strcmp(a, "--min-elo")) opt_min_elo = atoi(v);
@@ -893,7 +963,7 @@ int main(int argc, char** argv) {
         else usage();
     }
     if (!in_path || !out_path || opt_skip_plies < 0 || opt_min_elo < 0 || opt_max_score < 0 ||
-        opt_sample < 0.0 || opt_sample > 1.0 || opt_decisive < 0 || opt_mate_step < 0 ||
+        opt_sample < 0.0 || opt_sample > 1.0 || opt_decisive < 0 || opt_mate_step < 0 || (opt_fishtest && opt_decisive) ||
         (int64_t) opt_decisive + (int64_t) opt_mate_step * (MATE_RAMP_MOVES - 1) > 32767)
         usage();
     if (opt_threads <= 0) {
