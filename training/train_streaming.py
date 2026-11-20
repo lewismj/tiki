@@ -25,10 +25,13 @@ from rich.progress import BarColumn, MofNCompleteColumn, Progress, TextColumn, T
 
 from tiki_nnue.export import export
 from tiki_nnue.model import TikiNNUE
+from tiki_nnue.reference import Reference
 from tiki_nnue.stream import Epoch, StreamData, TrainingStream, ValidationBatches, data_files
 from train import (Log, add_loss_arguments, add_model_arguments, add_schedule_arguments, binary_files,
                    check_loss_arguments, console, epoch_result, init_model, load_model, load_scheduler,
                    make_scheduler, run_epoch)
+
+DEFAULT_REFERENCE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reference", "stockfish-1m.txt")
 
 
 def main():
@@ -48,6 +51,11 @@ def main():
     parser.add_argument("--validation-max", type=int, default=2_000_000,
                         help="positions validated after each epoch, at most (0: all held out)")
     parser.add_argument("--workers", type=int, default=4, help="processes for converting .txt data to .bin")
+    parser.add_argument("--reference", default=DEFAULT_REFERENCE,
+                        help="positions scored by a strong engine ('fen | score | set'), checked after each epoch: "
+                             "the net's scale and ranking against them (see tiki_nnue/reference.py; '' for none)")
+    parser.add_argument("--reference-compare", metavar="NNUE",
+                        help="an exported network (e.g. the current best) whose figures are shown beside the run's")
     start = parser.add_mutually_exclusive_group()
     start.add_argument("--resume", help="checkpoint (.pt) to continue from (its optimiser, schedule and epoch too)")
     start.add_argument("--init", help="checkpoint (.pt) whose weights to start from, with a new optimiser and "
@@ -58,6 +66,11 @@ def main():
     check_loss_arguments(parser, args)
     if args.epoch_positions < 0 or args.buffer < 1 or args.validation_max < 0:
         parser.error("--epoch-positions and --validation-max must be >= 0, --buffer >= 1")
+    if args.reference_compare and not args.reference:
+        parser.error("--reference-compare needs --reference")
+    for option, path in (("--reference", args.reference), ("--reference-compare", args.reference_compare)):
+        if path and not os.path.isfile(path):
+            parser.error(f"{option}: no file '{path}'")
 
     torch.manual_seed(args.seed)
     os.makedirs(args.out, exist_ok=True)
@@ -109,6 +122,17 @@ def main():
     console.print(message)
     log(message)
 
+    reference = None
+    if args.reference:
+        reference = Reference(args.reference, args.reference_compare, args.device)
+        message = f"reference: {len(reference.fens):,} positions from {args.reference}" + (
+            f", compared with {args.reference_compare}" if args.reference_compare else "")
+        console.print(message)
+        log(message)
+        for line in reference.compare_report():
+            console.print(line)
+            log(line)
+
     with Progress(
         TextColumn("{task.description:<12}"),
         BarColumn(),
@@ -145,6 +169,10 @@ def main():
             result = epoch_result(epoch, train_loss, validation, args.loss_power, lr, time.time() - start, name)
             progress.console.print(result)
             log(result)
+            if reference is not None:
+                for line in reference.report(model):
+                    progress.console.print(line)
+                    log(line)
             progress.update(overall, advance=1, loss=f"{validation[0]:.6f}")
 
     log("finished")

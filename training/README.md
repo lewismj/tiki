@@ -406,6 +406,8 @@ It takes the trainer options above, and:
 | `--epoch-positions` | 0 (a whole pass) | positions per epoch, for data too large to pass over often |
 | `--validation-max` | 2,000,000 | positions validated after each epoch, at most (0: all held out) |
 | `--init` | | a checkpoint (`.pt`) whose weights to start from, with a new optimiser and `--lr` schedule from epoch 1: fine-tuning (not with `--resume`, which continues the checkpoint's own schedule) |
+| `--reference` | `reference/stockfish-1m.txt` | positions scored by Stockfish, checked after each epoch ('' for none) |
+| `--reference-compare` | | an exported network (e.g. the current best) whose figures are shown once at the start, for comparison |
 
 - `--data` takes files or directories (their `.bin` and `.txt` files; `.part` files of a
   conversion still running are left out).
@@ -416,6 +418,22 @@ It takes the trainer options above, and:
 - Validation is whole games held out of each file, chosen from the file's name and `--seed`, so
   adding files later doesn't change what the others hold out.
 - Checkpoints are the same as `train.py`'s, so either can `--resume` the other's.
+- **The reference check:** the validation loss measures how well the net fits its own training
+  target, so it can't show a target that is wrong. After each epoch, the net is also scored on
+  6,000 positions (3,000 Lichess, 3,000 Fishtest) whose scores are Stockfish's at 1M nodes, and the
+  log shows, by the size of Stockfish's score:
+  - **scale:** the median |net| / |Stockfish|;
+  - **rank:** the Spearman correlation with Stockfish;
+  - **sign:** how often the net has Stockfish's sign when |score| ≥ 100.
+
+  With `--reference-compare`, the comparison network's figures are shown once at the start, and
+  each epoch adds the median |net| / |comparison|. A scale well away from the comparison network's
+  (the search's margins are tuned to it), or a ranking that stays below it, is a reason to stop the
+  run early. The check takes a fraction of a second per epoch (`tiki_nnue/reference.py`).
+  - **Why it exists:** a run on Lichess + Fishtest data with `--wdl 0.3` had normal validation
+    losses but lost an SPRT by about 50 Elo. Its evals near equality were 1.5 to 1.8 times
+    Stockfish's, against 1.1 for the current net. In Fishtest games (Stockfish against itself at a
+    long time control), +1.5 is won 99% of the time, so the game results pulled the evals up.
 
 #### What worked: `tiki-2026-10-26.nnue`
 
