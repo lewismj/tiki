@@ -19,6 +19,48 @@
 verify_config_t verify_cfg = { .sample = 16, .skip_ply = -1, .rng = 0x9E3779B97F4A7C15ULL };
 verify_tt_counts_t verify_tt;
 verify_class_counts_t verify_classes[vf_count];
+verify_rule_t verify_delta_rule = { .name = "delta pruning: captures that give check" };
+verify_rule_t verify_lmp_rule = { .name = "late move pruning: quiet moves that give check" };
+verify_see_check_diag_t verify_see_check_diag;
+verify_lmr_diag_t verify_lmr_diag;
+verify_journal_t verify_journal;
+
+void verify_journal_grow(void) {
+    const size_t cap = verify_journal.cap ? verify_journal.cap * 2 : (size_t) 1 << 20;
+    verify_journal_entry_t* e = realloc(verify_journal.entries, cap * sizeof(*e));
+    if (!e) {
+        fprintf(stderr, "verify: out of memory for the write journal\n");
+        exit(1);
+    }
+    verify_journal.entries = e;
+    verify_journal.cap = cap;
+}
+
+/* Undoes every recorded write, newest first (an address written twice ends with its first old value). */
+void verify_journal_rollback(void) {
+    for (size_t i = verify_journal.len; i-- > 0;) {
+        const verify_journal_entry_t* e = &verify_journal.entries[i];
+        memcpy(e->addr, &e->old, e->size);
+    }
+    verify_journal.len = 0;
+}
+
+static bool ref_in_check(board_t* board);
+int verify_node_search(board_t* board, search_state_t* search_state, limits_t* limits, int alpha, int depth);
+
+void verify_rule_record(verify_rule_t* rule, bool exempted, void* board_ptr, uint32_t move) {
+    board_t* board = board_ptr;
+    rule->old_prunes++;
+    rule->exempted += exempted;
+    if (!make_move(board, move)) {
+        pop_move(board);
+        rule->illegal++;
+        return;
+    }
+    const bool check = ref_in_check(board);
+    pop_move(board);
+    if (check != exempted) rule->wrong++;
+}
 
 static const char* const feature_names[vf_count] = {
     "RFP", "null move", "ProbCut", "multi-cut", "futility", "LMP (first)", "SEE pruning", "history pruning",
@@ -364,6 +406,168 @@ static void print_decisions(uint64_t total_nodes) {
            verify_tt.kept_deeper_new_move, 100.0 * (double) verify_tt.kept_deeper_new_move / saves);
 }
 
+static void print_rules(void) {
+    const verify_rule_t* rules[] = { &verify_delta_rule, &verify_lmp_rule };
+    for (size_t i = 0; i < sizeof(rules) / sizeof(rules[0]); i++) {
+        const verify_rule_t* r = rules[i];
+        if (!r->old_prunes) continue;
+        printf("\nRule %s: old rule pruned %" PRIu64 ", now searched %" PRIu64 " (%.2f%%), decided wrong %" PRIu64
+               " (must be 0), illegal %" PRIu64 "\n", r->name, r->old_prunes, r->exempted,
+               100.0 * (double) r->exempted / (double) r->old_prunes, r->wrong, r->illegal);
+    }
+}
+
+static double vl_pct(uint64_t a, uint64_t b) {
+    return b ? 100.0 * (double) a / (double) b : 0.0;
+}
+
+/* The LMR diagnostic (verify_lmr_diag_t). */
+static void print_lmr_diag(void) {
+    const verify_lmr_diag_t* g = &verify_lmr_diag;
+    static const char* rs[VL_R] = { "1 ", "2 ", "3 ", "4+" };
+    static const char* places[VL_PLACE] = { "2   ", "3   ", "4-5 ", "6-8 ", "9-16", "17+ " };
+    static const char* nodes_kind[2] = { "PV/all", "cut   " };
+    uint64_t total = 0;
+    for (int c = 0; c < 2; c++)
+        for (int r = 0; r < VL_R; r++)
+            for (int p = 0; p < VL_PLACE; p++) total += g->fail_n[c][r][p];
+    if (!total) return;
+
+    printf("\nLMR: reduced quiet moves that failed low (1 in %d checked), searched again: wrong = beats alpha at full depth;"
+           "\nof the wrong ones, found already with one ply less reduction (else only at full depth)\n",
+           VL_SAMPLE * VL_SAMPLE_FAIL);
+    printf("%-6s %-2s | %8s %7s %9s |", "node", "R", "checked", "wrong%", "found R-1");
+    for (int p = 0; p < VL_PLACE; p++) printf(" place %s", places[p]);
+    printf(" (wrong%%) | nodes: R-1 / R  full / R\n");
+    for (int c = 0; c < 2; c++) {
+        for (int r = 0; r < VL_R; r++) {
+            uint64_t n = 0, w = 0, l = 0;
+            for (int p = 0; p < VL_PLACE; p++) {
+                n += g->fail_n[c][r][p];
+                w += g->fail_wrong[c][r][p];
+                l += g->fail_found_less[c][r][p];
+            }
+            if (!n) continue;
+            printf("%-6s %-2s | %8" PRIu64 " %6.2f%% %8.1f%% |", nodes_kind[c], rs[r], n, vl_pct(w, n), vl_pct(l, w));
+            for (int p = 0; p < VL_PLACE; p++) {
+                if (g->fail_n[c][r][p] >= 20) printf(" %10.2f", vl_pct(g->fail_wrong[c][r][p], g->fail_n[c][r][p]));
+                else printf(" %10s", "-");
+            }
+            const uint64_t* nd = g->fail_nodes[c][r];
+            printf("          | %9.2f  %9.2f\n", nd[0] ? (double) nd[1] / (double) nd[0] : 0.0,
+                   nd[0] ? (double) nd[2] / (double) nd[0] : 0.0);
+        }
+    }
+    printf("(places with fewer than 20 checked: -). Beat alpha one ply less reduced but not at full depth: %" PRIu64 "\n",
+           g->fail_less_only);
+
+    printf("\nLMR: reduced quiet moves that beat alpha (1 in %d checked; the search re-searches them at full depth):\n"
+           "good = still beats alpha at full depth; of the good ones, still beats alpha with one ply MORE reduction\n",
+           VL_SAMPLE);
+    printf("%-6s %-2s | %8s %7s | %15s\n", "node", "R", "checked", "good%", "kept at R+1");
+    for (int c = 0; c < 2; c++) {
+        for (int r = 0; r < VL_R; r++) {
+            const uint64_t n = g->beat_n[c][r];
+            if (!n) continue;
+            printf("%-6s %-2s | %8" PRIu64 " %6.1f%% | %8.1f%% of %5" PRIu64 "\n", nodes_kind[c], rs[r], n,
+                   vl_pct(g->beat_good[c][r], n), vl_pct(g->beat_more_kept[c][r], g->beat_more_n[c][r]),
+                   g->beat_more_n[c][r]);
+        }
+    }
+
+    static const char* adjs[VL_ADJ] = { "cut node (+)", "not improving (+)", "gives check (-)", "history (+/-)",
+                                        "PV node (-)" };
+    printf("\nLMR adjustments, each left out alone:\n"
+           "where it ADDED reduction (fail-low moves): would the wrong ones have been found without it, at what cost\n"
+           "where it REMOVED reduction: good moves (beat alpha at full depth) lost without it; fail-low moves' nodes saved\n");
+    printf("%-18s | %8s %7s %12s %10s | %9s %8s | %8s %12s\n", "adjustment", "added", "wrong%", "found w/o it",
+           "nodes x", "protected", "lost%", "removed", "nodes saved");
+    for (int a = 0; a < VL_ADJ; a++) {
+        printf("%-18s | %8" PRIu64 " %6.2f%% %11.1f%% %9.2fx | %9" PRIu64 " %7.1f%% | %8" PRIu64 " %11.1f%%\n", adjs[a],
+               g->add_n[a], vl_pct(g->add_wrong[a], g->add_n[a]), vl_pct(g->add_found[a], g->add_wrong[a]),
+               g->add_nodes_with[a] ? (double) g->add_nodes_without[a] / (double) g->add_nodes_with[a] : 0.0,
+               g->rem_good_n[a], vl_pct(g->rem_lost[a], g->rem_good_n[a]), g->rem_fail_n[a],
+               g->rem_nodes_with[a] ? 100.0 * (1.0 - (double) g->rem_nodes_without[a] / (double) g->rem_nodes_with[a])
+                                    : 0.0);
+    }
+    printf("(nodes x: the search without the adjustment against the reduced search; nodes saved: by the reduction"
+           " it removes, if it hadn't)\n");
+    static const char* margins[VL_MARGINS] = { "1", "2", "3-4", "5-8", "9-16", "17-32", "33-64", "65-128", "129-256",
+                                               "257+", "mate" };
+    static const char* depth_bands[3] = { "2-3", "4-6", "7+" };
+    printf("\nLMR re-search margins: reduced moves that beat alpha (1 in %d), by the reduced score above the best so far"
+           "\n(tiki eval units). confirm: beats alpha at full depth. shallower agrees: one ply less than full depth gives"
+           "\nthe same verdict. deeper changes: one ply more than full depth gives another verdict. nodes: per check.\n",
+           VL_SAMPLE);
+    printf("%-5s %-8s | %7s %8s | %10s %8s | %10s | %7s | %8s %9s %9s %9s\n", "depth", "margin", "checked", "confirm",
+           "shallow n", "agrees", "deeper chg", "beyond", "reduced", "shallower", "full", "deeper");
+    for (int d = 0; d < 3; d++) {
+        for (int m = 0; m < VL_MARGINS; m++) {
+            const uint64_t n = g->rs_n[d][m];
+            if (!n) continue;
+            const uint64_t* nd = g->rs_nodes[d][m];
+            const uint64_t sn = g->rs_shallow_n[d][m];
+            printf("%-5s %-8s | %7" PRIu64 " %7.1f%% | %10" PRIu64 " %7.1f%% | %9.1f%% | %6.1f%% | %8.0f %9.0f %9.0f %9.0f\n",
+                   depth_bands[d], margins[m], n, vl_pct(g->rs_confirm[d][m], n), sn, vl_pct(g->rs_shallow_agree[d][m], sn),
+                   vl_pct(g->rs_deeper_change[d][m], n), vl_pct(g->rs_beyond_limit[d][m], n), (double) nd[0] / (double) n,
+                   sn ? (double) nd[1] / (double) sn : 0.0, (double) nd[2] / (double) n, (double) nd[3] / (double) n);
+        }
+    }
+    printf("State check: the reduced search repeated from the restored state %" PRIu64 " times, %" PRIu64
+           " with another score or node count (must be 0)\n", g->repeats, g->repeat_mismatches);
+}
+
+static void print_see_check_diag(uint64_t search_nodes) {
+    const verify_see_check_diag_t* g = &verify_see_check_diag;
+    uint64_t total = 0;
+    for (int d = 1; d < VD_DEPTHS; d++)
+        for (int b = 0; b < VD_LOSS_BINS; b++) total += g->n[d][b];
+    if (!total) return;
+    printf("\nQuiet checks skipped by SEE pruning, every one searched (%" PRIu64 ")\n", total);
+    printf("%5s  %-22s %8s %7s %6s\n", "depth", "SEE loss", "pruned", "wrong%", "mates");
+    static const int edges[] = { 0, 10, 31, 34, 51, 91, VD_LOSS_BINS };   /* bins: <=100, ~320/330, ~500, ~900 */
+    static const char* names[] = { "<= 100 (pawn)", "101-300", "301-330 (minor)", "331-500 (rook)", "501-900 (queen)",
+                                   "> 900" };
+    for (int d = 1; d < VD_DEPTHS; d++) {
+        for (int e = 0; e < 6; e++) {
+            uint64_t n = 0, w = 0, m = 0;
+            for (int b = edges[e]; b < edges[e + 1]; b++) {
+                n += g->n[d][b];
+                w += g->wrong[d][b];
+                m += g->mates[d][b];
+            }
+            if (n) printf("%5d  %-22s %8" PRIu64 " %7.2f %6" PRIu64 "\n", d, names[e], n, 100.0 * (double) w / (double) n, m);
+        }
+    }
+    printf("\nWhat a check margin M (quiet checks with SEE >= -M * depth searched) would have kept:\n");
+    printf("%6s %10s %10s %8s %12s %10s\n", "M", "kept", "wrong kept", "mates", "nodes", "% of search");
+    static const int margins[] = { 60, 85, 100, 120, 160, 200, 250, 320, 400, 1000 };
+    for (size_t i = 0; i < sizeof(margins) / sizeof(margins[0]); i++) {
+        uint64_t n = 0, w = 0, m = 0, nodes = 0;
+        for (int d = 1; d < VD_DEPTHS; d++)
+            for (int b = 0; b < VD_LOSS_BINS; b++)
+                if (b * 10 <= margins[i] * d) {
+                    n += g->n[d][b];
+                    w += g->wrong[d][b];
+                    m += g->mates[d][b];
+                    nodes += g->nodes[d][b];
+                }
+        printf("%6d %10" PRIu64 " %10" PRIu64 " %8" PRIu64 " %12" PRIu64 " %9.2f%%\n", margins[i], n, w, m, nodes,
+               100.0 * (double) nodes / (double) search_nodes);
+    }
+    static const char* hist_names[] = { "history < 0", "history 0..1999", "history >= 2000" };
+    static const char* searched_names[] = { "1-3 moves searched", "4-7 moves searched", "8+ moves searched" };
+    printf("\n");
+    for (int i = 0; i < VD_HISTORY; i++)
+        if (g->history_n[i])
+            printf("%-22s %8" PRIu64 " pruned, %.2f%% wrong, %" PRIu64 " mates\n", hist_names[i], g->history_n[i],
+                   100.0 * (double) g->history_wrong[i] / (double) g->history_n[i], g->history_mates[i]);
+    for (int i = 0; i < VD_SEARCHED; i++)
+        if (g->searched_n[i])
+            printf("%-22s %8" PRIu64 " pruned, %.2f%% wrong\n", searched_names[i], g->searched_n[i],
+                   100.0 * (double) g->searched_wrong[i] / (double) g->searched_n[i]);
+}
+
 static void print_classes(void) {
     static const char* const class_names[vc_count] = { "node", "check", "capture", "quiet" };
     printf("\nWrong decisions by what was skipped (counts of wrong decisions; see verify.h for the kinds)\n");
@@ -398,7 +602,8 @@ static void usage(void) {
             "  mirror     each position against its colour-flipped twin, selectivity off (exact)\n"
             "  mirror-full  the same with the normal search (the spread of the differences)\n"
             "  repeat     each position twice from a clean state, normal search (identical)\n"
-            "  decisions  the normal search, 1 in 'sample' selective decisions checked\n");
+            "  decisions  the normal search, 1 in 'sample' selective decisions checked\n"
+            "  qs         a decisions log's qsearch decisions searched again at their alpha (compare builds)\n");
 }
 
 #endif
@@ -499,6 +704,73 @@ int verify_main(int argc, char* argv[]) {
             }
         }
         printf("repeat depth %d, %d positions: %d not identical\n", depth, count, failures);
+    } else if (strcmp(mode, "node") == 0) {
+        /* The 'fen file' is a decisions log: each move-level decision's node ('move depth D ... alpha A')
+         * searched again with its null window at its depth (verify_node_search). Compare two builds on it. */
+        FILE* file = fopen(argv[3], "r");
+        char line[512];
+        int n = 0, above = 0;
+        while (file && fgets(line, sizeof(line), file)) {
+            char* bar = strchr(line, '|');
+            if (!bar || !strstr(line, "| move depth ")) continue;
+            *bar = 0;
+            char* fen = bar + 2;
+            char* end = strchr(fen, '|');
+            const char* d = end ? strstr(end, "depth ") : NULL;
+            const char* a = end ? strstr(end, "alpha ") : NULL;
+            if (!d || !a) continue;
+            *end = 0;
+            const int node_depth = atoi(d + 6);
+            const int alpha = atoi(a + 6);
+            char command[256];
+            limits_t limits;
+            tt_clear();
+            init_search_state(&verify_state);
+            snprintf(command, sizeof(command), "position fen %s", fen);
+            parse_position(command, &verify_board, &verify_state);
+            reset_time_control(&limits);
+            limits.quiet = true;
+            tt_new_search();
+            const int score = verify_node_search(&verify_board, &verify_state, &limits, alpha, node_depth);
+            n++;
+            above += score > alpha;
+            printf("%s|%s| depth %d alpha %d node %d\n", line, fen, node_depth, alpha, score);
+        }
+        if (file) fclose(file);
+        printf("node: %d positions, %d above alpha\n", n, above);
+    } else if (strcmp(mode, "qs") == 0) {
+        /* The 'fen file' is a decisions log: each qsearch decision's position searched again by qsearch with
+         * its null window at its alpha, as it was when the decision was taken. Compare two builds on it. */
+        FILE* file = fopen(argv[3], "r");
+        char line[512];
+        int n = 0, above = 0;
+        while (file && fgets(line, sizeof(line), file)) {
+            char* bar = strchr(line, '|');
+            if (!bar || !strstr(line, "| qsearch ply")) continue;
+            *bar = 0;
+            char* fen = bar + 2;
+            char* end = strchr(fen, '|');
+            const char* a = end ? strstr(end, "alpha ") : NULL;
+            if (!a) continue;
+            *end = 0;
+            const int alpha = atoi(a + 6);
+            char command[256];
+            limits_t limits;
+            tt_clear();
+            init_search_state(&verify_state);
+            snprintf(command, sizeof(command), "position fen %s", fen);
+            parse_position(command, &verify_board, &verify_state);
+            reset_time_control(&limits);
+            limits.quiet = true;
+            tt_new_search();
+            verify_state.ply = 0;
+            const int score = quiescence(alpha, alpha + 1, &verify_board, &verify_state, &limits);
+            n++;
+            above += score > alpha;
+            printf("%s|%s| alpha %d qsearch %d\n", line, fen, alpha, score);
+        }
+        if (file) fclose(file);
+        printf("qs: %d positions, %d above alpha\n", n, above);
     } else if (strcmp(mode, "decisions") == 0) {
         verify_cfg.decisions = true;
         uint64_t nodes = 0;
@@ -510,6 +782,18 @@ int verify_main(int argc, char* argv[]) {
         printf("decisions depth %d, %d positions, %" PRIu64 " nodes (checks included)\n", depth, count, nodes);
         print_decisions(nodes);
         print_classes();
+        {
+            uint64_t check_nodes = 0;
+            for (int f = 0; f < vf_count; f++)
+                for (int d = 0; d < VERIFY_DEPTHS; d++) check_nodes += verify_cfg.counts[f].nodes[d];
+            uint64_t diag_nodes = 0;
+            for (int d = 1; d < VD_DEPTHS; d++)
+                for (int b = 0; b < VD_LOSS_BINS; b++) diag_nodes += verify_see_check_diag.nodes[d][b];
+            const uint64_t used = check_nodes + diag_nodes + verify_lmr_diag.searched_nodes;
+            print_see_check_diag(nodes > used ? nodes - used : 1);
+            print_lmr_diag();
+        }
+        print_rules();
     } else {
         usage();
         failures = 1;

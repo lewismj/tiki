@@ -87,6 +87,125 @@ typedef struct {
 
 extern verify_tt_counts_t verify_tt;
 
+/**
+ * A pruning rule's exemption, checked where it applies: every move the old rule pruned, those the
+ * new rule now searches ('exempted'), and, by making the move, whether each was decided right:
+ * an exempted move must give check, a move still pruned must not ('wrong' counts both).
+ */
+typedef struct {
+    const char* name;
+    uint64_t old_prunes;
+    uint64_t exempted;
+    uint64_t wrong;
+    uint64_t illegal;   /* pseudo-legal moves that turn out illegal: nothing to decide */
+} verify_rule_t;
+
+extern verify_rule_t verify_delta_rule;
+extern verify_rule_t verify_lmp_rule;
+
+/**
+ * Diagnostic (decisions mode): every quiet check SEE pruning skips, searched to see whether skipping
+ * it was wrong, by depth and by its exact SEE loss (in 10 cp bins), so that what any check margin
+ * would keep, recover and cost can be worked out afterwards without changing the search. Also by
+ * the move's history and its place among the moves searched so far.
+ */
+#define VD_DEPTHS 9          /* depth 1..8, index = depth */
+#define VD_LOSS_BINS 201     /* SEE loss / 10, the last bin 2000 cp and more */
+#define VD_HISTORY 3         /* history < 0, 0..1999, >= 2000 */
+#define VD_SEARCHED 3        /* moves searched before it: 1..3, 4..7, 8+ */
+typedef struct {
+    uint64_t n[VD_DEPTHS][VD_LOSS_BINS];
+    uint64_t wrong[VD_DEPTHS][VD_LOSS_BINS];
+    uint64_t mates[VD_DEPTHS][VD_LOSS_BINS];
+    uint64_t nodes[VD_DEPTHS][VD_LOSS_BINS];
+    uint64_t history_n[VD_HISTORY], history_wrong[VD_HISTORY], history_mates[VD_HISTORY];
+    uint64_t searched_n[VD_SEARCHED], searched_wrong[VD_SEARCHED];
+} verify_see_check_diag_t;
+
+extern verify_see_check_diag_t verify_see_check_diag;
+
+/**
+ * LMR diagnostic (decisions mode, verify_lmr in search.c): sampled reduced quiet moves, the child
+ * searched (null window at alpha) with the search's reduction, at full depth, with one ply less and
+ * one ply more reduction, and with each adjustment of lmr_reduction_full left out. All before the
+ * search's own reduced search and shallowest first, so a search never finds a deeper one's TT entry
+ * for the child.
+ *   Moves whose reduced search failed low ("fail"): wrong if the full depth search beats alpha, and
+ *   of those, whether one ply less reduction already finds it (the size of the reduction) or only
+ *   full depth does (the decision to reduce at all).
+ *   Moves whose reduced search beat alpha ("beat", re-searched by the search): good if the full depth
+ *   search beats alpha too, and of those, whether one ply more reduction would still have.
+ *   Adjustments (VL_ADJ): where one added reduction, would the fail-low move have been found without
+ *   it, at what cost in nodes; where one removed reduction, would the good move have been lost without it.
+ */
+#define VL_R 4           /* reduction 1, 2, 3, 4+ */
+#define VL_PLACE 6       /* the move's place among those searched: 2, 3, 4-5, 6-8, 9-16, 17+ */
+#define VL_ADJ 5         /* cut node, not improving, gives check, history, PV node */
+#define VL_MARGINS 11    /* reduced score - best so far: 1, 2, 3-4, 5-8, 9-16, 17-32, 33-64, 65-128, 129-256, 257+, mate */
+#define VL_SAMPLE 4        /* 1 in this many reduced quiet moves is checked (verify_lmr)... */
+#define VL_SAMPLE_FAIL 8   /* ...and the deeper searches for 1 in this many of those that fail low. */
+typedef struct {
+    /* By [cut node][reduction][place]. */
+    uint64_t fail_n[2][VL_R][VL_PLACE], fail_wrong[2][VL_R][VL_PLACE], fail_found_less[2][VL_R][VL_PLACE];
+    /* By [cut node][reduction]: nodes of the reduced search, the search with one ply less and the full depth one. */
+    uint64_t fail_nodes[2][VL_R][3];
+    uint64_t fail_less_only;   /* Beat alpha one ply less reduced, but not at full depth (search instability). */
+    uint64_t beat_n[2][VL_R], beat_good[2][VL_R], beat_more_n[2][VL_R], beat_more_kept[2][VL_R];
+    /* Adjustments [VL_ADJ]: where it added reduction (fail-low moves): checked, wrong, found without it,
+     * nodes with it and without it; where it removed reduction: good moves (beat alpha) checked, lost
+     * without it, and fail-low moves checked with the nodes with it and without it. */
+    uint64_t add_n[VL_ADJ], add_wrong[VL_ADJ], add_found[VL_ADJ], add_nodes_with[VL_ADJ], add_nodes_without[VL_ADJ];
+    uint64_t rem_good_n[VL_ADJ], rem_lost[VL_ADJ], rem_fail_n[VL_ADJ], rem_nodes_with[VL_ADJ],
+        rem_nodes_without[VL_ADJ];
+    uint64_t searched_nodes;   /* Every node the diagnostic's own searches took (not the search's). */
+    /* The state check: the reduced search repeated from the restored state (the first VL_REPEATS
+     * samples), and how many came out with another score or node count. Must be 0. */
+    uint64_t repeats, repeat_mismatches;
+    /* Re-search margins: the reduced moves that beat alpha, by [depth band 2-3, 4-6, 7+][margin band
+     * (VL_MARGINS): the reduced score above the best score so far, tiki's eval units]: checked;
+     * confirmed (beats alpha at full depth); the shallower re-search (one ply less than full depth)
+     * checked where it's deeper than the reduced search, and agreeing with full depth; the deeper one
+     * (one ply more) changing full depth's verdict; at or beyond ply 2 * root depth; and the nodes
+     * of the reduced, shallower, full depth and deeper searches. */
+    uint64_t rs_n[3][VL_MARGINS], rs_confirm[3][VL_MARGINS], rs_shallow_n[3][VL_MARGINS],
+        rs_shallow_agree[3][VL_MARGINS], rs_deeper_change[3][VL_MARGINS], rs_beyond_limit[3][VL_MARGINS];
+    uint64_t rs_nodes[3][VL_MARGINS][4];
+} verify_lmr_diag_t;
+#define VL_REPEATS 2000
+
+extern verify_lmr_diag_t verify_lmr_diag;
+
+/**
+ * Write journal: while 'on', the TT, continuation history and correction history writes are recorded
+ * (address, old value, size) so verify_journal_rollback can undo them, newest first. The
+ * counterfactual searches of a diagnostic (verify_lmr) each start from the same state this way; the
+ * small tables (history, capture history, killers) are copied instead. One search thread.
+ */
+typedef struct {
+    void* addr;
+    uint64_t old;
+    uint8_t size;
+} verify_journal_entry_t;
+
+typedef struct {
+    verify_journal_entry_t* entries;
+    size_t len, cap;
+    bool on;
+} verify_journal_t;
+
+extern verify_journal_t verify_journal;
+void verify_journal_grow(void);
+void verify_journal_rollback(void);
+
+static inline void verify_journal_record(void* addr, uint64_t old, int size) {
+    if (!verify_journal.on) return;
+    if (verify_journal.len == verify_journal.cap) verify_journal_grow();
+    verify_journal.entries[verify_journal.len++] = (verify_journal_entry_t) { addr, old, (uint8_t) size };
+}
+
+/* 'exempted': the new rule searches the move the old one pruned. 'move' is pseudo-legal on 'board'. */
+void verify_rule_record(verify_rule_t* rule, bool exempted, void* board, uint32_t move);
+
 /* Whether this decision is to be checked (a TIKI_VERIFY build in 'decisions' mode, outside a check,
  * and sampled). Counts the decision either way. */
 bool verify_take(verify_feature_t feature, int depth);

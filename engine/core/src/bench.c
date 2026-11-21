@@ -35,7 +35,7 @@ const int bench_position_count = (int) (sizeof(bench_positions) / sizeof(bench_p
 
 /* Entries used (non-zero), the sum of their |values| and how many are near +-HISTORY_MAX. */
 typedef struct {
-    uint64_t entries, used, total, near_bound;
+    uint64_t entries, used, total, near_bound, above_half;
 } history_summary_t;
 
 static void summarise(history_summary_t* summary, int value) {
@@ -45,6 +45,7 @@ static void summarise(history_summary_t* summary, int value) {
     summary->used++;
     summary->total += (uint64_t) magnitude;
     if (magnitude >= HISTORY_MAX * 9 / 10) summary->near_bound++;
+    if (magnitude >= HISTORY_MAX / 2) summary->above_half++;
 }
 
 static void print_summary(const char* name, const history_summary_t* summary) {
@@ -52,7 +53,103 @@ static void print_summary(const char* name, const history_summary_t* summary) {
     printf("%s: %.2f%% of entries used, mean |value| %.0f, %.1f%% of those near the bound\n", name,
            100.0 * (double) summary->used / (double) (summary->entries ? summary->entries : 1),
            (double) summary->total / used, 100.0 * (double) summary->near_bound / used);
+#ifdef TIKI_SEARCH_STATS
+    printf("%*s  (%.1f%% of those at half the bound or more)\n", (int) strlen(name), "",
+           100.0 * (double) summary->above_half / used);
+#endif
 }
+
+#ifdef TIKI_SEARCH_STATS
+/* History weighting (stat_order_cut): the same cutters and candidates under each weighting. */
+static void print_history_weights(const search_stats_t* stats) {
+    static const char* bands[3] = { "1-3", "4-6", "7+ " };
+        printf("History weights : depth order        |  cutters  mean  median |    #1    #2  #3-4  #5-8   #9+ |"
+               " vs as ordered: higher  lower  4+ higher  4+ lower\n");
+        static const char* weightings[7] = { "as ordered  ", "main only   ", "cont 1 only ", "cont 2 only ",
+                                             "cont 4 only ", "cont 1+2+4  ", "main+2c1+2c2+c4" };
+        for (int b = 0; b < 3; b++) {
+            const uint64_t n = stats->ordh_cuts[b];
+            for (int o = 0; o < 7; o++) {
+                const uint64_t* hist = stats->ordh_rank_hist[b][o];
+                int median = 0;
+                uint64_t seen = 0;
+                while (median < 32 && (seen += hist[median]) * 2 < n) median++;
+                const uint64_t* r = stats->ordh_bucket[b][o];
+                const double k = n ? 100.0 / (double) n : 0.0;
+                printf("                  %s   %-15s | %8" PRIu64 " %5.2f  %5d%s | %5.1f %5.1f %5.1f %5.1f %5.1f |"
+                       "                %5.1f  %5.1f      %5.1f     %5.1f\n", bands[b], weightings[o], n,
+                       n ? (double) stats->ordh_rank_sum[b][o] / (double) n : 0.0, median + 1, median >= 31 ? "+" : " ",
+                       k * (double) r[0], k * (double) r[1], k * (double) r[2], k * (double) r[3], k * (double) r[4],
+                       k * (double) stats->ordh_up[b][o], k * (double) stats->ordh_down[b][o],
+                       k * (double) stats->ordh_up4[b][o], k * (double) stats->ordh_down4[b][o]);
+            }
+        }
+        printf("                  cutoffs left out (a candidate's history values not found): %" PRIu64 "\n",
+               stats->ordh_missing);
+
+    /* Main vs continuation: does each put the cutting move in its top 3, and its rank as ordered then. */
+    printf("Main vs cont    : depth | top 3 by: both        main only   cont only   neither   (%% of cutters, mean rank"
+           " as ordered)\n");
+    for (int b = 0; b < 3; b++) {
+        const uint64_t n = stats->ordh_cuts[b];
+        printf("                  %s   |", bands[b]);
+        static const int cells[4][2] = { { 1, 1 }, { 1, 0 }, { 0, 1 }, { 0, 0 } };
+        for (int c = 0; c < 4; c++) {
+            const uint64_t k = stats->ordh_agree[b][cells[c][0]][cells[c][1]];
+            printf("  %5.1f%% %4.2f", n ? 100.0 * (double) k / (double) n : 0.0,
+                   k ? (double) stats->ordh_agree_rank[b][cells[c][0]][cells[c][1]] / (double) k : 0.0);
+        }
+        printf("\n");
+    }
+
+    /* Update rules: shadow main history (learnt by another rule) + the continuation history. */
+    printf("Update rules    : depth main history    |  mean |    #1    #2  #3-4  #5-8   #9+ | vs as ordered: higher"
+           "  lower\n");
+    static const char* rules[6] = { "as ordered     ", "engine's rule  ", "linear bonus   ", "no malus       ",
+                                    "half malus     ", "bonus on cuts  " };
+    for (int b = 0; b < 3; b++) {
+        const uint64_t n = stats->ordh_cuts[b];
+        const double k = n ? 100.0 / (double) n : 0.0;
+        for (int u = 0; u < 6; u++) {
+            const uint64_t* r = stats->ordu_bucket[b][u];
+            printf("                  %s   %s | %5.2f | %5.1f %5.1f %5.1f %5.1f %5.1f |                %5.1f  %5.1f\n",
+                   bands[b], rules[u], n ? (double) stats->ordu_rank_sum[b][u] / (double) n : 0.0,
+                   k * (double) r[0], k * (double) r[1], k * (double) r[2], k * (double) r[3], k * (double) r[4],
+                   k * (double) stats->ordu_up[b][u], k * (double) stats->ordu_down[b][u]);
+        }
+    }
+}
+
+/* The quiet history updates (stat_history_update) by depth, and the maluses per quiet cutoff. */
+static void print_history_updates(const search_stats_t* stats) {
+    static const char* bands[3] = { "1-3", "4-6", "7+ " };
+    printf("History updates : depth |  bonuses  (not a cutoff)   maluses  malus/bonus | nominal size  actual main change\n");
+    for (int d = 1; d <= 12; d++) {
+        const uint64_t bonuses = stats->upd_bonus[d], maluses = stats->upd_malus[d], all = bonuses + maluses;
+        if (!all) continue;
+        printf("                  %2d%s   | %9" PRIu64 "  (%5.1f%%)   %9" PRIu64 "  %10.2f | %12.0f  %12.0f (%.0f%%)\n", d,
+               d == 12 ? "+" : " ", bonuses, bonuses ? 100.0 * (double) stats->upd_bonus_no_cut[d] / (double) bonuses : 0.0,
+               maluses, bonuses ? (double) maluses / (double) bonuses : 0.0, (double) stats->upd_nominal[d] / (double) all,
+               (double) stats->upd_actual[d] / (double) all,
+               stats->upd_nominal[d] ? 100.0 * (double) stats->upd_actual[d] / (double) stats->upd_nominal[d] : 0.0);
+    }
+    printf("Maluses per quiet cutoff: depth |     0      1      2    3-4    5-8     9+\n");
+    for (int b = 0; b < 3; b++) {
+        const uint64_t* m = stats->upd_malus_per_cut[b];
+        const uint64_t n = m[0] + m[1] + m[2] + m[3] + m[4] + m[5];
+        const double k = n ? 100.0 / (double) n : 0.0;
+        printf("                          %s   | %5.1f  %5.1f  %5.1f  %5.1f  %5.1f  %5.1f  (%%)\n", bands[b], k * (double) m[0],
+               k * (double) m[1], k * (double) m[2], k * (double) m[3], k * (double) m[4], k * (double) m[5]);
+    }
+}
+
+/* The phase of a game a position is in, by its place among the game's positions (0 the first). */
+#define BENCH_PHASES 3
+static int bench_phase(int place) {
+    return place < 5 ? 0 : place < 20 ? 1 : 2;
+}
+static const char* bench_phase_names[BENCH_PHASES] = { "positions 1-5 of a game", "positions 6-20", "positions 21+" };
+#endif
 
 uint64_t bench(int depth) {
     if (depth <= 0) depth = BENCH_DEFAULT_DEPTH;
@@ -75,34 +172,79 @@ uint64_t bench(int depth) {
 #endif
     const uint64_t start = clock_time_ms();
 
-    /* Stats builds: TIKI_BENCH_FENS names a file of FENs, one per line, searched instead. */
+    /* Stats builds: TIKI_BENCH_FENS names a file of FENs, one per line, searched instead. A line
+     * starting with '#' starts a game: its positions are consecutive positions of one game (the
+     * moves one side played). Without such lines every position is a game of its own.
+     * TIKI_BENCH_KEEP=history keeps the search state from one position of a game to the next, as
+     * in play: the history (halved before each search, as every search does), the continuation and
+     * correction history and the statistics' shadow counter moves; the TT is cleared. =all keeps
+     * the TT too, as in play. Otherwise (the control) each position starts as after 'ucinewgame'. */
     const char* const* positions = bench_positions;
     int position_count = bench_position_count;
 #ifdef TIKI_SEARCH_STATS
-    static char fen_lines[1024][128];
-    static const char* fen_list[1024];
+    enum { max_fens = 4096 };
+    static char fen_lines[max_fens][128];
+    static const char* fen_list[max_fens];
+    static int game_place[max_fens];   /* The position's place in its game, 0 the first. */
+    int keep = 0;
+    const char* keep_env = getenv("TIKI_BENCH_KEEP");
+    if (keep_env && strcmp(keep_env, "history") == 0) keep = 1;
+    if (keep_env && strcmp(keep_env, "all") == 0) keep = 2;
+    for (int i = 0; i < bench_position_count; i++) game_place[i] = 0;
     const char* fen_file = getenv("TIKI_BENCH_FENS");
     FILE* f = fen_file ? fopen(fen_file, "r") : NULL;
     if (f) {
-        int n = 0;
-        while (n < 1024 && fgets(fen_lines[n], sizeof(fen_lines[n]), f)) {
-            fen_lines[n][strcspn(fen_lines[n], "\r\n")] = 0;
-            if (fen_lines[n][0]) { fen_list[n] = fen_lines[n]; n++; }
+        int n = 0, place = 0;
+        bool markers = false;
+        char line[128];
+        while (n < max_fens && fgets(line, sizeof(line), f)) {
+            line[strcspn(line, "\r\n")] = 0;
+            if (line[0] == '#') {
+                markers = true;
+                place = 0;
+                continue;
+            }
+            if (!line[0]) continue;
+            memcpy(fen_lines[n], line, sizeof(line));
+            fen_list[n] = fen_lines[n];
+            game_place[n] = markers ? place++ : 0;
+            n++;
         }
         fclose(f);
         positions = fen_list;
         position_count = n;
     }
+    static search_stats_t phase_stats[BENCH_PHASES];   /* Large: static, cleared here. */
+    memset(phase_stats, 0, sizeof(phase_stats));
+    int phase_positions[BENCH_PHASES] = {0};
+    history_summary_t phase_history[BENCH_PHASES] = {{0}}, phase_cont[BENCH_PHASES] = {{0}};
+    /* TIKI_BENCH_AGE: how much of the history is kept before each search, 1/2 (as the engine), 3/4 or 1. */
+    const char* age_env = getenv("TIKI_BENCH_AGE");
+    stat_history_age_quarters = age_env && strcmp(age_env, "3/4") == 0 ? 3 : age_env && strcmp(age_env, "1") == 0 ? 4 : 2;
+    printf("History ageing  : %d/4 of the history kept before each search (TIKI_BENCH_AGE)\n", stat_history_age_quarters);
+    printf("Search state    : %s\n", keep == 2 ? "kept within a game, TT too (TIKI_BENCH_KEEP=all)" :
+           keep == 1 ? "kept within a game, TT cleared (TIKI_BENCH_KEEP=history)" : "reset for every position");
 #endif
 
     for (int i = 0; i < position_count; i++) {
         printf("\nPosition: %d/%d (%s)\n", i + 1, position_count, positions[i]);
 
-        /* Same state as 'ucinewgame', so each result only depends on the position. */
+        /* Same state as 'ucinewgame', so each result only depends on the position (stats builds:
+         * unless the search state is kept within a game, see TIKI_BENCH_KEEP). */
+#ifdef TIKI_SEARCH_STATS
+        const bool new_game = keep == 0 || game_place[i] == 0;
+        if (new_game || keep == 1) tt_clear();
+        if (new_game) init_search_state(&search_state);
+#else
         tt_clear();
         init_search_state(&search_state);
+#endif
         snprintf(command, sizeof(command), "position fen %s", positions[i]);
         parse_position(command, &board, &search_state);
+#ifdef TIKI_SEARCH_STATS
+        /* Kept state: before each search as 'go' does (history halved, killers and PV cleared). */
+        if (keep) clear_pv_table(&search_state);
+#endif
 
         reset_time_control(&limits);
         limits.depth = depth;
@@ -115,6 +257,16 @@ uint64_t bench(int depth) {
             uint64_t* total = (uint64_t*) &stats;
             const uint64_t* add = (const uint64_t*) &search_state.stats;
             for (size_t w = 0; w < sizeof(stats) / sizeof(uint64_t); w++) total[w] += add[w];
+            const int phase = bench_phase(game_place[i]);
+            uint64_t* phase_total = (uint64_t*) &phase_stats[phase];
+            for (size_t w = 0; w < sizeof(stats) / sizeof(uint64_t); w++) phase_total[w] += add[w];
+            memset(&search_state.stats, 0, sizeof(search_state.stats));
+            phase_positions[phase]++;
+            /* The history tables as this search left them. */
+            for (int pc = 0; pc < 12; pc++)
+                for (int sq = 0; sq < 64; sq++) summarise(&phase_history[phase], search_state.history_moves[pc][sq]);
+            const int16_t* cont = &(*search_state.cont_history)[0][0][0];
+            for (size_t e = 0; e < sizeof(cont_history_t) / sizeof(int16_t); e++) summarise(&phase_cont[phase], cont[e]);
         }
 #endif
 
@@ -323,9 +475,78 @@ uint64_t bench(int depth) {
                "the full depth null window search (not necessarily >= beta, see the table above)\n", stats.lmr_searches,
                stats.lmr_searches ? 100.0 * (double) stats.lmr_fail_highs / (double) stats.lmr_searches : 0.0,
                stats.lmr_searches ? 100.0 * (double) stats.lmr_research_holds / (double) stats.lmr_searches : 0.0);
+        {
+            uint64_t all = 0, beyond = 0, ext5 = 0;
+            for (int q = 0; q < 13; q++) all += stats.ply_quarters[q];
+            for (int q = 8; q < 13; q++) beyond += stats.ply_quarters[q];
+            for (int e = 15; e < 32; e++) ext5 += stats.ext_net[e];
+            const double k = all ? 100.0 / (double) all : 0.0;
+            printf("Extensions      : main search nodes by extensions less reductions on the path (%%):");
+            for (int e = 0; e < 32; e++)
+                if (stats.ext_net[e]) printf(" %s%d:%.1f", e == 0 ? "<=" : e == 31 ? ">=" : "", e - 10, k * (double) stats.ext_net[e]);
+            printf("\n                  net +5 or more: %.1f%%; at or beyond ply 2 x root depth: %.2f%%; by ply / root depth (quarters):",
+                   k * (double) ext5, k * (double) beyond);
+            for (int q = 0; q < 13; q++) printf(" %.1f", k * (double) stats.ply_quarters[q]);
+            printf("\n");
+        }
+        printf("LMR node cost   : reduction | reduced searches | re-searched at full depth: didn't hold  needed"
+               " | %% of all nodes: reduced  re-search not held  needed\n");
+        for (int r = 0; r < 4; r++) {
+            const uint64_t* cost = stats.lmr_cost[r];
+            const double k = nodes ? 100.0 / (double) nodes : 0.0;
+            printf("                  %s        | %16" PRIu64 " |                %12" PRIu64 " %8" PRIu64
+                   " |                 %5.1f%%             %5.1f%%   %5.1f%%\n", reductions[r], cost[0], cost[1], cost[2],
+                   k * (double) cost[0], k * (double) cost[1], k * (double) cost[2]);
+        }
+
+        /* Move ordering diagnostic (stat_order_cut): is the ordering where the search loses its work? */
+        printf("\nOrdering        : depth node  |  move loops   cut off  by move #1 | cutting move:  TT/PV  good capt"
+               "  killer 1  killer 2   quiet  bad capt\n");
+        static const char* node_types[2] = { "PV/all", "cut   " };
+        for (int b = 0; b < 3; b++) {
+            for (int t = 0; t < 2; t++) {
+                const uint64_t loops = stats.ord_loops[b][t], cuts = stats.ord_cuts[b][t];
+                printf("                  %s  %s | %11" PRIu64 "  %7.1f%%  %8.1f%%  |\n", bands[b], node_types[t], loops,
+                       loops ? 100.0 * (double) cuts / (double) loops : 0.0,
+                       cuts ? 100.0 * (double) stats.ord_first[b][t] / (double) cuts : 0.0);
+            }
+            const uint64_t* band = stats.ord_band[b];
+            const uint64_t cuts = band[0] + band[1] + band[2] + band[3] + band[4] + band[5];
+            const double k = cuts ? 100.0 / (double) cuts : 0.0;
+            printf("                  %s  both   |                                   |              %5.1f%%    %5.1f%%"
+                   "    %5.1f%%    %5.1f%%  %5.1f%%    %5.1f%%\n", bands[b], k * (double) band[0], k * (double) band[1],
+                   k * (double) band[2], k * (double) band[3], k * (double) band[4], k * (double) band[5]);
+        }
+        printf("Wasted work     : depth | move loop nodes: cut off  no cutoff | before the cutting move: %% of the cut-off"
+               " loops' nodes  %% of all nodes\n");
+        for (int b = 0; b < 3; b++) {
+            const uint64_t cut_nodes = stats.ord_loop_nodes[b][1], other = stats.ord_loop_nodes[b][0];
+            printf("                  %s   |          %12" PRIu64 " %10" PRIu64 " |                         %5.1f%%"
+                   "                    %5.1f%%\n", bands[b], cut_nodes, other,
+                   cut_nodes ? 100.0 * (double) stats.ord_wasted[b] / (double) cut_nodes : 0.0,
+                   nodes ? 100.0 * (double) stats.ord_wasted[b] / (double) nodes : 0.0);
+        }
+        {
+            static const char* band_names[6] = { "TT/PV", "good capture", "killer 1", "killer 2", "quiet", "bad capture" };
+            printf("                  by the cutting move's band (%% of all nodes):");
+            for (int i = 0; i < 6; i++)
+                printf(" %s %.1f%%%s", band_names[i], nodes ? 100.0 * (double) stats.ord_wasted_band[i] / (double) nodes : 0.0,
+                       i < 5 ? "," : "\n");
+        }
+        print_history_weights(&stats);
+        print_history_updates(&stats);
     }
 #endif
     print_summary("History         ", &history);
+#ifdef TIKI_SEARCH_STATS
+    for (int ph = 0; ph < BENCH_PHASES; ph++) {
+        if (!phase_positions[ph]) continue;
+        printf("\n%s: %d positions\n", bench_phase_names[ph], phase_positions[ph]);
+        print_summary("  history (after each search)     ", &phase_history[ph]);
+        print_summary("  continuation (after each search)", &phase_cont[ph]);
+        print_history_weights(&phase_stats[ph]);
+    }
+#endif
 
     init_transposition_table(previous_mb ? previous_mb : BENCH_HASH_MB);
     return nodes;

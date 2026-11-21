@@ -913,14 +913,14 @@ void test_lmr_reduction() {
     TEST_ASSERT_EQUAL_INT(lmr_reduction(20, LMR_TABLE_SIZE - 1, false, 0, false, true), lmr_reduction(20, 200, false, 0, false, true));
 
     /* History: PLY_GRAIN / LMR_HISTORY_DIVISOR of a ply less per point of a good score, more per point
-     * of a bad one, summed with the table's fraction before rounding down; within [0, depth - 1]. */
+     * of a bad one, summed with the table's fraction before rounding down; within [0, depth - 2]. */
     const int t = lmr_table[12][20];
     const int histories[] = { 0, LMR_HISTORY_DIVISOR / 4, LMR_HISTORY_DIVISOR - 1, LMR_HISTORY_DIVISOR,
                               -LMR_HISTORY_DIVISOR / 4, -LMR_HISTORY_DIVISOR, HISTORY_MAX, -HISTORY_MAX };
     for (int i = 0; i < (int) (sizeof(histories) / sizeof(*histories)); i++) {
         const int g = t - histories[i] * PLY_GRAIN / LMR_HISTORY_DIVISOR;
         const int plies = g <= 0 ? 0 : g / PLY_GRAIN;
-        TEST_ASSERT_EQUAL_INT(plies < 11 ? plies : 11, lmr_reduction(12, 20, false, histories[i], false, true));
+        TEST_ASSERT_EQUAL_INT(plies < 10 ? plies : 10, lmr_reduction(12, 20, false, histories[i], false, true));
     }
 }
 

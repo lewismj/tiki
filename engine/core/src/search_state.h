@@ -43,6 +43,16 @@ typedef struct {
      * [0] searches, [1] beat alpha (so re-searched at full depth), and what the full depth search
      * then found: [2] at or below alpha, [3] between alpha and beta, [4] at or above beta. */
     uint64_t lmr[3][2][6][4][5];
+    /* Nodes of reduced searches by [reduction 1, 2, 3, 4+]: [0] the reduced searches, and the searches
+     * again at full depth of those that beat alpha: [1] ending at or below alpha (the re-search
+     * didn't hold), [2] above it (needed). */
+    uint64_t lmr_cost[4][3];
+    /* Main search nodes by where they are against the iteration's depth, at entry (before the node's
+     * own check extension): [ply + depth - root depth + 10], the extensions less the reductions on
+     * the path (0 for none, clamped to -10 .. +21); and by ply in quarters of the root depth (0 ..
+     * 11, [12] 3x or more), so [8] onwards is at or beyond ply 2 * root depth. */
+    uint64_t ext_net[32];
+    uint64_t ply_quarters[13];
     /* Capture history's effect on ordering, by [depth band][non-PV, PV][no TT move, TT move], over the
      * captures other than the TT move at move loops with at least two of them: the loops, those
      * where it changed the top capture, the captures, those whose place among the captures it
@@ -84,7 +94,64 @@ typedef struct {
     /* Moves searched at nodes entered with depth 2-4, by [depth - 2][kind: TT or first move, check, good
      * capture or promotion, killer, bad capture, other quiet][full depth, reduced]. */
     uint64_t move_kind[3][6][2];
+    /* Move ordering diagnostic (stat_order_cut, stat_order_loop_end), singular searches left out. By
+     * [depth band 1-3, 4-6, 7+]: move loops by the node's expected type [PV or all node, cut node],
+     * those that cut off and those cut by the first move searched; the cutting move's ordering band
+     * [TT or PV move, good capture or queen promotion, killer 1, killer 2, quiet, losing capture];
+     * the nodes the move loops took [didn't cut off, cut off] and, of the ones that cut off, the
+     * nodes spent on the moves searched before the cutting move (by depth band and by its band). */
+    uint64_t ord_loops[3][2];
+    uint64_t ord_cuts[3][2];
+    uint64_t ord_first[3][2];
+    uint64_t ord_band[3][6];
+    uint64_t ord_loop_nodes[3][2];
+    uint64_t ord_wasted[3];
+    uint64_t ord_wasted_band[6];
+    /* History weighting diagnostic (stat_order_cut), the same quiet-band cutoffs and candidates: the
+     * cutting move's rank among the quiet-band moves by [depth band][order: as ordered, main history
+     * only, continuation 1 ply back only, 2 only, 4 only, the three continuations, main + 2 * ply 1
+     * + 2 * ply 2 + ply 4], from the history values when the moves were scored. The sum of ranks
+     * (mean), ranks 1..31 and 32+ (median), the rank buckets 1, 2, 3-4, 5-8, 9+, and against the
+     * order as it is: cutters ranked higher, lower, 4+ places higher, 4+ places lower. 'ordh_missing':
+     * cutoffs left out, a candidate's values not found (shouldn't happen). */
+    uint64_t ordh_cuts[3];
+    uint64_t ordh_rank_sum[3][7];
+    uint64_t ordh_rank_hist[3][7][32];
+    uint64_t ordh_bucket[3][7][5];
+    uint64_t ordh_up[3][7];
+    uint64_t ordh_down[3][7];
+    uint64_t ordh_up4[3][7];
+    uint64_t ordh_down4[3][7];
+    uint64_t ordh_missing;
+    /* Main vs continuation history at the same cutoffs, by [depth band][main history alone ranks the
+     * cutting move in the top 3][the three continuations alone do]: cutoffs, and the sum of its
+     * rank as ordered. */
+    uint64_t ordh_agree[3][2][2];
+    uint64_t ordh_agree_rank[3][2][2];
+    /* History updates (stat_history_update), by the node's depth (1..11, [12] 12+): bonuses (a quiet
+     * move raised alpha), those that didn't cut off, maluses; the nominal sizes and the main history's
+     * actual change (gravity shrinks it near the bound). And the maluses at a quiet cutoff, by [depth
+     * band][0, 1, 2, 3-4, 5-8, 9+]. */
+    uint64_t upd_bonus[13];
+    uint64_t upd_bonus_no_cut[13];
+    uint64_t upd_malus[13];
+    uint64_t upd_nominal[13];
+    uint64_t upd_actual[13];
+    uint64_t upd_malus_per_cut[3][6];
+    /* Update rules: the same cutoffs and candidates ranked by a shadow main history (STAT_SHADOWS,
+     * learnt from the same search events by another rule) plus the continuation history, by [depth
+     * band][order: as ordered, then shadow 0..4], as ordh_*: rank sum, buckets, higher / lower. */
+    uint64_t ordu_rank_sum[3][6];
+    uint64_t ordu_bucket[3][6][5];
+    uint64_t ordu_up[3][6];
+    uint64_t ordu_down[3][6];
 } search_stats_t;
+
+/* Shadow main history tables (statistics only, the search doesn't read them), each learnt by
+ * another update rule from the same bonuses and maluses: 0 the engine's rule (a check: it must rank
+ * as the engine does), 1 a linear bonus min(100 * depth, HIST_BONUS_MAX), 2 no malus, 3 half the
+ * malus, 4 a bonus only for a move that cut off (not one that only raised alpha). */
+#define STAT_SHADOWS 5
 
 /* Only 64-bit counters, so the bench can sum two of them word by word. */
 static_assert(sizeof(search_stats_t) % sizeof(uint64_t) == 0, "search_stats_t holds uint64_t counters only");
@@ -152,6 +219,7 @@ typedef struct align {
     uint32_t best_move_changes; /* Times another move took the lead at the root this depth (tm_instability_scale). */
 #ifdef TIKI_SEARCH_STATS
     search_stats_t stats;
+    int32_t stat_shadow_history[STAT_SHADOWS][12][64];   /* See STAT_SHADOWS. */
 #endif
     uint8_t ply;
     uint8_t root_depth;        /* Depth of the iteration being searched, bounds the singular extensions. */
@@ -187,9 +255,24 @@ static inline_always void clear_search_tables(search_state_t* search_state) {
  * Keeping it unchanged lost Elo (SPRT -16 +- 9, before the scaled bonus). Halving it against
  * clearing it: +4.7 +- 5.6 after 5960 games, stopped at LLR 1.23 [0, 5] (kept as not a loss).
  */
+#ifdef TIKI_SEARCH_STATS
+/* Stats builds: the quarters of the history kept before each search, 2 (halved) unless the bench
+ * says otherwise (TIKI_BENCH_AGE, bench.c). The capture history is halved regardless. */
+extern int stat_history_age_quarters;
+#endif
 static inline_always void age_history(search_state_t* search_state) {
     int32_t* h = &search_state->history_moves[0][0];
+#ifdef TIKI_SEARCH_STATS
+    const int quarters = stat_history_age_quarters;
+    for (size_t i = 0; i < sizeof(search_state->history_moves) / sizeof(*h); i++)
+        h[i] = quarters == 2 ? h[i] / 2 : h[i] * quarters / 4;
+    /* The shadow tables are aged as the history is. */
+    int32_t* sh = &search_state->stat_shadow_history[0][0][0];
+    for (size_t i = 0; i < sizeof(search_state->stat_shadow_history) / sizeof(*sh); i++)
+        sh[i] = quarters == 2 ? sh[i] / 2 : sh[i] * quarters / 4;
+#else
     for (size_t i = 0; i < sizeof(search_state->history_moves) / sizeof(*h); i++) h[i] /= 2;
+#endif
     int32_t* c = &search_state->capture_history[0][0][0];
     for (size_t i = 0; i < sizeof(search_state->capture_history) / sizeof(*c); i++) c[i] /= 2;
 }
@@ -208,6 +291,7 @@ static inline_always void init_search_state_with(search_state_t* search_state, c
     search_state->best_move_changes = 0;
 #ifdef TIKI_SEARCH_STATS
     memset(&search_state->stats, 0, sizeof(search_state->stats));
+    memset(search_state->stat_shadow_history, 0, sizeof(search_state->stat_shadow_history));
 #endif
     search_state->thread_id = 0;
     atomic_init(&search_state->shared_nodes, 0);

@@ -82,6 +82,9 @@ static inline_always void update_correction_at(search_state_t* search_state, int
     for (int i = 0; i < CORR_TABLES; i++) {
         _Atomic int16_t* entry = &(*search_state->corr_history)[side][i][indices[i]];
         const int old = atomic_load_explicit(entry, memory_order_relaxed);
+#ifdef TIKI_VERIFY
+        verify_journal_record((void*) entry, (uint16_t) (int16_t) old, 2);
+#endif
         int v = old + bonus - old * magnitude / CORR_ENTRY_MAX;
         if (v > CORR_ENTRY_MAX) v = CORR_ENTRY_MAX;
         if (v < -CORR_ENTRY_MAX) v = -CORR_ENTRY_MAX;
@@ -221,6 +224,9 @@ static inline_always void add_history_bonus(search_state_t* search_state, move_t
         const move_t previous = move_back(search_state, search_state->ply, cont_ply_back(i));
         if (!previous) continue;
         int16_t* c = &(*search_state->cont_history)[i][cont_key(previous)][key];
+#ifdef TIKI_VERIFY
+        verify_journal_record((void*) c, (uint16_t) *c, 2);
+#endif
         *c = (int16_t) history_gravity(*c, bonus);
     }
 }
@@ -485,10 +491,15 @@ static inline_always void stat_quiet_node(search_state_t* search_state, int dept
 }
 
 /* A reduced search (TIKI_SEARCH_STATS): the move's place, the reduction, whether it beat alpha and,
- * if so, where the full depth search's score ('score') fell against the window. */
+ * if so, where the full depth search's score ('score') fell against the window. The nodes of the
+ * reduced search and of the searches again at full depth (lmr_cost). */
 static inline_always void stat_lmr(search_state_t* search_state, int depth, bool is_pv_node, int place, int reduction,
-                                   bool beat_alpha, int score, int alpha, int beta) {
+                                   bool beat_alpha, int score, int alpha, int beta, uint64_t reduced_nodes,
+                                   uint64_t research_nodes) {
 #ifdef TIKI_SEARCH_STATS
+    uint64_t* cost = search_state->stats.lmr_cost[reduction >= 4 ? 3 : reduction - 1];
+    cost[0] += reduced_nodes;
+    if (beat_alpha) cost[score <= alpha ? 1 : 2] += research_nodes;
     const int pl = place <= 2 ? 0 : place == 3 ? 1 : place <= 5 ? 2 : place <= 8 ? 3 : place <= 16 ? 4 : 5;
     const int r = reduction >= 4 ? 3 : reduction - 1;
     uint64_t* cell = search_state->stats.lmr[stat_depth_band(depth)][is_pv_node][pl][r];
@@ -499,9 +510,191 @@ static inline_always void stat_lmr(search_state_t* search_state, int depth, bool
     }
 #else
     (void) search_state; (void) depth; (void) is_pv_node; (void) place; (void) reduction; (void) beat_alpha;
-    (void) score; (void) alpha; (void) beta;
+    (void) score; (void) alpha; (void) beta; (void) reduced_nodes; (void) research_nodes;
 #endif
 }
+
+#ifdef TIKI_SEARCH_STATS
+int stat_history_age_quarters = 2;
+
+/* A move's ordering band from its ordering score (search_constants.h): 0 TT or PV move, 1 good
+ * capture or queen promotion, 2 killer 1, 3 killer 2, 4 quiet (by history), 5 losing capture. */
+static inline_always int stat_order_band(int score) {
+    return score >= PV_MOVE_SCORE ? 0 : score > KILLER_1_SCORE ? 1 : score == KILLER_1_SCORE ? 2 :
+           score == KILLER_2_SCORE ? 3 : score >= -HISTORY_MAX ? 4 : 5;
+}
+
+static inline_always int stat_rank_bucket(int rank) {
+    return rank <= 1 ? 0 : rank == 2 ? 1 : rank <= 4 ? 2 : rank <= 8 ? 3 : 4;
+}
+
+/**
+ * The history values of a node's quiet moves when they were scored (stat_snapshot_history), per
+ * ply: [0] main history, [1..3] continuation history 1, 2 and 4 plies back. The tables change while
+ * the moves are searched (and the cutting move is rewarded before stat_order_cut), so the weighting
+ * diagnostic reads these instead. One search thread in stats builds; a node's searches at its own
+ * ply (null move, ProbCut, singular) all come before its moves are scored.
+ */
+typedef struct {
+    move_t move;
+    int16_t h[4];
+    int16_t shadow[STAT_SHADOWS];   /* The shadow main histories (STAT_SHADOWS). */
+} stat_history_snapshot_t;
+static stat_history_snapshot_t stat_snapshots[MAX_PLY + 1][MOVE_BUFFER_SIZE];
+static int stat_snapshot_count[MAX_PLY + 1];
+
+static void stat_snapshot_history(const search_state_t* search_state, const move_buffer_t* buffer) {
+    const int ply = search_state->ply;
+    const cont_rows_t rows = node_cont_rows(search_state);
+    int n = 0;
+    for (int i = 0; i < buffer->index; i++) {
+        const move_t m = buffer->moves[i];
+        if (get_capture_flag(m) || get_promoted_piece(m)) continue;
+        stat_history_snapshot_t* s = &stat_snapshots[ply][n++];
+        s->move = m;
+        s->h[0] = (int16_t) search_state->history_moves[get_piece_moved(m)][get_target_square(m)];
+        for (int c = 0; c < CONT_PLIES; c++) s->h[c + 1] = rows.row[c][cont_key(m)];
+        for (int k = 0; k < STAT_SHADOWS; k++)
+            s->shadow[k] = (int16_t) search_state->stat_shadow_history[k][get_piece_moved(m)][get_target_square(m)];
+    }
+    stat_snapshot_count[ply] = n;
+}
+
+static const stat_history_snapshot_t* stat_find_snapshot(int ply, move_t m) {
+    for (int i = 0; i < stat_snapshot_count[ply]; i++)
+        if (stat_snapshots[ply][i].move == m) return &stat_snapshots[ply][i];
+    return NULL;
+}
+
+/**
+ * A quiet history update (TIKI_SEARCH_STATS), after update_history ('bonus': a quiet move raised
+ * alpha, 'cut': and cut off) or penalise_history (a malus). 'old_main': the move's main history
+ * before it. Counted by depth, and the shadow tables (STAT_SHADOWS) learn it by their rules.
+ */
+static void stat_history_update(search_state_t* search_state, move_t mv, int depth, bool bonus, bool cut,
+                                int old_main) {
+    search_stats_t* stats = &search_state->stats;
+    const int d = depth < 1 ? 1 : depth > 12 ? 12 : depth;
+    const int nominal = history_bonus(depth);
+    const piece pc = get_piece_moved(mv);
+    const square to = get_target_square(mv);
+    const int change = search_state->history_moves[pc][to] - old_main;
+    if (bonus) {
+        stats->upd_bonus[d]++;
+        stats->upd_bonus_no_cut[d] += !cut;
+    } else {
+        stats->upd_malus[d]++;
+    }
+    stats->upd_nominal[d] += (uint64_t) nominal;
+    stats->upd_actual[d] += (uint64_t) (change < 0 ? -change : change);
+    for (int k = 0; k < STAT_SHADOWS; k++) {
+        int b = nominal;
+        if (k == 1) b = 100 * depth < HIST_BONUS_MAX ? 100 * depth : HIST_BONUS_MAX;
+        if (bonus) {
+            if (k == 4 && !cut) continue;
+        } else {
+            if (k == 2) continue;
+            if (k == 3) b /= 2;
+            b = -b;
+        }
+        int32_t* h = &search_state->stat_shadow_history[k][pc][to];
+        *h = history_gravity(*h, b);
+    }
+}
+
+/**
+ * A move loop cut off (TIKI_SEARCH_STATS, every move generated and scored at once: 'buffer' and
+ * 'scores' hold them all). 'loop_nodes': the nodes the move loop
+ * took, 'wasted' those spent on the moves searched before 'mv'. For a quiet-band cutting move, its
+ * rank among the quiet-band moves by each weighting of the history and by the shadow histories.
+ */
+static void stat_order_cut(search_state_t* search_state, const move_buffer_t* buffer,
+                           const int* scores, move_t mv, int cut_score, int depth, bool cut_node, int moves_searched,
+                           uint64_t wasted, uint64_t loop_nodes, bool is_quiet) {
+    search_stats_t* stats = &search_state->stats;
+    const int b = stat_depth_band(depth), t = cut_node, band = stat_order_band(cut_score);
+    stats->ord_loops[b][t]++;
+    stats->ord_cuts[b][t]++;
+    if (moves_searched == 1) stats->ord_first[b][t]++;
+    stats->ord_band[b][band]++;
+    stats->ord_loop_nodes[b][1] += loop_nodes;
+    stats->ord_wasted[b] += wasted;
+    stats->ord_wasted_band[band] += wasted;
+
+    if (band == 4 && is_quiet) {
+        /* History weighting: the same candidates (the quiet-band moves, in the buffer's order), ranked
+         * by each weighting of the values they were scored with. Ties go to the move earlier in the
+         * buffer: the moves before the cutting move there were returned before it, the ones after
+         * weren't yet, so with the ordering scores this is its exact place as ordered, and every
+         * weighting breaks its ties the way the order does. */
+        enum { weightings = 7, columns = weightings + STAT_SHADOWS };
+        static int w[MOVE_BUFFER_SIZE][columns];
+        int m_count = 0, cut = -1;
+        bool missing = false;
+        for (int i = 0; i < buffer->index && !missing; i++) {
+            const move_t m = buffer->moves[i];
+            if (stat_order_band(scores[i]) != 4 || get_capture_flag(m) || get_promoted_piece(m)) continue;
+            const stat_history_snapshot_t* s = stat_find_snapshot(search_state->ply, m);
+            if (!s) {
+                missing = true;
+                break;
+            }
+            const int hm = s->h[0], c1 = s->h[1], c2 = s->h[2], c4 = s->h[3];
+            w[m_count][0] = scores[i];
+            w[m_count][1] = hm;
+            w[m_count][2] = c1;
+            w[m_count][3] = c2;
+            w[m_count][4] = c4;
+            w[m_count][5] = c1 + c2 + c4;
+            w[m_count][6] = hm + 2 * c1 + 2 * c2 + c4;
+            for (int k = 0; k < STAT_SHADOWS; k++) w[m_count][weightings + k] = s->shadow[k] + c1 + c2 + c4;
+            if (m == mv) cut = m_count;
+            m_count++;
+        }
+        if (missing || cut < 0) {
+            stats->ordh_missing++;
+        } else {
+            stats->ordh_cuts[b]++;
+            int ranks[columns];
+            for (int o = 0; o < columns; o++) {
+                int rank = 1;
+                for (int i = 0; i < m_count; i++)
+                    rank += w[i][o] > w[cut][o] || (w[i][o] == w[cut][o] && i < cut);
+                ranks[o] = rank;
+                if (o >= weightings) {
+                    const int u = o - weightings + 1;
+                    stats->ordu_rank_sum[b][u] += (uint64_t) rank;
+                    stats->ordu_bucket[b][u][stat_rank_bucket(rank)]++;
+                    stats->ordu_up[b][u] += rank < ranks[0];
+                    stats->ordu_down[b][u] += rank > ranks[0];
+                    continue;
+                }
+                stats->ordh_rank_sum[b][o] += (uint64_t) rank;
+                stats->ordh_rank_hist[b][o][rank < 32 ? rank - 1 : 31]++;
+                stats->ordh_bucket[b][o][stat_rank_bucket(rank)]++;
+                stats->ordh_up[b][o] += rank < ranks[0];
+                stats->ordh_down[b][o] += rank > ranks[0];
+                stats->ordh_up4[b][o] += rank <= ranks[0] - 4;
+                stats->ordh_down4[b][o] += rank >= ranks[0] + 4;
+            }
+            stats->ordu_rank_sum[b][0] += (uint64_t) ranks[0];
+            stats->ordu_bucket[b][0][stat_rank_bucket(ranks[0])]++;
+            const int main_top = ranks[1] <= 3, cont_top = ranks[5] <= 3;
+            stats->ordh_agree[b][main_top][cont_top]++;
+            stats->ordh_agree_rank[b][main_top][cont_top] += (uint64_t) ranks[0];
+        }
+    }
+}
+
+/* A move loop ended without a cutoff (TIKI_SEARCH_STATS): 'loop_nodes', the nodes it took. */
+static inline_always void stat_order_loop_end(search_state_t* search_state, int depth, bool cut_node,
+                                              uint64_t loop_nodes) {
+    search_stats_t* stats = &search_state->stats;
+    const int b = stat_depth_band(depth);
+    stats->ord_loops[b][cut_node]++;
+    stats->ord_loop_nodes[b][0] += loop_nodes;
+}
+#endif
 
 /* The previous iteration's PV move at this ply if it's one of the node's moves, otherwise 0. */
 static inline_always move_t find_pv_move(const move_buffer_t* buffer, const search_state_t* search_state) {
@@ -746,7 +939,7 @@ bool can_history_prune(int depth, int history, int moves_searched, int alpha, bo
  * by the move's history (quiet_history, the history plus the continuation history):
  * history / LMR_HISTORY_DIVISOR plies less for a move that has often been good, more for one that
  * hasn't. The history alone averages about 900 in magnitude (bench), so a move well above or below
- * average moves a ply. At most depth - 1, so a reduced search can go straight to the qsearch (depth 0).
+ * average moves a ply. At most depth - 2, so a reduced search keeps at least one ply before the qsearch.
  * With the history alone, against the same search without it (both with persistent history): SPRT
  * +15.0 +- 7.4 after 3388 games, H1 accepted [0, 5].
  * LMR_CUT_NODE more at an expected cut node (cut_node, see negamax_node): a late move there is
@@ -767,7 +960,7 @@ int lmr_reduction_full(int depth, int moves_searched, bool is_pv_node, int histo
     r += LMR_ROUND_OFFSET;
     if (r <= 0) return 0;
     r /= PLY_GRAIN;
-    return r < depth - 1 ? r : (depth - 1 > 0 ? depth - 1 : 0);
+    return r < depth - 2 ? r : (depth - 2 > 0 ? depth - 2 : 0);
 }
 
 /* A move that doesn't give check (lmr_reduction_full). */
@@ -999,7 +1192,12 @@ static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* 
              * score still counts towards the best, so a fail low stays a valid upper bound. */
             if (!get_promoted_piece(mv)) {
                 const int optimistic = eval + captured_value(board, mv) + DELTA_MARGIN;
-                if (optimistic <= alpha) {
+                const bool delta_prune = optimistic <= alpha;
+#ifdef TIKI_VERIFY
+                if (verify_cfg.decisions && verify_cfg.nesting == 0 && optimistic <= alpha)
+                    verify_rule_record(&verify_delta_rule, !delta_prune, board, mv);
+#endif
+                if (delta_prune) {
 #ifdef TIKI_VERIFY
                     if (verify_take(vf_delta, 0)) verify_qmove(vf_delta, mv, alpha, eval, board, search_state, limits);
 #endif
@@ -1380,6 +1578,238 @@ static void verify_move(verify_feature_t feature, move_t mv, bool made, int alph
     verify_classify(feature, depth, score > alpha, cls, mv, hash, alpha, score);
 }
 
+/**
+ * A logged node searched again (verify 'node' mode): as an interior node one ply below a root, null
+ * window at 'alpha', 'depth' plies, an expected cut node. The accumulator is set up from the board, as
+ * the root does it; the root depth (the extensions' limit) is the node's own depth.
+ */
+int verify_node_search(board_t* board, search_state_t* search_state, limits_t* limits, int alpha, int depth) {
+    nnue_reset_root(&search_state->nnue, board);
+    search_state->ply = 1;
+    search_state->root_depth = depth;
+    search_state->follow_pv = false;
+    const int score = negamax_node(alpha, alpha + 1, depth, true, board, search_state, limits);
+    search_state->ply = 0;
+    return score;
+}
+
+/**
+ * The SEE-pruned quiet check diagnostic (verify_see_check_diag): the move searched as the move loop
+ * would have, null window at alpha, and recorded by depth and SEE loss, history and moves searched.
+ */
+static void verify_see_check(move_t mv, int alpha, int depth, bool cut_node, int history, int moves_searched,
+                             board_t* board, search_state_t* search_state, limits_t* limits) {
+    if (depth < 1 || depth >= VD_DEPTHS) return;
+    const int loss = -see(board, mv);
+    const int bin = loss <= 0 ? 0 : loss / 10 >= VD_LOSS_BINS ? VD_LOSS_BINS - 1 : loss / 10;
+    if (!make_move(board, mv)) {
+        pop_move(board);
+        return;
+    }
+    nnue_push(&search_state->nnue, board, mv);
+    verify_cfg.nesting++;
+    const uint64_t nodes_before = search_state->nodes;
+    const bool follow_pv = search_state->follow_pv;
+    search_state->path_moves[search_state->ply] = mv;
+    ++search_state->ply;
+    ++search_state->repetition_index;
+    record_position(search_state, search_state->repetition_index, board->hash, board->fifty_move);
+    search_state->follow_pv = false;
+    const int score = -negamax_node(-alpha - 1, -alpha, depth - 1, !cut_node, board, search_state, limits);
+    --search_state->ply;
+    --search_state->repetition_index;
+    pop_move(board);
+    nnue_pop(&search_state->nnue);
+    search_state->follow_pv = follow_pv;
+    verify_cfg.nesting--;
+    if (limits->stop_search_flag) return;
+    verify_see_check_diag_t* g = &verify_see_check_diag;
+    const bool wrong = score > alpha;
+    g->n[depth][bin]++;
+    g->wrong[depth][bin] += wrong;
+    g->mates[depth][bin] += wrong && score >= TB_WIN_MIN / 2;
+    g->nodes[depth][bin] += search_state->nodes - nodes_before;
+    const int h = history < 0 ? 0 : history < 2000 ? 1 : 2;
+    g->history_n[h]++;
+    g->history_wrong[h] += wrong;
+    g->history_mates[h] += wrong && score >= TB_WIN_MIN / 2;
+    const int s = moves_searched <= 3 ? 0 : moves_searched <= 7 ? 1 : 2;
+    g->searched_n[s]++;
+    g->searched_wrong[s] += wrong;
+}
+
+/**
+ * The LMR diagnostic (verify_lmr_diag): a quiet move the search is about to search reduced, its child
+ * (the move is made) searched with its reduction and others, before the search's own reduced search
+ * and shallowest first, so no search finds a deeper one's TT entry for the child. The reductions
+ * without each adjustment come from lmr_reduction_full with that argument neutral (the order of
+ * VL_ADJ). The child is a cut node when reduced, otherwise the opposite of this node, as in the
+ * search. 1 in VL_SAMPLE moves; the deeper searches for those that fail low, 1 in VL_SAMPLE_FAIL of them.
+ */
+static void verify_lmr(int alpha, int best_score, int depth, int new_depth, int reduction, int moves_searched,
+                       bool cut_node, bool is_pv_node, bool improving, bool gives_check, int history, board_t* board,
+                       search_state_t* search_state, limits_t* limits) {
+    static uint64_t seen, seen_fail;
+    if (seen++ % VL_SAMPLE != 0) return;
+
+    const int adj_r[VL_ADJ] = {
+        lmr_reduction_full(depth, moves_searched, is_pv_node, history, false, improving, gives_check),
+        lmr_reduction_full(depth, moves_searched, is_pv_node, history, cut_node, true, gives_check),
+        lmr_reduction_full(depth, moves_searched, is_pv_node, history, cut_node, improving, false),
+        lmr_reduction_full(depth, moves_searched, is_pv_node, 0, cut_node, improving, gives_check),
+        lmr_reduction_full(depth, moves_searched, false, history, cut_node, improving, gives_check),
+    };
+    enum { max_r = 64 };
+    if (reduction + 1 >= max_r) return;
+    bool need[max_r] = { false };
+    int score_at[max_r];
+    uint64_t nodes_at[max_r];
+    /* Shallower than the reduction: one ply more, and the adjustments that remove reduction. */
+    if (new_depth - (reduction + 1) >= 0) need[reduction + 1] = true;
+    for (int a = 0; a < VL_ADJ; a++)
+        if (adj_r[a] > reduction && adj_r[a] < max_r && new_depth - adj_r[a] >= 0) need[adj_r[a]] = true;
+    need[reduction] = true;
+
+    /* Every search starts from the state as it is now: the journal undoes the TT, continuation and
+     * correction history writes, the small tables are copied back. The search afterwards too. */
+    static int32_t saved_history[12][64];
+    static int32_t saved_capture_history[12][64][6];
+    static uint32_t saved_killers[2][MAX_PLY];
+    static_assert(sizeof(saved_history) == sizeof(search_state->history_moves), "history size");
+    static_assert(sizeof(saved_capture_history) == sizeof(search_state->capture_history), "capture history size");
+    static_assert(sizeof(saved_killers) == sizeof(search_state->killer_moves), "killers size");
+    memcpy(saved_history, search_state->history_moves, sizeof(saved_history));
+    memcpy(saved_capture_history, search_state->capture_history, sizeof(saved_capture_history));
+    memcpy(saved_killers, search_state->killer_moves, sizeof(saved_killers));
+    verify_journal.len = 0;
+    verify_journal.on = true;
+
+    const bool follow_pv = search_state->follow_pv;
+    verify_cfg.nesting++;
+    bool deeper = false;   /* Past the reduced search: the deeper searches are decided. */
+    for (int r = max_r - 1; r >= 0 && !limits->stop_search_flag; r--) {
+        if (r == reduction - 1 && !deeper) {
+            /* The reduced search is done: deeper ones for every move that beat alpha, and for 1 in
+             * VL_SAMPLE_FAIL of those that failed low (the rest aren't recorded). */
+            deeper = true;
+            if (score_at[reduction] <= alpha && seen_fail++ % VL_SAMPLE_FAIL != 0) break;
+            need[0] = true;
+            need[reduction - 1] = true;
+            if (score_at[reduction] > alpha && reduction > 1) need[1] = true;
+            for (int a = 0; a < VL_ADJ; a++)
+                if (adj_r[a] < reduction) need[adj_r[a]] = true;
+        }
+        if (!need[r]) continue;
+        const uint64_t before = search_state->nodes;
+        search_state->follow_pv = false;
+        score_at[r] = -negamax_node(-alpha - 1, -alpha, new_depth - r, r > 0 || !cut_node, board, search_state, limits);
+        nodes_at[r] = search_state->nodes - before;
+        verify_lmr_diag.searched_nodes += nodes_at[r];
+        verify_journal_rollback();
+        memcpy(search_state->history_moves, saved_history, sizeof(saved_history));
+        memcpy(search_state->capture_history, saved_capture_history, sizeof(saved_capture_history));
+        memcpy(search_state->killer_moves, saved_killers, sizeof(saved_killers));
+    }
+    /* One ply deeper than full depth, for moves that beat alpha (the re-search margins). */
+    int deeper_score = 0;
+    uint64_t deeper_nodes = 0;
+    if (!limits->stop_search_flag && deeper && need[0] && score_at[reduction] > alpha) {
+        const uint64_t before = search_state->nodes;
+        search_state->follow_pv = false;
+        deeper_score = -negamax_node(-alpha - 1, -alpha, new_depth + 1, !cut_node, board, search_state, limits);
+        deeper_nodes = search_state->nodes - before;
+        verify_lmr_diag.searched_nodes += deeper_nodes;
+        verify_journal_rollback();
+        memcpy(search_state->history_moves, saved_history, sizeof(saved_history));
+        memcpy(search_state->capture_history, saved_capture_history, sizeof(saved_capture_history));
+        memcpy(search_state->killer_moves, saved_killers, sizeof(saved_killers));
+    }
+    /* The state check (verify_lmr_diag_t.repeats): the reduced search again, from the restored state. */
+    if (!limits->stop_search_flag && verify_lmr_diag.repeats < VL_REPEATS) {
+        const uint64_t before = search_state->nodes;
+        search_state->follow_pv = false;
+        const int again = -negamax_node(-alpha - 1, -alpha, new_depth - reduction, true, board, search_state, limits);
+        const uint64_t again_nodes = search_state->nodes - before;
+        verify_lmr_diag.searched_nodes += again_nodes;
+        verify_journal_rollback();
+        memcpy(search_state->history_moves, saved_history, sizeof(saved_history));
+        memcpy(search_state->capture_history, saved_capture_history, sizeof(saved_capture_history));
+        memcpy(search_state->killer_moves, saved_killers, sizeof(saved_killers));
+        if (!limits->stop_search_flag) {
+            verify_lmr_diag.repeats++;
+            verify_lmr_diag.repeat_mismatches += again != score_at[reduction] || again_nodes != nodes_at[reduction];
+        }
+    }
+    verify_journal.on = false;
+    verify_cfg.nesting--;
+    search_state->follow_pv = follow_pv;
+    if (limits->stop_search_flag || !deeper || !need[0]) return;
+    const bool beat = score_at[reduction] > alpha;
+    const uint64_t reduced_nodes = nodes_at[reduction];
+
+    verify_lmr_diag_t* g = &verify_lmr_diag;
+    const int c = cut_node, rb = (reduction >= VL_R ? VL_R : reduction) - 1;
+    const int place = moves_searched + 1;
+    const int pb = place <= 2 ? 0 : place == 3 ? 1 : place <= 5 ? 2 : place <= 8 ? 3 : place <= 16 ? 4 : 5;
+    const bool full = score_at[0] > alpha;
+    if (!beat) {
+        const bool less = score_at[reduction - 1] > alpha;
+        g->fail_n[c][rb][pb]++;
+        g->fail_wrong[c][rb][pb] += full;
+        g->fail_found_less[c][rb][pb] += full && less;
+        g->fail_less_only += less && !full;
+        g->fail_nodes[c][rb][0] += reduced_nodes;
+        g->fail_nodes[c][rb][1] += nodes_at[reduction - 1];
+        g->fail_nodes[c][rb][2] += nodes_at[0];
+        for (int a = 0; a < VL_ADJ; a++) {
+            const int ra = adj_r[a];
+            if (ra < reduction) {
+                g->add_n[a]++;
+                g->add_wrong[a] += full;
+                g->add_found[a] += full && score_at[ra] > alpha;
+                g->add_nodes_with[a] += reduced_nodes;
+                g->add_nodes_without[a] += nodes_at[ra];
+            } else if (ra > reduction && new_depth - ra >= 0 && ra < max_r) {
+                g->rem_fail_n[a]++;
+                g->rem_nodes_with[a] += reduced_nodes;
+                g->rem_nodes_without[a] += nodes_at[ra];
+            }
+        }
+    } else {
+        /* Re-search margins. */
+        const int margin = score_at[reduction] - best_score;
+        const int mb = is_mate_score(score_at[reduction]) ? VL_MARGINS - 1 : margin <= 1 ? 0 : margin <= 2 ? 1 :
+                       margin <= 4 ? 2 : margin <= 8 ? 3 : margin <= 16 ? 4 : margin <= 32 ? 5 : margin <= 64 ? 6 :
+                       margin <= 128 ? 7 : margin <= 256 ? 8 : 9;
+        const int db = depth <= 3 ? 0 : depth <= 6 ? 1 : 2;
+        g->rs_n[db][mb]++;
+        g->rs_confirm[db][mb] += full;
+        if (need[1] && reduction > 1) {
+            g->rs_shallow_n[db][mb]++;
+            g->rs_shallow_agree[db][mb] += (score_at[1] > alpha) == full;
+            g->rs_nodes[db][mb][1] += nodes_at[1];
+        }
+        g->rs_deeper_change[db][mb] += (deeper_score > alpha) != full;
+        g->rs_beyond_limit[db][mb] += search_state->ply - 1 >= 2 * search_state->root_depth;
+        g->rs_nodes[db][mb][0] += reduced_nodes;
+        g->rs_nodes[db][mb][2] += nodes_at[0];
+        g->rs_nodes[db][mb][3] += deeper_nodes;
+        g->beat_n[c][rb]++;
+        g->beat_good[c][rb] += full;
+        if (need[reduction + 1]) {
+            g->beat_more_n[c][rb] += full;
+            g->beat_more_kept[c][rb] += full && score_at[reduction + 1] > alpha;
+        }
+        for (int a = 0; a < VL_ADJ; a++) {
+            const int ra = adj_r[a];
+            if (ra > reduction && new_depth - ra >= 0 && ra < max_r && full) {
+                g->rem_good_n[a]++;
+                g->rem_lost[a] += score_at[ra] <= alpha;
+            }
+        }
+    }
+}
+
 /* Where a score falls against the window: 0 at or below alpha, 1 inside, 2 at or above beta. */
 static int verify_window_class(int score, int alpha, int beta) {
     return score <= alpha ? 0 : score >= beta ? 2 : 1;
@@ -1488,6 +1918,12 @@ static int negamax_node(int alpha,
 #ifdef TIKI_SEARCH_STATS
     const int stat_entry_depth = depth < 0 ? 0 : depth > 16 ? 16 : depth;
     search_state->stats.nodes_at_depth[stat_entry_depth]++;
+    if (search_state->root_depth > 0) {
+        const int net = search_state->ply + depth - search_state->root_depth;
+        search_state->stats.ext_net[net < -10 ? 0 : net > 21 ? 31 : net + 10]++;
+        const int q = search_state->ply * 4 / search_state->root_depth;
+        search_state->stats.ply_quarters[q > 12 ? 12 : q]++;
+    }
 #endif
 
     search_state->pv_length[search_state->ply] = search_state->ply;
@@ -1801,6 +2237,7 @@ static int negamax_node(int alpha,
     move_picker_t picker;
     picker_init(&picker, &buffer, scores, board, search_state, tt_move, all_at_once, follow_pv);
 #ifdef TIKI_SEARCH_STATS
+    if (!excluded_move) stat_snapshot_history(search_state, &buffer);
     search_state->stats.expanded_at_depth[stat_entry_depth]++;
 #endif
     const move_t pv_move = picker.pv_move;
@@ -1828,6 +2265,9 @@ static int negamax_node(int alpha,
     int quiets_tried = 0; /* Quiet moves searched (not pruned), for the statistics. */
     /* This node's continuation history rows: the moves before it don't change while its moves are searched. */
     const cont_rows_t cont_rows = node_cont_rows(search_state);
+#ifdef TIKI_SEARCH_STATS
+    const uint64_t loop_nodes_start = search_state->nodes;   /* For stat_order_cut and stat_order_loop_end. */
+#endif
     move_t mv;
     while ((mv = picker_next(&picker)) != 0) {
         if (mv == excluded_move) continue;
@@ -1866,9 +2306,15 @@ static int negamax_node(int alpha,
             can_history_prune(depth, history, num_moves_searched, alpha, in_check, is_pv_node, is_killer);
 
         /* SEE pruning, also before making the move. Promotions are always searched. */
-        if (!get_promoted_piece(mv) && !VERIFY_PLAIN &&
+        bool see_prune = !get_promoted_piece(mv) && !VERIFY_PLAIN &&
             can_see_prune(depth, num_moves_searched, alpha, in_check, is_pv_node) &&
-            !see_ge(board, mv, see_prune_threshold(depth, is_quiet))) {
+            !see_ge(board, mv, see_prune_threshold(depth, is_quiet));
+#ifdef TIKI_VERIFY
+        /* Diagnostic: every SEE-pruned quiet check searched anyway (verify_see_check_diag). */
+        if (see_prune && is_quiet && verify_cfg.decisions && verify_cfg.nesting == 0 && move_gives_check(board, mv))
+            verify_see_check(mv, alpha, depth, cut_node, history, num_moves_searched, board, search_state, limits);
+#endif
+        if (see_prune) {
 #ifdef TIKI_VERIFY
             if (verify_take(vf_see, depth))
                 verify_move(vf_see, mv, false, alpha, depth, depth - 1, cut_node, static_eval, board, search_state,
@@ -2018,9 +2464,19 @@ static int negamax_node(int alpha,
             /* Principal variation search, null window (reduced for late moves). A reduced move that
              * beats alpha is searched again at full depth with the null window, then with the full
              * window if it's still inside it. */
+#ifdef TIKI_VERIFY
+            /* The LMR diagnostic (verify_lmr_diag), reduced quiet moves, before the reduced search. */
+            if (reduction > 0 && is_quiet && !excluded_move && verify_cfg.decisions && verify_cfg.nesting == 0 &&
+                !limits->stop_search_flag) {
+                verify_lmr(alpha, best_score, depth, new_depth, reduction, num_moves_searched, cut_node, is_pv_node,
+                           improving, gives_check, history, board, search_state, limits);
+                search_state->follow_pv = child_on_pv;
+            }
+#endif
             score = -negamax_node(-alpha - 1, -alpha, new_depth - reduction, reduction > 0 || !cut_node, board,
                                   search_state, limits);
             const bool reduced_beat_alpha = reduction > 0 && score > alpha;
+            const uint64_t reduced_search_end = search_state->nodes;   /* For stat_lmr's node cost. */
             if (reduction > 0) COUNT_STAT(search_state, lmr_searches);
 #ifdef TIKI_VERIFY
             /* A reduced move that failed low isn't searched again: would it have beaten alpha searched less
@@ -2052,7 +2508,7 @@ static int negamax_node(int alpha,
             }
             if (reduction > 0 && !excluded_move && !limits->stop_search_flag) {
                 stat_lmr(search_state, depth, is_pv_node, num_moves_searched + 1, reduction, reduced_beat_alpha, score,
-                         alpha, beta);
+                         alpha, beta, reduced_search_end - nodes_before_move, search_state->nodes - reduced_search_end);
             }
         }
 
@@ -2078,7 +2534,15 @@ static int negamax_node(int alpha,
             }
             search_state->pv_length[search_state->ply] = search_state->pv_length[search_state->ply + 1];
 
-            if (!is_capture) update_history(search_state, mv, depth);
+            if (!is_capture) {
+#ifdef TIKI_SEARCH_STATS
+                const int stat_old = search_state->history_moves[get_piece_moved(mv)][get_target_square(mv)];
+#endif
+                update_history(search_state, mv, depth);
+#ifdef TIKI_SEARCH_STATS
+                stat_history_update(search_state, mv, depth, true, score >= beta, stat_old);
+#endif
+            }
 
             alpha = score;
 
@@ -2092,7 +2556,23 @@ static int negamax_node(int alpha,
                 }
                 if (!is_capture) store_killer(search_state, mv);
                 if (is_quiet) {
-                    for (int j = 0; j < num_quiets_searched; j++) penalise_history(search_state, quiets_searched[j], depth);
+                    for (int j = 0; j < num_quiets_searched; j++) {
+#ifdef TIKI_SEARCH_STATS
+                        const move_t q = quiets_searched[j];
+                        const int stat_old = search_state->history_moves[get_piece_moved(q)][get_target_square(q)];
+#endif
+                        penalise_history(search_state, quiets_searched[j], depth);
+#ifdef TIKI_SEARCH_STATS
+                        stat_history_update(search_state, q, depth, false, false, stat_old);
+#endif
+                    }
+#ifdef TIKI_SEARCH_STATS
+                    {
+                        const int n = num_quiets_searched;
+                        search_state->stats.upd_malus_per_cut[stat_depth_band(depth)]
+                            [n == 0 ? 0 : n == 1 ? 1 : n == 2 ? 2 : n <= 4 ? 3 : n <= 8 ? 4 : 5]++;
+                    }
+#endif
                 }
                 /* The capture that cut is rewarded, the captures tried before it (whatever cut) lose. */
                 if (is_capture) update_capture_history(search_state, board, mv, depth);
@@ -2105,6 +2585,10 @@ static int negamax_node(int alpha,
                     stat_capture_cut(&capture_ranks, search_state, mv, depth, is_pv_node, tt_move != 0);
                     if (stat_bucket >= 0) search_state->stats.cap_cut_by_history[stat_bucket]++;
                 }
+                if (!excluded_move)
+                    stat_order_cut(search_state, &buffer, scores, mv, picker.score, depth, cut_node,
+                                   num_moves_searched, nodes_before_move - loop_nodes_start,
+                                   search_state->nodes - loop_nodes_start, is_quiet);
 #endif
                 return score;
             }
@@ -2115,6 +2599,10 @@ static int negamax_node(int alpha,
     }
 
     if (!excluded_move) stat_quiet_node(search_state, depth, is_pv_node, tt_move != 0, quiets_tried, false);
+#ifdef TIKI_SEARCH_STATS
+    if (!excluded_move && has_legal_moves)
+        stat_order_loop_end(search_state, depth, cut_node, search_state->nodes - loop_nodes_start);
+#endif
 
     /* Without the TT move there may be nothing else to play: no other move, so it's singular. */
     if (!has_legal_moves) {
