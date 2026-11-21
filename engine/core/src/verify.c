@@ -15,12 +15,21 @@
 #include "uci.h"
 #include "tune.h"
 
+#ifdef TIKI_VERIFY
 verify_config_t verify_cfg = { .sample = 16, .skip_ply = -1, .rng = 0x9E3779B97F4A7C15ULL };
+verify_tt_counts_t verify_tt;
+verify_class_counts_t verify_classes[vf_count];
 
 static const char* const feature_names[vf_count] = {
     "RFP", "null move", "ProbCut", "multi-cut", "futility", "LMP (first)", "SEE pruning", "history pruning",
-    "LMR (fail low)",
+    "LMR fail low", "LMR fail low cut", "LMR cut-node term", "SE reduce", "qs losing caps", "delta pruning",
+    "IIR (changed)", "SE ext (changed)", "check ext (chg)",
 };
+
+/* qsearch decisions have no depth, they're counted at depth 0 (printed 'q'). */
+static bool is_qsearch_feature(int f) {
+    return f == vf_qs_bad || f == vf_delta;
+}
 
 #define VERIFY_LOG_MAX 50000
 
@@ -58,6 +67,58 @@ void verify_record(verify_feature_t feature, int depth, bool wrong, int miss, ui
         fprintf((FILE*) verify_cfg.log, "%s | %s | %s\n", feature_names[feature], fen, context);
         verify_cfg.logged++;
     }
+}
+
+/* The wrong decisions of the search running now, looked up in the TT when it's finished. */
+typedef struct {
+    verify_feature_t feature;
+    verify_class_t cls;
+    move_t move;
+    uint64_t hash;
+    int depth;
+    int beta;     /* a node: the beta it claimed to reach */
+} verify_pending_t;
+
+#define VERIFY_PENDING_MAX 16384
+static verify_pending_t pending[VERIFY_PENDING_MAX];
+static int pending_count;
+
+void verify_classify(verify_feature_t feature, int depth, bool wrong, verify_class_t cls, uint32_t move,
+                     uint64_t hash, int bound, int found) {
+    verify_class_counts_t* c = &verify_classes[feature];
+    c->checked[cls]++;
+    if (!wrong) return;
+    c->wrong[cls]++;
+    const int gain = found - bound;
+    const int decisive = TB_WIN_MIN / 2;
+    const bool mates = found >= decisive || found <= -decisive || bound >= decisive || bound <= -decisive;
+    c->delta[cls][mates ? 4 : gain <= 20 ? 0 : gain <= 50 ? 1 : gain <= 100 ? 2 : 3]++;
+    int kind;
+    if (found >= decisive) kind = 0;
+    else if ((bound <= -decisive && found > -decisive) || (bound <= -100 && gain >= 50)) kind = 1;
+    else if (found >= 100 && gain >= 50) kind = 2;
+    else kind = 3;
+    c->kind[cls][kind]++;
+    c->depth_band[cls][depth <= 3 ? 0 : depth <= 6 ? 1 : 2]++;
+    if (pending_count < VERIFY_PENDING_MAX) {
+        pending[pending_count++] = (verify_pending_t) { feature, cls, move, hash, depth, -bound };
+    }
+}
+
+void verify_resolve_later(void) {
+    for (int i = 0; i < pending_count; i++) {
+        const verify_pending_t* p = &pending[i];
+        tt_info_t tt;
+        int outcome = 2;
+        if (tt_read(p->hash, 0, &tt) && tt.type != tt_none) {
+            if (p->cls == vc_node)
+                outcome = tt.depth > p->depth && (tt.type == tt_alpha || tt.type == tt_exact) && tt.score < p->beta ? 0 : 1;
+            else
+                outcome = tt.move == p->move ? 0 : 1;
+        }
+        verify_classes[p->feature].later[p->cls][outcome]++;
+    }
+    pending_count = 0;
 }
 
 /* ------------------------------------------------------------------------------------------------
@@ -256,7 +317,12 @@ static search_result_t reference_search(const char* fen, int depth) {
     return (search_result_t) { score, 0, ref_nodes };
 }
 
-static void print_decisions(void) {
+static void print_decisions(uint64_t total_nodes) {
+    /* The nodes of the normal search alone: the checks' own nodes taken out. */
+    uint64_t check_nodes = 0;
+    for (int f = 0; f < vf_count; f++)
+        for (int d = 0; d < VERIFY_DEPTHS; d++) check_nodes += verify_cfg.counts[f].nodes[d];
+    const uint64_t search_nodes = total_nodes > check_nodes ? total_nodes - check_nodes : 1;
     printf("\nSelective decisions, checked by doing the skipped work (1 in %u sampled)\n", verify_cfg.sample);
     printf("%-16s %5s %12s %9s %8s %9s %9s %6s %12s\n", "feature", "depth", "decisions", "checked", "wrong %",
            ">100cp %", "mean miss", "mates", "nodes/check");
@@ -274,17 +340,52 @@ static void print_decisions(void) {
             const char* name = named ? "" : feature_names[f];
             named = true;
             const uint64_t non_mate = c->wrong[d] - c->mates[d];
-            printf("%-16s %4d%s %12" PRIu64 " %9" PRIu64 " %8.2f %9.3f %9.0f %6" PRIu64 " %12.0f\n", name, d + 1,
-                   d == VERIFY_DEPTHS - 1 ? "+" : " ", c->decisions[d], c->checked[d],
+            char label[8];
+            if (is_qsearch_feature(f)) snprintf(label, sizeof(label), "   q ");
+            else snprintf(label, sizeof(label), "%4d%s", d + 1, d == VERIFY_DEPTHS - 1 ? "+" : " ");
+            printf("%-16s %s %12" PRIu64 " %9" PRIu64 " %8.2f %9.3f %9.0f %6" PRIu64 " %12.0f\n", name, label,
+                   c->decisions[d], c->checked[d],
                    100.0 * (double) c->wrong[d] / (double) c->checked[d],
                    100.0 * (double) c->big[d] / (double) c->checked[d],
                    non_mate ? (double) c->miss_total[d] / (double) non_mate : 0.0, c->mates[d],
                    (double) c->nodes[d] / (double) c->checked[d]);
         }
         if (all_checked) {
-            printf("%-16s %5s %12" PRIu64 " %9" PRIu64 " %8.2f %9.3f %9s %6" PRIu64 "\n", feature_names[f], "all",
-                   all_decisions, all_checked, 100.0 * (double) all_wrong / (double) all_checked,
-                   100.0 * (double) all_big / (double) all_checked, "", all_mates);
+            printf("%-16s %5s %12" PRIu64 " %9" PRIu64 " %8.2f %9.3f %9s %6" PRIu64 "   %.2f per 1000 nodes\n",
+                   feature_names[f], "all", all_decisions, all_checked,
+                   100.0 * (double) all_wrong / (double) all_checked, 100.0 * (double) all_big / (double) all_checked,
+                   "", all_mates, 1000.0 * (double) all_decisions / (double) search_nodes);
+        }
+    }
+    const double saves = verify_tt.saves ? (double) verify_tt.saves : 1.0;
+    printf("\nSearch nodes (checks excluded) %" PRIu64 ". TT saves %" PRIu64 ", dropped for a deeper entry of this search %"
+           PRIu64 " (%.2f%%), of which with a new best move %" PRIu64 " (%.2f%% of saves)\n", search_nodes,
+           verify_tt.saves, verify_tt.kept_deeper, 100.0 * (double) verify_tt.kept_deeper / saves,
+           verify_tt.kept_deeper_new_move, 100.0 * (double) verify_tt.kept_deeper_new_move / saves);
+}
+
+static void print_classes(void) {
+    static const char* const class_names[vc_count] = { "node", "check", "capture", "quiet" };
+    printf("\nWrong decisions by what was skipped (counts of wrong decisions; see verify.h for the kinds)\n");
+    printf("%-18s %-8s %8s %7s %7s | %6s %6s %6s %6s %6s | %6s %6s %6s %6s | %6s %6s %6s | %6s %6s %6s\n", "feature", "skipped",
+           "checked", "wrong", "wrong%", "1-20", "21-50", "51-100", ">100", "mate", "mate", "defend", "tactic", "small",
+           "d1-3", "d4-6", "d7+", "later", "never", "no TT");
+    for (int f = 0; f < vf_count; f++) {
+        const verify_class_counts_t* c = &verify_classes[f];
+        bool named = false;
+        for (int k = 0; k < vc_count; k++) {
+            if (!c->checked[k]) continue;
+            printf("%-18s %-8s %8" PRIu64 " %7" PRIu64 " %7.2f |", named ? "" : feature_names[f], class_names[k],
+                   c->checked[k], c->wrong[k], 100.0 * (double) c->wrong[k] / (double) c->checked[k]);
+            named = true;
+            for (int i = 0; i < VERIFY_DELTAS; i++) printf(" %6" PRIu64, c->delta[k][i]);
+            printf(" |");
+            for (int i = 0; i < VERIFY_KINDS; i++) printf(" %6" PRIu64, c->kind[k][i]);
+            printf(" |");
+            for (int i = 0; i < VERIFY_DEPTH_BANDS; i++) printf(" %6" PRIu64, c->depth_band[k][i]);
+            printf(" |");
+            for (int i = 0; i < 3; i++) printf(" %6" PRIu64, c->later[k][i]);
+            printf("\n");
         }
     }
 }
@@ -299,6 +400,8 @@ static void usage(void) {
             "  repeat     each position twice from a clean state, normal search (identical)\n"
             "  decisions  the normal search, 1 in 'sample' selective decisions checked\n");
 }
+
+#endif
 
 int verify_main(int argc, char* argv[]) {
 #ifndef TIKI_VERIFY
@@ -401,10 +504,12 @@ int verify_main(int argc, char* argv[]) {
         uint64_t nodes = 0;
         for (int i = 0; i < count; i++) {
             nodes += tiki_search(fens[i], depth).nodes;
+            verify_resolve_later();
             if ((i + 1) % 50 == 0) printf("%d/%d positions\n", i + 1, count);
         }
         printf("decisions depth %d, %d positions, %" PRIu64 " nodes (checks included)\n", depth, count, nodes);
-        print_decisions();
+        print_decisions(nodes);
+        print_classes();
     } else {
         usage();
         failures = 1;

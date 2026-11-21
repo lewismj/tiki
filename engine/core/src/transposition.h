@@ -8,6 +8,9 @@
 
 #include "types.h"
 #include "search_constants.h"
+#ifdef TIKI_VERIFY
+#include "verify.h"
+#endif
 
 /**
  * Even if we have multi-threaded search, we will only ever have a single instance of the transposition table.
@@ -280,8 +283,20 @@ static inline_always void tt_save(const uint64_t position_hash,
         }
     }
 
+#ifdef TIKI_VERIFY
+    const bool verify_counted = verify_cfg.decisions && verify_cfg.nesting == 0 && hash_flag != tt_none;
+    if (verify_counted) verify_tt.saves++;
+#endif
     /* The position's own entry: keep a deeper one from the current search. */
-    if (same_position && tt_data_generation(old) == tt_generation && tt_data_depth(old) > depth) return;
+    if (same_position && tt_data_generation(old) == tt_generation && tt_data_depth(old) > depth) {
+#ifdef TIKI_VERIFY
+        if (verify_counted) {
+            verify_tt.kept_deeper++;
+            if (move != 0 && move != tt_data_move(old)) verify_tt.kept_deeper_new_move++;
+        }
+#endif
+        return;
+    }
 
     /* A fail-low has no best move, keep the one already stored for this position. */
     if (move == 0 && same_position) move = tt_data_move(old);

@@ -33,7 +33,17 @@ typedef enum {
     vf_lmp,          /* quiet move skipped, too late in the list                                  */
     vf_see,          /* move skipped, loses material by SEE                                       */
     vf_history,      /* quiet move skipped, history too low                                       */
-    vf_lmr,          /* reduced move failed low, not re-searched at full depth                    */
+    vf_lmr,          /* reduced move failed low, not re-searched at full depth (not a cut node)    */
+    vf_lmr_cutnode,  /* the same at a cut node                                                     */
+    vf_lmr_cut_term, /* at a cut node, re-searched with the reduction less the cut-node term only  */
+    vf_se_reduce,    /* the TT move searched a ply shallower (singular_reduce) failed low          */
+    vf_qs_bad,       /* qsearch: losing captures skipped (the first one checked)                   */
+    vf_delta,        /* qsearch: capture skipped by delta pruning                                  */
+    /* The rest change the depth rather than skip work: checked by searching both ways, 'wrong' is
+     * that the result changed against the window (below alpha / inside / at or above beta).        */
+    vf_iir,          /* node without a TT move searched a ply shallower                            */
+    vf_se_ext,       /* singular TT move searched a ply deeper                                     */
+    vf_check_ext,    /* node in check searched a ply deeper                                        */
     vf_count
 } verify_feature_t;
 
@@ -66,6 +76,17 @@ typedef struct {
 
 extern verify_config_t verify_cfg;
 
+/* tt_save outside the checks: every save, the saves dropped because the position's entry from this
+ * search is deeper, and those of them that had a new best move (a fail high or exact result with a
+ * move other than the stored one). */
+typedef struct {
+    uint64_t saves;
+    uint64_t kept_deeper;
+    uint64_t kept_deeper_new_move;
+} verify_tt_counts_t;
+
+extern verify_tt_counts_t verify_tt;
+
 /* Whether this decision is to be checked (a TIKI_VERIFY build in 'decisions' mode, outside a check,
  * and sampled). Counts the decision either way. */
 bool verify_take(verify_feature_t feature, int depth);
@@ -74,6 +95,43 @@ bool verify_take(verify_feature_t feature, int depth);
  * 'nodes' what it took. 'fen' (the node's position) and 'context' are logged when it's wrong. */
 void verify_record(verify_feature_t feature, int depth, bool wrong, int miss, uint64_t nodes, const char* fen,
                    const char* context);
+
+/**
+ * What a pruning decision skipped, for the skip-and-reduce features (not the depth changes): the
+ * move's kind (node-level: the whole node, no move), and, for the wrong ones, how much was missed
+ * and what kind of resource it was. 'bound' and 'found' are from the side whose resource was
+ * missed: the mover for a move skipped (alpha, the move's score), the opponent for a node cut off
+ * (-beta, -the node's score). Kinds, in this order:
+ *   mate      'found' is a mate (or tablebase win) for that side;
+ *   defence   that side was clearly worse (bound <= -100, or mated) and the resource gains >= 50 cp;
+ *   tactic    that side ends clearly better (found >= +100) and the resource gains >= 50 cp;
+ *   small     the rest (gains under 50 cp, or level positions).
+ * Wrong ones are also looked up in the TT after the search: 'found later' if the position's entry
+ * holds the skipped move as its best (a move) or says, from a deeper search than the decision's,
+ * that the node is below beta (a node). 'no entry' if the position's entry was replaced.
+ */
+typedef enum { vc_node, vc_check, vc_capture, vc_quiet, vc_count } verify_class_t;
+
+#define VERIFY_DELTAS 5        /* gain 1-20, 21-50, 51-100, >100 cp, mate scores involved */
+#define VERIFY_KINDS 4         /* mate, defence, tactic, small                           */
+#define VERIFY_DEPTH_BANDS 3   /* decision depth 1-3 (and qsearch), 4-6, 7+               */
+
+typedef struct {
+    uint64_t checked[vc_count];
+    uint64_t wrong[vc_count];
+    uint64_t delta[vc_count][VERIFY_DELTAS];
+    uint64_t kind[vc_count][VERIFY_KINDS];
+    uint64_t depth_band[vc_count][VERIFY_DEPTH_BANDS];
+    uint64_t later[vc_count][3];   /* found later, not found, no entry */
+} verify_class_counts_t;
+
+extern verify_class_counts_t verify_classes[vf_count];
+
+void verify_classify(verify_feature_t feature, int depth, bool wrong, verify_class_t cls, uint32_t move,
+                     uint64_t hash, int bound, int found);
+
+/* After each search: the wrong decisions of that search looked up in the TT (found later or not). */
+void verify_resolve_later(void);
 
 /* 'tiki verify <mode> <fen file> <depth> [sample] [log file]', returns the process exit code. */
 int verify_main(int argc, char* argv[]);
