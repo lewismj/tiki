@@ -26,6 +26,7 @@ set (SOURCES
         src/tools.c
         src/limits.c
         src/tune.c
+        src/verify.c
         src/nnue/nnue.c
         src/nnue/nnue_embedded.c
         src/syzygy.c

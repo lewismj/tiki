@@ -9,6 +9,18 @@ with '#' are comments. Each epoch reports, by the reference score's size (|score
     scale   median |net| / |score| (positions with |score| >= MIN_SCALE_SCORE)
     rank    Spearman correlation of the net's scores with the reference's
 
+and, by the size of the net's own score (the same bands, |net| >= MIN_SCALE_SCORE):
+
+    calib   median score / net (signed): what the reference says when the net says that much
+
+Grouped by the reference's score, any net with errors looks too big near 0 and too small at large
+scores (regression to the mean: positions the reference scores near 0 include ones the net misjudges
+by more than that, and large reference scores include ones whose reason the net can't see). calib
+groups by the net's score instead, so it is 1.0 in every band for a net whose scale is right on
+average; below 1 the net overstates scores of that size, above 1 it understates them. It is signed
+(score / net, not |score| / |net|): near 0 the reference's sign is often the opposite of the net's,
+and the absolute ratio would make that look like scale.
+
 and the share of positions with |score| >= 100 where the net has the same sign. With a comparison
 network (an exported .nnue, e.g. the current best) its figures are computed once, with the engine's
 own integer arithmetic (export.quantised_eval), and shown once at the start; each epoch then adds the
@@ -64,18 +76,22 @@ def spearman(a, b):
 
 
 def measures(net, reference):
-    """{'scale': [per band], 'rank': [per band], 'sign': float} of 'net' scores against 'reference'
-    scores (both white's point of view)."""
-    scale, rank = [], []
+    """{'scale': [per band], 'rank': [per band], 'calib': [per band], 'sign': float} of 'net' scores
+    against 'reference' scores (both white's point of view). scale and rank are by |reference|,
+    calib by |net|."""
+    scale, rank, calib = [], [], []
     for low, high in BANDS:
         band = (np.abs(reference) >= low) & (np.abs(reference) < high)
         scaled = band & (np.abs(reference) >= MIN_SCALE_SCORE)
         scale.append(float(np.median(np.abs(net[scaled]) / np.abs(reference[scaled]))) if scaled.any()
                      else float("nan"))
         rank.append(spearman(net[band], reference[band]))
+        own = (np.abs(net) >= max(low, MIN_SCALE_SCORE)) & (np.abs(net) < high)
+        calib.append(float(np.median(reference[own] / net[own])) if own.any()
+                     else float("nan"))
     clear = np.abs(reference) >= 100
     sign = float(np.mean((net[clear] > 0) == (reference[clear] > 0))) if clear.any() else float("nan")
-    return {"scale": scale, "rank": rank, "sign": sign}
+    return {"scale": scale, "rank": rank, "calib": calib, "sign": sign}
 
 
 class Reference:
@@ -118,7 +134,8 @@ class Reference:
     @staticmethod
     def _rows(label, m, extra=""):
         return [f"  {label:<18} scale " + " ".join(f"{v:9.2f}" for v in m["scale"]) + f"   sign {m['sign']:.3f}",
-                f"  {'':<18} rank  " + " ".join(f"{v:9.3f}" for v in m["rank"]) + extra]
+                f"  {'':<18} rank  " + " ".join(f"{v:9.3f}" for v in m["rank"]) + extra,
+                f"  {'':<18} calib " + " ".join(f"{v:9.2f}" for v in m["calib"])]
 
     def compare_report(self):
         """Lines for the comparison network (they don't change, so they're shown once), or none."""

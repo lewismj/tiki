@@ -164,6 +164,14 @@ if (TIKI_SEARCH_STATS)
     add_compile_definitions(TIKI_SEARCH_STATS)
 endif()
 
+# Search verification build ('tiki verify', core/src/verify.h): plain alpha-beta comparison, mirror and
+# repeat checks, and every selective decision of the search checked on a sample. Slower, not for play.
+option(TIKI_VERIFY "Build the search verification hooks and 'tiki verify'" OFF)
+if (TIKI_VERIFY)
+    message(STATUS "TIKI_VERIFY: ON")
+    add_compile_definitions(TIKI_VERIFY)
+endif ()
+
 # SPSA tuning build (OpenBench): the parameters in core/src/tune.h become variables with UCI options
 # of their names, and 'tiki tune' prints OpenBench's SPSA input. Off normally, they stay constants.
 option(TIKI_TUNE "Expose the tunable search parameters as UCI options, for SPSA" OFF)

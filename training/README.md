@@ -424,12 +424,19 @@ It takes the trainer options above, and:
   log shows, by the size of Stockfish's score:
   - **scale:** the median |net| / |Stockfish|;
   - **rank:** the Spearman correlation with Stockfish;
-  - **sign:** how often the net has Stockfish's sign when |score| ≥ 100.
+  - **sign:** how often the net has Stockfish's sign when |score| ≥ 100;
+  - **calib:** grouped by the size of the *net's* score instead, the median Stockfish / net (signed).
+
+  Grouped by Stockfish's score, any net with errors looks too big near 0 and too small at large
+  scores (regression to the mean), so scale exaggerates both ends. calib is about 1.0 in every band
+  for a net whose scale is right on average: below 1 the net overstates scores of that size, above 1
+  it understates them. Read the net's real scale from calib, and compare scale only with another
+  net's scale.
 
   With `--reference-compare`, the comparison network's figures are shown once at the start, and
   each epoch adds the median |net| / |comparison|. A scale well away from the comparison network's
-  (the search's margins are tuned to it), or a ranking that stays below it, is a reason to stop the
-  run early. The check takes a fraction of a second per epoch (`tiki_nnue/reference.py`).
+  (the search's margins were chosen with it), or a ranking that stays below it, is a reason to stop
+  the run early. The check takes a fraction of a second per epoch (`tiki_nnue/reference.py`).
   - **Why it exists:** a run on Lichess + Fishtest data with `--wdl 0.3` had normal validation
     losses but lost an SPRT by about 50 Elo. Its evals near equality were 1.5 to 1.8 times
     Stockfish's, against 1.1 for the current net. In Fishtest games (Stockfish against itself at a

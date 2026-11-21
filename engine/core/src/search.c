@@ -13,6 +13,26 @@
 cont_history_t main_cont_history;
 corr_history_t main_corr_history;
 
+/* Search verification (verify.h), a TIKI_VERIFY build only. VERIFY_PLAIN: every selective feature
+ * off, the eval uncorrected and unadjusted, for the comparison with a plain alpha-beta search. */
+#ifdef TIKI_VERIFY
+#include "verify.h"
+#include "uci.h"
+#define VERIFY_PLAIN (verify_cfg.plain)
+#else
+#define VERIFY_PLAIN false
+#endif
+
+/* Whether a TT entry may cut off: always, but with VERIFY_PLAIN only from an entry of exactly this
+ * depth with the TT on (verify plain-tt), never with it off (verify plain). */
+static inline_always bool tt_cut_allowed(const tt_info_t* tt, int depth) {
+#ifdef TIKI_VERIFY
+    if (verify_cfg.plain) return verify_cfg.plain_tt && tt->depth == depth;
+#endif
+    (void) tt; (void) depth;
+    return true;
+}
+
 /* The correction history indices of a position (corr_history_t), from the board's correction keys
  * (board_t.corr_keys, kept up to date by make_move): its pawn structure, then white's and black's
  * other pieces. Zobrist keys per piece and square, so colours and piece types all differ. */
@@ -886,7 +906,7 @@ static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* 
     const bool is_pv_node = beta - alpha > 1;
     tt_info_t tt;
     const bool tt_hit = tt_read(board->hash, search_state->ply, &tt);
-    if (!is_pv_node && tt_hit) {
+    if (!is_pv_node && tt_hit && tt_cut_allowed(&tt, 0)) {
         const int cutoff = tt_cutoff(&tt, 0, alpha, beta);
         if (cutoff != TT_NOT_FOUND) return cutoff;
     }
@@ -900,7 +920,8 @@ static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* 
     int eval = -INF;
     if (!in_check) {
         raw_eval = tt_hit && tt.eval != TT_EVAL_NONE ? tt.eval : evaluation(board, &search_state->nnue);
-        eval = adjusted_eval(raw_eval + eval_correction(board, search_state), tt_hit ? &tt : NULL);
+        eval = VERIFY_PLAIN ? raw_eval
+                            : adjusted_eval(raw_eval + eval_correction(board, search_state), tt_hit ? &tt : NULL);
     }
     /* Fail-soft: the scores returned are the ones found (the stand pat, a capture's), which may lie
      * outside the window, never clamped to alpha or beta. */
@@ -925,7 +946,7 @@ static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* 
         move_t mv = pick_next_move(&buffer, scores, i);
         tt_prefetch(hash_after_move(board, mv));
 
-        if (!in_check) {
+        if (!in_check && !VERIFY_PLAIN) {
             /* Sorted best first, so from here on every capture loses material (SEE < 0). Quiet queen
              * promotions (QUEEN_PROMOTION_SCORE) sort with the winning captures, before this. */
             if (scores[i] < 0 && get_capture_flag(mv)) break;
@@ -1227,6 +1248,88 @@ static inline_always void learn_correction(search_state_t* search_state, int sid
     update_correction_at(search_state, side, indices, depth, score - corrected_eval);
 }
 
+#ifdef TIKI_VERIFY
+static int negamax_node(int alpha, int beta, int depth, bool cut_node, board_t* board, search_state_t* search_state,
+                        limits_t* limits);
+
+/* The position as a FEN plus 'what', for the log of wrong decisions. */
+static void verify_context(char* out, size_t size, const char* what, int depth, int ply, int alpha, int beta,
+                           int static_eval, int claimed, int truth, move_t mv) {
+    char uci[6] = "-";
+    if (mv) move_to_uci(mv, uci);
+    snprintf(out, size, "%s depth %d ply %d alpha %d beta %d eval %d claimed %d searched %d move %s", what, depth, ply,
+             alpha, beta, static_eval, claimed, truth, uci);
+}
+
+/**
+ * A node-level decision (the node returned at or above beta without searching its moves): the same
+ * node searched again without it ('feature' skipped at this node only, everything below as usual).
+ * Wrong if that search ends below beta. 'depth' is the node's before IIR (negamax_node applies it).
+ */
+static void verify_node(verify_feature_t feature, int decision_depth, int alpha, int beta, int depth, bool cut_node,
+                        int static_eval, int claimed, board_t* board, search_state_t* search_state, limits_t* limits) {
+    char fen[128];
+    board_to_fen(board, 1, fen, sizeof(fen));
+    verify_cfg.nesting++;
+    const uint64_t nodes_before = search_state->nodes;
+    const bool follow_pv = search_state->follow_pv;
+    search_state->follow_pv = false;
+    verify_cfg.skip_feature = feature;
+    verify_cfg.skip_ply = search_state->ply;
+    const int truth = negamax_node(alpha, beta, depth, cut_node, board, search_state, limits);
+    verify_cfg.skip_ply = -1;
+    search_state->follow_pv = follow_pv;
+    verify_cfg.nesting--;
+    if (limits->stop_search_flag) return;
+    char context[160];
+    verify_context(context, sizeof(context), "node", decision_depth, search_state->ply, alpha, beta, static_eval, claimed,
+                   truth, 0);
+    verify_record(feature, decision_depth, truth < beta, beta - truth, search_state->nodes - nodes_before, fen, context);
+}
+
+/**
+ * A move-level decision (a move skipped): the move searched at 'child_depth' with the node's null
+ * window, as the move loop would have. Wrong if it beats alpha (the node's result would change).
+ * 'made': the move is already made on the board (and its network update pushed), but the ply hasn't
+ * moved on yet, as in the move loop's pruning after make. An illegal move isn't a decision.
+ */
+static void verify_move(verify_feature_t feature, move_t mv, bool made, int alpha, int depth, int child_depth,
+                        bool cut_node, int static_eval, board_t* board, search_state_t* search_state, limits_t* limits) {
+    /* The node's position (before the move), for the log. */
+    if (made) pop_move(board);
+    char fen[128];
+    board_to_fen(board, 1, fen, sizeof(fen));
+    if (!make_move(board, mv)) {
+        pop_move(board);
+        return;
+    }
+    if (!made) nnue_push(&search_state->nnue, board, mv);
+
+    verify_cfg.nesting++;
+    const uint64_t nodes_before = search_state->nodes;
+    const bool follow_pv = search_state->follow_pv;
+    search_state->path_moves[search_state->ply] = mv;
+    ++search_state->ply;
+    ++search_state->repetition_index;
+    record_position(search_state, search_state->repetition_index, board->hash, board->fifty_move);
+    search_state->follow_pv = false;
+    const int score = -negamax_node(-alpha - 1, -alpha, child_depth, !cut_node, board, search_state, limits);
+    --search_state->ply;
+    --search_state->repetition_index;
+    if (!made) {
+        pop_move(board);
+        nnue_pop(&search_state->nnue);
+    }
+    search_state->follow_pv = follow_pv;
+    verify_cfg.nesting--;
+    if (limits->stop_search_flag) return;
+    char context[160];
+    verify_context(context, sizeof(context), "move", depth, search_state->ply, alpha, alpha + 1, static_eval, alpha,
+                   score, mv);
+    verify_record(feature, depth, score > alpha, score - alpha, search_state->nodes - nodes_before, fen, context);
+}
+#endif
+
 /**
  * The search of a node, 'depth' plies from the horizon, in the window (alpha, beta); negamax is the
  * root's. Fail-soft: returns the best score found, which may lie outside the window (at or above beta
@@ -1272,6 +1375,18 @@ static int negamax_node(int alpha,
     /* Whether this node is on the previous iteration's PV, set by the parent for this node only. */
     const bool follow_pv = search_state->follow_pv;
 
+#ifdef TIKI_VERIFY
+    /* A node-level check (verify_node): this node is searched again without the decision it took. */
+    int verify_skip = -1;
+    if (verify_cfg.skip_ply == search_state->ply) {
+        verify_skip = verify_cfg.skip_feature;
+        verify_cfg.skip_ply = -1;
+    }
+#define VERIFY_SKIPS(feature) (verify_skip == (feature))
+#else
+#define VERIFY_SKIPS(feature) false
+#endif
+
     /* Not at the root, so a move is always returned. */
     if (search_state->ply > 0 && is_draw(board, search_state)) {
         STAT_EXIT(0);
@@ -1289,7 +1404,7 @@ static int negamax_node(int alpha,
      * every evasion in check (it doesn't stand pat), so a mate there is still found. */
     bool in_check = side_in_check(board);
 
-    if (in_check && search_state->ply < 2 * search_state->root_depth) ++depth;
+    if (in_check && search_state->ply < 2 * search_state->root_depth && !VERIFY_PLAIN) ++depth;
 
     /* A singular extension search of this node without the TT move (see below). Its result isn't
      * the node's: it doesn't cut off from the TT, save to it, or prune the whole node. */
@@ -1301,7 +1416,7 @@ static int negamax_node(int alpha,
     tt_info_t tt;
     const bool tt_hit = tt_read(board->hash, search_state->ply, &tt);
     move_t tt_move = tt_hit ? tt.move : 0;
-    if (search_state->ply && !is_pv_node && !excluded_move && tt_hit) {
+    if (search_state->ply && !is_pv_node && !excluded_move && tt_hit && tt_cut_allowed(&tt, depth)) {
         const int cutoff = tt_cutoff(&tt, depth, alpha, beta);
         if (cutoff != TT_NOT_FOUND) {
             if (depth > 0) STAT_EXIT(1);
@@ -1333,7 +1448,10 @@ static int negamax_node(int alpha,
         }
     }
 
-    depth -= iir_reduction(depth, tt_move);
+    /* The depth before IIR, which a node-level check searches the node at again (it applies IIR itself). */
+    const int node_depth = depth;
+    (void) node_depth;
+    if (!VERIFY_PLAIN) depth -= iir_reduction(depth, tt_move);
 
     /* Not meaningful in check, every move is searched there anyway. The network's eval is taken
      * from the TT when it's there ('raw_eval', what's saved), corrected by the correction history
@@ -1347,9 +1465,9 @@ static int negamax_node(int alpha,
         /* A new position's eval is saved straight away, nodes pruned before their search keep it. */
         if (!tt_hit && !excluded_move) tt_save(board->hash, tt_none, 0, search_state->ply, 0, 0, raw_eval);
         corr_indices(board, corr_idx);
-        corrected_eval = raw_eval + correction_at(search_state, board->side, corr_idx);
+        corrected_eval = raw_eval + (VERIFY_PLAIN ? 0 : correction_at(search_state, board->side, corr_idx));
     }
-    const int static_eval = in_check ? -INF : adjusted_eval(corrected_eval, tt_hit ? &tt : NULL);
+    const int static_eval = in_check ? -INF : VERIFY_PLAIN ? corrected_eval : adjusted_eval(corrected_eval, tt_hit ? &tt : NULL);
 
     /* Improving: the network's eval against this side's previous node (is_improving). Every node
      * two or four plies up is an ancestor, so its entry was written before this node was reached. */
@@ -1360,19 +1478,25 @@ static int negamax_node(int alpha,
 
     /* Reverse futility pruning (fail-soft, rfp_score; never a mate score). The threat test only when the
      * eval clears beta by the smallest margin, the rest can't be pruned anyway. */
-    if (!excluded_move && !in_check && !is_pv_node && ply > 0 && depth <= RFP_MAX_DEPTH &&
-        static_eval - RFP_MIN_MARGIN >= beta) {
+    if (!excluded_move && !in_check && !is_pv_node && ply > 0 && depth <= RFP_MAX_DEPTH && !VERIFY_PLAIN &&
+        !VERIFY_SKIPS(vf_rfp) && static_eval - RFP_MIN_MARGIN >= beta) {
         const bool improving_safe = improving && !opp_can_win_material(board);
         const bool opp_worsening = is_opp_worsening(raw_eval, search_state->static_evals[ply - 1]);
         const int margin = rfp_margin(depth, improving_safe, opp_worsening, tt_hit);
         if (can_reverse_futility_prune(depth, static_eval, beta, in_check, is_pv_node, ply, margin)) {
             STAT_EXIT(3);
+#ifdef TIKI_VERIFY
+            if (verify_take(vf_rfp, depth))
+                verify_node(vf_rfp, depth, alpha_orig, beta, node_depth, cut_node, static_eval, rfp_score(static_eval, beta),
+                            board, search_state, limits);
+#endif
             return rfp_score(static_eval, beta);
         }
     }
 
     /* Null move pruning, searched at null_move_depth. */
-    if (!excluded_move && can_null_move(board, search_state, depth, beta, static_eval, in_check, is_pv_node)) {
+    if (!excluded_move && !VERIFY_PLAIN && !VERIFY_SKIPS(vf_null) &&
+        can_null_move(board, search_state, depth, beta, static_eval, in_check, is_pv_node)) {
         const int null_depth = null_move_depth(depth, static_eval, beta);
 #ifdef TIKI_SEARCH_STATS
         search_state->stats.null_tried_at_depth[stat_entry_depth]++;
@@ -1399,6 +1523,11 @@ static int negamax_node(int alpha,
             const int null_score = is_mate_score(score) ? beta : score;
             if (depth < NMP_VERIFY_DEPTH || search_state->nmp_min_ply != 0) {
                 STAT_EXIT(4);
+#ifdef TIKI_VERIFY
+                if (verify_take(vf_null, depth))
+                    verify_node(vf_null, depth, alpha_orig, beta, node_depth, cut_node, static_eval, null_score, board,
+                                search_state, limits);
+#endif
                 return null_score;
             }
             /* Deep, the cutoff is verified by searching this node normally at the null search's depth,
@@ -1410,6 +1539,11 @@ static int negamax_node(int alpha,
             if (limits->stop_search_flag) return STOPPED_SEARCH;
             if (verified >= beta) {
                 STAT_EXIT(4);
+#ifdef TIKI_VERIFY
+                if (verify_take(vf_null, depth))
+                    verify_node(vf_null, depth, alpha_orig, beta, node_depth, cut_node, static_eval, verified, board,
+                                search_state, limits);
+#endif
                 return is_mate_score(verified) ? beta : verified;
             }
         }
@@ -1420,7 +1554,8 @@ static int negamax_node(int alpha,
      * the reduced search. A cutoff is saved as a lower bound at PROBCUT_TT_DEPTH (the reduced search plus
      * the move), and returned less the margin (fail-soft; a mate score as it is). */
     const int pc_beta = probcut_beta(beta, improving);
-    if (!excluded_move && can_probcut(depth, search_state->ply, beta, in_check, is_pv_node, tt_hit,
+    if (!excluded_move && !VERIFY_PLAIN && !VERIFY_SKIPS(vf_probcut) &&
+        can_probcut(depth, search_state->ply, beta, in_check, is_pv_node, tt_hit,
                                       tt_hit ? tt.depth : 0, tt_hit ? tt.type : tt_none, tt_hit ? tt.score : 0,
                                       pc_beta)) {
         move_buffer_t pc_buffer;
@@ -1457,6 +1592,12 @@ static int negamax_node(int alpha,
             if (pc_score >= pc_beta) {
                 tt_save(board->hash, tt_beta, PROBCUT_TT_DEPTH(depth), search_state->ply, pc_score, mv, raw_eval);
                 STAT_EXIT(5);
+#ifdef TIKI_VERIFY
+                if (verify_take(vf_probcut, depth))
+                    verify_node(vf_probcut, depth, alpha_orig, beta, node_depth, cut_node, static_eval,
+                                is_mate_score(pc_score) ? pc_score : pc_score - (pc_beta - beta), board, search_state,
+                                limits);
+#endif
                 return is_mate_score(pc_score) ? pc_score : pc_score - (pc_beta - beta);
             }
         }
@@ -1470,7 +1611,7 @@ static int negamax_node(int alpha,
      * singular_result. 'extension' only ever applies to the TT move.
      */
     int extension = 0;
-    if (!excluded_move && tt_move) {
+    if (!excluded_move && tt_move && !VERIFY_PLAIN) {
         move_t stored_move;
         int tt_score, tt_depth;
         tt_entry_type tt_type;
@@ -1491,8 +1632,13 @@ static int negamax_node(int alpha,
             const singular_result_t result = singular_result(score, s_beta, tt_score, beta, is_pv_node);
             count_singular(search_state, search_state->nodes - nodes_before, result);
             /* Fail-soft: another move reached s_beta (>= beta), a lower bound on the node. */
-            if (result == singular_multi_cut) {
+            if (result == singular_multi_cut && !VERIFY_SKIPS(vf_multicut)) {
                 STAT_EXIT(6);
+#ifdef TIKI_VERIFY
+                if (verify_take(vf_multicut, depth))
+                    verify_node(vf_multicut, depth, alpha_orig, beta, node_depth, cut_node, static_eval, s_beta, board,
+                                search_state, limits);
+#endif
                 return s_beta;
             }
             if (result == singular_extend) extension = 1;
@@ -1521,7 +1667,7 @@ static int negamax_node(int alpha,
     if (!excluded_move) stat_capture_ranks(&capture_ranks, &buffer, scores, tt_move, board, search_state, depth, is_pv_node);
 #endif
 
-    const bool futile = is_futile(depth, static_eval, alpha, in_check, is_pv_node);
+    const bool futile = !VERIFY_PLAIN && is_futile(depth, static_eval, alpha, in_check, is_pv_node);
 
     bool has_legal_moves = false;
     int num_moves_searched = 0;
@@ -1556,7 +1702,14 @@ static int negamax_node(int alpha,
          * later one (it's never in PV nodes, where alpha would move; elsewhere alpha only moves on a
          * cutoff, which returns, and the moves searched only grow), so the quiet moves left are
          * skipped by the picker from here on (not even generated, if it hasn't got to them yet). */
-        if (is_quiet && can_late_move_prune(depth, num_moves_searched, alpha, in_check, is_pv_node, improving)) {
+        if (is_quiet && !VERIFY_PLAIN &&
+            can_late_move_prune(depth, num_moves_searched, alpha, in_check, is_pv_node, improving)) {
+#ifdef TIKI_VERIFY
+            /* The first move it skips (the best ordered of those left; the rest aren't returned). */
+            if (verify_take(vf_lmp, depth))
+                verify_move(vf_lmp, mv, false, alpha, depth, depth - 1, cut_node, static_eval, board, search_state,
+                            limits);
+#endif
             picker_skip_quiets(&picker);
             continue;
         }
@@ -1567,12 +1720,20 @@ static int negamax_node(int alpha,
         const bool is_killer = mv == search_state->killer_moves[0][search_state->ply] ||
                                mv == search_state->killer_moves[1][search_state->ply];
         const int history = is_quiet ? quiet_history_at(search_state, &cont_rows, mv) : 0;
-        const bool history_prunable = is_quiet &&
+        const bool history_prunable = is_quiet && !VERIFY_PLAIN &&
             can_history_prune(depth, history, num_moves_searched, alpha, in_check, is_pv_node, is_killer);
 
         /* SEE pruning, also before making the move. Promotions are always searched. */
-        if (!get_promoted_piece(mv) && can_see_prune(depth, num_moves_searched, alpha, in_check, is_pv_node) &&
-            !see_ge(board, mv, see_prune_threshold(depth, is_quiet))) continue;
+        if (!get_promoted_piece(mv) && !VERIFY_PLAIN &&
+            can_see_prune(depth, num_moves_searched, alpha, in_check, is_pv_node) &&
+            !see_ge(board, mv, see_prune_threshold(depth, is_quiet))) {
+#ifdef TIKI_VERIFY
+            if (verify_take(vf_see, depth))
+                verify_move(vf_see, mv, false, alpha, depth, depth - 1, cut_node, static_eval, board, search_state,
+                            limits);
+#endif
+            continue;
+        }
 
         /* Futility and history pruning apply to quiet moves that don't give check (below). For a move
          * of a piece other than the king that's decided here, before the move is made: whether it
@@ -1588,6 +1749,14 @@ static int negamax_node(int alpha,
                 const int futility_value = static_eval + FUTILITY_BASE + FUTILITY_MARGIN * depth;
                 if (futility_value > best_score) best_score = futility_value;
             }
+#ifdef TIKI_VERIFY
+            {
+                const verify_feature_t f = futile && num_moves_searched > 0 && is_quiet ? vf_futility : vf_history;
+                if (verify_take(f, depth))
+                    verify_move(f, mv, false, alpha, depth, depth - 1, cut_node, static_eval, board, search_state,
+                                limits);
+            }
+#endif
             continue;
         }
 
@@ -1614,6 +1783,14 @@ static int negamax_node(int alpha,
                 const int futility_value = static_eval + FUTILITY_BASE + FUTILITY_MARGIN * depth;
                 if (futility_value > best_score) best_score = futility_value;
             }
+#ifdef TIKI_VERIFY
+            {
+                const verify_feature_t f = futile && num_moves_searched > 0 && is_quiet ? vf_futility : vf_history;
+                if (verify_take(f, depth))
+                    verify_move(f, mv, true, alpha, depth, depth - 1, cut_node, static_eval, board, search_state,
+                                limits);
+            }
+#endif
             search_pop_move(board, search_state);
             continue;
         }
@@ -1635,10 +1812,10 @@ static int negamax_node(int alpha,
 
         /* Late move reduction: quiet moves adjusted by their history, losing captures by the table alone.
          * The killers by at most LMR_KILLER_MAX (by default 0, never reduced). */
-        int reduction =
+        int reduction = !VERIFY_PLAIN &&
             can_reduce(depth, num_moves_searched, is_quiet, gives_check, in_check, is_killer, is_bad_capture) ?
             lmr_reduction_full(depth, num_moves_searched, is_pv_node, history, cut_node, improving, gives_check) : 0;
-        if (LMR_KILLER_MAX > 0 && is_killer &&
+        if (!VERIFY_PLAIN && LMR_KILLER_MAX > 0 && is_killer &&
             can_reduce(depth, num_moves_searched, is_quiet, gives_check, in_check, false, is_bad_capture)) {
             const int r = lmr_reduction(depth, num_moves_searched, is_pv_node, history, cut_node, improving);
             reduction = r < LMR_KILLER_MAX ? r : LMR_KILLER_MAX;
@@ -1677,6 +1854,26 @@ static int negamax_node(int alpha,
                                   search_state, limits);
             const bool reduced_beat_alpha = reduction > 0 && score > alpha;
             if (reduction > 0) COUNT_STAT(search_state, lmr_searches);
+#ifdef TIKI_VERIFY
+            /* A reduced move that failed low isn't searched again: would it have beaten alpha at full depth? */
+            if (reduction > 0 && score <= alpha && !limits->stop_search_flag && verify_take(vf_lmr, depth)) {
+                char fen[128];
+                board_to_fen(board, 1, fen, sizeof(fen));
+                verify_cfg.nesting++;
+                const uint64_t nodes_before = search_state->nodes;
+                search_state->follow_pv = false;
+                const int full = -negamax_node(-alpha - 1, -alpha, new_depth, !cut_node, board, search_state, limits);
+                verify_cfg.nesting--;
+                if (!limits->stop_search_flag) {
+                    char context[160];
+                    verify_context(context, sizeof(context), "after the reduced move", depth, search_state->ply - 1,
+                                   alpha, alpha + 1, static_eval, score, full, mv);
+                    verify_record(vf_lmr, depth, full > alpha, full - alpha, search_state->nodes - nodes_before, fen,
+                                  context);
+                }
+                search_state->follow_pv = child_on_pv;
+            }
+#endif
             if (score > alpha && reduction > 0) {
                 COUNT_STAT(search_state, lmr_fail_highs);
                 search_state->follow_pv = child_on_pv;
@@ -1838,7 +2035,7 @@ int aspiration_search(board_t* board, search_state_t* search_state, limits_t* li
     int delta = ASPIRATION_WINDOW;
     int alpha = -INF;
     int beta = INF;
-    if (depth >= ASPIRATION_MIN_DEPTH && !is_mate_score(previous_score)) {
+    if (depth >= ASPIRATION_MIN_DEPTH && !is_mate_score(previous_score) && !VERIFY_PLAIN) {
         alpha = previous_score - delta;
         beta = previous_score + delta;
     }

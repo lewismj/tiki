@@ -74,8 +74,22 @@ class ReferenceTest(unittest.TestCase):
         self.assertEqual(len(m["scale"]), len(BANDS))
         for value in m["scale"]:
             self.assertAlmostEqual(value, 2.0)
+        self.assertEqual(len(m["calib"]), len(BANDS))
+        for value in m["calib"]:
+            self.assertAlmostEqual(value, 0.5)
         self.assertAlmostEqual(m["sign"], 1.0)
         self.assertAlmostEqual(measures(-reference, reference)["sign"], 0.0)
+
+    def test_calib_groups_by_the_net(self):
+        """A net that is right on average but noisy: grouped by the reference it looks too big near 0
+        and too small at large scores; grouped by its own score (calib) it is about 1.0."""
+        rng = np.random.default_rng(1)
+        net = rng.uniform(-1000, 1000, 200_000)
+        reference = net + rng.normal(0, 60, len(net))
+        m = measures(net, reference)
+        self.assertGreater(m["scale"][0], 1.2)
+        for value in m["calib"]:
+            self.assertAlmostEqual(value, 1.0, delta=0.05)
 
     def test_scores_are_white_point_of_view(self):
         """The same position with the other side to move: a net's score for the side to move becomes
@@ -105,6 +119,7 @@ class ReferenceTest(unittest.TestCase):
         lines = reference.report(small_model(3))
         for name in ("all", "a", "b"):
             self.assertTrue(any(line.lstrip().startswith(f"{name} net") for line in lines))
+        self.assertEqual(sum(line.lstrip().startswith("calib") for line in lines), 3)
         self.assertEqual(reference.compare_report(), [])
 
     def test_report_with_compare(self):

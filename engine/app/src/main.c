@@ -36,6 +36,12 @@ int main(int argc, char* argv[]) {
         return EXIT_SUCCESS;
     }
 
+    /* 'tiki verify <mode> <fen file> <depth> [sample] [log file]', search checks (a TIKI_VERIFY build,
+     * core/src/verify.h). */
+    if (argc >= 2 && strcmp(argv[1], "verify") == 0) {
+        return verify_main(argc, argv);
+    }
+
     /* 'tiki datagen <file> [games] [depth] [seed]', NNUE training data (see training/README.md):
      * the trainer's binary format for a .bin file, text otherwise. */
     if (argc >= 3 && strcmp(argv[1], "datagen") == 0) {

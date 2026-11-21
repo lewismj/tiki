@@ -42,4 +42,8 @@ int nnue_eval_fen(const char* net_path, const char* fen);
  * build with TIKI_TUNE has them, otherwise it says so. */
 void print_spsa_input(void);
 
+/* 'tiki verify <mode> <fen file> <depth> [sample] [log file]': search checks (core/src/verify.h). Only
+ * a build with TIKI_VERIFY runs them, otherwise it says so. Returns the process exit code. */
+int verify_main(int argc, char* argv[]);
+
 #endif
