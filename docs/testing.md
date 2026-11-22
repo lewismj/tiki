@@ -6,7 +6,7 @@
 a 16 MB TT cleared before each, and prints the total nodes and nodes per second.
 
 - The node count changes only when the search or the network does, so it's a signature for changes that shouldn't
-  change behaviour. With `models/tiki-2026-11-14.nnue` it's **499,026** (network format version 6), the same
+  change behaviour. With `models/tiki-2026-11-21.nnue` it's **718,236** (network format version 6), the same
   at every CPU level.
 - Timings vary between runs, so only compare times from back-to-back runs on an idle machine.
 - `build/engine/benchmark/tiki_benchmark` runs Google Benchmark micro-benchmarks of evaluation, move generation,

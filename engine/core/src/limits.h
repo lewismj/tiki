@@ -46,12 +46,12 @@
 /* tm_instability_scale (%): TM_INSTABILITY_BASE plus TM_INSTABILITY_PER_CHANGE per best move change at the root,
  * the count halved each depth.
  */
-#define TM_INSTABILITY_BASE 83
-#define TM_INSTABILITY_PER_CHANGE 172
+#define TM_INSTABILITY_BASE 100
+#define TM_INSTABILITY_PER_CHANGE 0
 /* tm_complexity_scale (%): TM_COMPLEXITY_BASE plus TM_COMPLEXITY_SCALE * complexity / TM_COMPLEXITY_CAP, the complexity
  * |score - root static eval| * ln(depth), at most TM_COMPLEXITY_CAP (cp). */
-#define TM_COMPLEXITY_BASE 70
-#define TM_COMPLEXITY_SCALE 50
+#define TM_COMPLEXITY_BASE 100
+#define TM_COMPLEXITY_SCALE 0
 #define TM_COMPLEXITY_CAP 250
 
 

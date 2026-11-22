@@ -265,10 +265,15 @@ void test_tm_complexity_scale() {
     /* Search agrees with the eval: the base; at the cap or beyond: base + scale. */
     TEST_ASSERT_TRUE(tm_complexity_scale(30, true, 30, 10) == TM_COMPLEXITY_BASE / 100.0);
     TEST_ASSERT_TRUE(tm_complexity_scale(1000, true, 0, 10) == (TM_COMPLEXITY_BASE + TM_COMPLEXITY_SCALE) / 100.0);
-    /* Symmetric in the difference, growing with it and with the depth. */
+    /* Symmetric in the difference, growing with it and with the depth (constant when TM_COMPLEXITY_SCALE
+     * is 0, the factor switched off). */
     TEST_ASSERT_TRUE(tm_complexity_scale(-20, true, 20, 8) == tm_complexity_scale(20, true, -20, 8));
-    TEST_ASSERT_TRUE(tm_complexity_scale(40, true, 0, 8) > tm_complexity_scale(20, true, 0, 8));
-    TEST_ASSERT_TRUE(tm_complexity_scale(20, true, 0, 12) > tm_complexity_scale(20, true, 0, 6));
+    TEST_ASSERT_TRUE(tm_complexity_scale(40, true, 0, 8) >= tm_complexity_scale(20, true, 0, 8));
+    TEST_ASSERT_TRUE(tm_complexity_scale(20, true, 0, 12) >= tm_complexity_scale(20, true, 0, 6));
+    if (TM_COMPLEXITY_SCALE > 0) {
+        TEST_ASSERT_TRUE(tm_complexity_scale(40, true, 0, 8) > tm_complexity_scale(20, true, 0, 8));
+        TEST_ASSERT_TRUE(tm_complexity_scale(20, true, 0, 12) > tm_complexity_scale(20, true, 0, 6));
+    }
 }
 
 void test_tm_falling_scale() {
@@ -488,15 +493,16 @@ void test_null_move_guards() {
 }
 
 void test_null_move_depth() {
-    /* depth - (base + depth * rate + min((eval - beta) * PLY_GRAIN / eval_div, eval_max)) / PLY_GRAIN, at least 0. */
+    /* depth - (base + depth * rate + min((eval - beta) / eval_div * PLY_GRAIN, eval_max)) / PLY_GRAIN, at least 0. */
     for (int depth = NMP_MIN_DEPTH; depth <= 30; depth++) {
         const int base = depth - (NMP_R_BASE + depth * NMP_R_DEPTH_RATE) / PLY_GRAIN;
         TEST_ASSERT_EQUAL_INT(base > 0 ? base : 0, null_move_depth(depth, 0, 0));
         const int far = depth - (NMP_R_BASE + depth * NMP_R_DEPTH_RATE + NMP_R_EVAL_MAX) / PLY_GRAIN;
         TEST_ASSERT_EQUAL_INT(far > 0 ? far : 0, null_move_depth(depth, 100000, 0));
-        /* Half of NMP_R_EVAL_DIV above beta adds half a ply, summed with the other terms before rounding. */
-        const int half = depth - (NMP_R_BASE + depth * NMP_R_DEPTH_RATE + PLY_GRAIN / 2) / PLY_GRAIN;
-        TEST_ASSERT_EQUAL_INT(half > 0 ? half : 0, null_move_depth(depth, NMP_R_EVAL_DIV / 2, 0));
+        /* The eval term counts whole plies: just under NMP_R_EVAL_DIV above beta adds nothing, NMP_R_EVAL_DIV a ply. */
+        TEST_ASSERT_EQUAL_INT(null_move_depth(depth, 0, 0), null_move_depth(depth, NMP_R_EVAL_DIV - 1, 0));
+        const int one = depth - (NMP_R_BASE + depth * NMP_R_DEPTH_RATE + PLY_GRAIN) / PLY_GRAIN;
+        TEST_ASSERT_EQUAL_INT(one > 0 ? one : 0, null_move_depth(depth, NMP_R_EVAL_DIV, 0));
         /* More eval above beta, never a deeper null search. */
         TEST_ASSERT_TRUE(null_move_depth(depth, NMP_R_EVAL_DIV, 0) <= null_move_depth(depth, NMP_R_EVAL_DIV - 1, 0));
         /* Always shallower than the node, never below qsearch. */
@@ -912,13 +918,14 @@ void test_lmr_reduction() {
     /* Moves past the end of the table use the last column. */
     TEST_ASSERT_EQUAL_INT(lmr_reduction(20, LMR_TABLE_SIZE - 1, false, 0, false, true), lmr_reduction(20, 200, false, 0, false, true));
 
-    /* History: PLY_GRAIN / LMR_HISTORY_DIVISOR of a ply less per point of a good score, more per point
-     * of a bad one, summed with the table's fraction before rounding down; within [0, depth - 2]. */
+    /* History: a whole ply less per LMR_HISTORY_DIVISOR of a good score, more per LMR_HISTORY_DIVISOR of
+     * a bad one (rounded towards zero), added to the table's fraction before rounding down; within
+     * [0, depth - 2]. */
     const int t = lmr_table[12][20];
     const int histories[] = { 0, LMR_HISTORY_DIVISOR / 4, LMR_HISTORY_DIVISOR - 1, LMR_HISTORY_DIVISOR,
                               -LMR_HISTORY_DIVISOR / 4, -LMR_HISTORY_DIVISOR, HISTORY_MAX, -HISTORY_MAX };
     for (int i = 0; i < (int) (sizeof(histories) / sizeof(*histories)); i++) {
-        const int g = t - histories[i] * PLY_GRAIN / LMR_HISTORY_DIVISOR;
+        const int g = t - histories[i] / LMR_HISTORY_DIVISOR * PLY_GRAIN;
         const int plies = g <= 0 ? 0 : g / PLY_GRAIN;
         TEST_ASSERT_EQUAL_INT(plies < 10 ? plies : 10, lmr_reduction(12, 20, false, histories[i], false, true));
     }

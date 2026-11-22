@@ -790,13 +790,14 @@ bool can_null_move(const board_t* board,
 
 /**
  * The null move search's depth: depth - R, R = NMP_R_BASE + depth * NMP_R_DEPTH_RATE + min((eval -
- * beta) * PLY_GRAIN / NMP_R_EVAL_DIV, NMP_R_EVAL_MAX), in 1/PLY_GRAIN ply and rounded down once, at
- * least 0 (qsearch). Larger the deeper the node and the further its eval is above beta (the more
- * likely the cutoff).
+ * beta) / NMP_R_EVAL_DIV * PLY_GRAIN, NMP_R_EVAL_MAX), in 1/PLY_GRAIN ply and rounded down once, at
+ * least 0 (qsearch). The eval term counts whole plies only (a ply per full NMP_R_EVAL_DIV above
+ * beta); a fractional eval term hasn't been shown to help (to be SPRT'd on its own).
+ * Larger the deeper the node and the further its eval is above beta (the more likely the cutoff).
  */
 int null_move_depth(int depth, int static_eval, int beta) {
     const int64_t above = static_eval > beta ? (int64_t) static_eval - beta : 0;
-    int64_t eval_term = above * PLY_GRAIN / NMP_R_EVAL_DIV;
+    int64_t eval_term = above / NMP_R_EVAL_DIV * PLY_GRAIN;
     if (eval_term > NMP_R_EVAL_MAX) eval_term = NMP_R_EVAL_MAX;
     const int r = (int) ((NMP_R_BASE + (int64_t) depth * NMP_R_DEPTH_RATE + eval_term) / PLY_GRAIN);
     const int reduced = depth - r;
@@ -945,8 +946,9 @@ bool can_history_prune(int depth, int history, int moves_searched, int alpha, bo
  * LMR_CUT_NODE more at an expected cut node (cut_node, see negamax_node): a late move there is
  * expected to fail low, the cutoff should come from an earlier move. LMR_NOT_IMPROVING more when
  * the position isn't improving (is_improving), a late move is then less likely to help.
- * Worked out in 1/PLY_GRAIN ply, so each term, the history's included, can be a fraction of a ply,
- * and rounded down to whole plies once.
+ * Worked out in 1/PLY_GRAIN ply and rounded down to whole plies once. The table's term can be a
+ * fraction of a ply; the history's is whole plies (history / LMR_HISTORY_DIVISOR, rounded towards
+ * zero), as a fractional history term hasn't been shown to help (to be SPRT'd on its own).
  */
 int lmr_reduction_full(int depth, int moves_searched, bool is_pv_node, int history, bool cut_node, bool improving,
                        bool gives_check) {
@@ -956,7 +958,7 @@ int lmr_reduction_full(int depth, int moves_searched, bool is_pv_node, int histo
     if (cut_node) r += LMR_CUT_NODE;
     if (!improving) r += LMR_NOT_IMPROVING;
     if (gives_check) r -= LMR_GIVES_CHECK;
-    r -= history * PLY_GRAIN / LMR_HISTORY_DIVISOR;
+    r -= history / LMR_HISTORY_DIVISOR * PLY_GRAIN;
     r += LMR_ROUND_OFFSET;
     if (r <= 0) return 0;
     r /= PLY_GRAIN;

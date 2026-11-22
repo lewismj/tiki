@@ -33,13 +33,14 @@ void init_lmr_table();
 #define MAX_PLY 64               /* Maximum ply we can search.                                               */
 #define MAX_SEARCH_DEPTH 32      /* Iterative deepening limit when no depth is given (e.g. 'go infinite').   */
 #define NMP_MIN_DEPTH 2          /* Null move pruning from this depth, searched at depth - R (at least 0,    */
-#define NMP_R_BASE 3072          /* qsearch), R = base + depth * depth_rate + min((eval - beta) * PLY_GRAIN  */
-#define NMP_R_DEPTH_RATE 342     /* / eval_div, eval_max), in 1/PLY_GRAIN ply, rounded down once (342: the  */
-#define NMP_R_EVAL_DIV 200       /* depth term is depth / 3 rounded down, below depth 512) (null_move_depth):*/
-#define NMP_R_EVAL_MAX 3072      /* 3 plies, a third per ply of depth, a ply per 200 cp above beta (max 3). */
+#define NMP_R_BASE 3072          /* qsearch), R = base + depth * depth_rate + min((eval - beta) / eval_div   */
+#define NMP_R_DEPTH_RATE 342     /* whole plies * PLY_GRAIN, eval_max), in 1/PLY_GRAIN ply, rounded down     */
+#define NMP_R_EVAL_DIV 200       /* once (342: the depth term is depth / 3 rounded down, below depth 512)    */
+#define NMP_R_EVAL_MAX 3072      /* (null_move_depth): 3 plies, a third per ply of depth, a ply per full 200 */
+                                 /* cp above beta (max 3).                                                   */
 #define NMP_VERIFY_DEPTH 14      /* From this depth a null move cutoff is verified by a normal search.      */
 #define LMR_MIN_DEPTH 3          /* Late move reduction from this depth...                                   */
-#define LMR_MIN_MOVES 1          /* ...after this many moves have been searched at the node.                 */
+#define LMR_MIN_MOVES 3          /* ...after this many moves have been searched at the node.                 */
 #define LMR_TABLE_SIZE 64
 #define PLY_GRAIN 1024           /* Depth adjustments that sum several terms (LMR, null move R) are worked   */
                                  /* out in 1/this ply and rounded down once.                                 */
@@ -83,12 +84,12 @@ void init_lmr_table();
 #define DELTA_MARGIN 200         /* Qsearch delta pruning, skip a capture if eval + victim + margin <= alpha. */
 #define RFP_MAX_DEPTH 6          /* Reverse futility pruning up to this depth, when static eval - margin     */
 #define RFP_MARGIN 80            /* >= beta (rfp_margin): margin * depth, less RFP_IMPROVING when the        */
-#define RFP_IMPROVING 280        /* position is improving and the opponent can't win material...            */
-#define RFP_OPP_WORSENING 62     /* ...less this when the opponent's last move cost them (the two sides'     */
+#define RFP_IMPROVING 145        /* position is improving and the opponent can't win material...            */
+#define RFP_OPP_WORSENING 0      /* ...less this when the opponent's last move cost them (the two sides'     */
 #define RFP_OPP_WORSENING_MARGIN 145 /* network evals sum to more than this)...                              */
-#define RFP_NO_TT 50             /* ...less this * depth without a TT entry, at least RFP_MIN_MARGIN.        */
-#define RFP_MIN_MARGIN 31
-#define RFP_BETA_BLEND 525       /* The pruned node returns static eval moved this / 1024 of the way to beta. */
+#define RFP_NO_TT 0              /* ...less this * depth without a TT entry, at least RFP_MIN_MARGIN.        */
+#define RFP_MIN_MARGIN 0
+#define RFP_BETA_BLEND 0         /* The pruned node returns static eval moved this / 1024 of the way to beta. */
 #define FUTILITY_MAX_DEPTH 8     /* Futility pruning of quiet moves up to this depth...                      */
 #define FUTILITY_BASE 50         /* ...when static eval + base + margin * depth <= alpha.                    */
 #define FUTILITY_MARGIN 100
