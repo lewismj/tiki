@@ -48,11 +48,6 @@ enum {
     SEE_CAPTURE_MARGIN_DEFAULT = SEE_CAPTURE_MARGIN,
     SE_MARGIN_DEFAULT = SE_MARGIN,
     RFP_IMPROVING_DEFAULT = RFP_IMPROVING,
-    RFP_OPP_WORSENING_DEFAULT = RFP_OPP_WORSENING,
-    RFP_OPP_WORSENING_MARGIN_DEFAULT = RFP_OPP_WORSENING_MARGIN,
-    RFP_NO_TT_DEFAULT = RFP_NO_TT,
-    RFP_MIN_MARGIN_DEFAULT = RFP_MIN_MARGIN,
-    RFP_BETA_BLEND_DEFAULT = RFP_BETA_BLEND,
     FUTILITY_BASE_DEFAULT = FUTILITY_BASE,
     LMP_NOT_IMPROVING_PCT_DEFAULT = LMP_NOT_IMPROVING_PCT,
     NMP_MIN_DEPTH_DEFAULT = NMP_MIN_DEPTH,
@@ -76,14 +71,6 @@ enum {
     TM_HARD_PERCENT_DEFAULT = TM_HARD_PERCENT,
     TM_UNSTABLE_PERCENT_DEFAULT = TM_UNSTABLE_PERCENT,
     TM_NODES_PERCENT_DEFAULT = TM_NODES_PERCENT,
-    TM_FALLING_PREV_DEFAULT = TM_FALLING_PREV,
-    TM_FALLING_ITER_DEFAULT = TM_FALLING_ITER,
-    TM_FALLING_MAX_DEFAULT = TM_FALLING_MAX,
-    TM_INSTABILITY_BASE_DEFAULT = TM_INSTABILITY_BASE,
-    TM_INSTABILITY_PER_CHANGE_DEFAULT = TM_INSTABILITY_PER_CHANGE,
-    TM_COMPLEXITY_BASE_DEFAULT = TM_COMPLEXITY_BASE,
-    TM_COMPLEXITY_SCALE_DEFAULT = TM_COMPLEXITY_SCALE,
-    TM_COMPLEXITY_CAP_DEFAULT = TM_COMPLEXITY_CAP,
     CORR_PAWN_WEIGHT_DEFAULT = CORR_PAWN_WEIGHT,
     CORR_NONPAWN_WEIGHT_DEFAULT = CORR_NONPAWN_WEIGHT,
     CORR_MAX_DEFAULT = CORR_MAX,
@@ -118,11 +105,6 @@ extern int tune_see_quiet_margin;
 extern int tune_see_capture_margin;
 extern int tune_se_margin;
 extern int tune_rfp_improving;
-extern int tune_rfp_opp_worsening;
-extern int tune_rfp_opp_worsening_margin;
-extern int tune_rfp_no_tt;
-extern int tune_rfp_min_margin;
-extern int tune_rfp_beta_blend;
 extern int tune_futility_base;
 extern int tune_lmp_not_improving_pct;
 extern int tune_nmp_min_depth;
@@ -146,14 +128,6 @@ extern int tune_tm_soft_percent;
 extern int tune_tm_hard_percent;
 extern int tune_tm_unstable_percent;
 extern int tune_tm_nodes_percent;
-extern int tune_tm_falling_prev;
-extern int tune_tm_falling_iter;
-extern int tune_tm_falling_max;
-extern int tune_tm_instability_base;
-extern int tune_tm_instability_per_change;
-extern int tune_tm_complexity_base;
-extern int tune_tm_complexity_scale;
-extern int tune_tm_complexity_cap;
 extern int tune_corr_pawn_weight;
 extern int tune_corr_nonpawn_weight;
 extern int tune_corr_max;
@@ -187,11 +161,6 @@ extern int tune_probcut_improving;
 #undef SEE_CAPTURE_MARGIN
 #undef SE_MARGIN
 #undef RFP_IMPROVING
-#undef RFP_OPP_WORSENING
-#undef RFP_OPP_WORSENING_MARGIN
-#undef RFP_NO_TT
-#undef RFP_MIN_MARGIN
-#undef RFP_BETA_BLEND
 #undef FUTILITY_BASE
 #undef LMP_NOT_IMPROVING_PCT
 #undef NMP_MIN_DEPTH
@@ -215,14 +184,6 @@ extern int tune_probcut_improving;
 #undef TM_HARD_PERCENT
 #undef TM_UNSTABLE_PERCENT
 #undef TM_NODES_PERCENT
-#undef TM_FALLING_PREV
-#undef TM_FALLING_ITER
-#undef TM_FALLING_MAX
-#undef TM_INSTABILITY_BASE
-#undef TM_INSTABILITY_PER_CHANGE
-#undef TM_COMPLEXITY_BASE
-#undef TM_COMPLEXITY_SCALE
-#undef TM_COMPLEXITY_CAP
 #undef CORR_PAWN_WEIGHT
 #undef CORR_NONPAWN_WEIGHT
 #undef CORR_MAX
@@ -255,11 +216,6 @@ extern int tune_probcut_improving;
 #define SEE_CAPTURE_MARGIN tune_see_capture_margin
 #define SE_MARGIN tune_se_margin
 #define RFP_IMPROVING tune_rfp_improving
-#define RFP_OPP_WORSENING tune_rfp_opp_worsening
-#define RFP_OPP_WORSENING_MARGIN tune_rfp_opp_worsening_margin
-#define RFP_NO_TT tune_rfp_no_tt
-#define RFP_MIN_MARGIN tune_rfp_min_margin
-#define RFP_BETA_BLEND tune_rfp_beta_blend
 #define FUTILITY_BASE tune_futility_base
 #define LMP_NOT_IMPROVING_PCT tune_lmp_not_improving_pct
 #define NMP_MIN_DEPTH tune_nmp_min_depth
@@ -283,14 +239,6 @@ extern int tune_probcut_improving;
 #define TM_HARD_PERCENT tune_tm_hard_percent
 #define TM_UNSTABLE_PERCENT tune_tm_unstable_percent
 #define TM_NODES_PERCENT tune_tm_nodes_percent
-#define TM_FALLING_PREV tune_tm_falling_prev
-#define TM_FALLING_ITER tune_tm_falling_iter
-#define TM_FALLING_MAX tune_tm_falling_max
-#define TM_INSTABILITY_BASE tune_tm_instability_base
-#define TM_INSTABILITY_PER_CHANGE tune_tm_instability_per_change
-#define TM_COMPLEXITY_BASE tune_tm_complexity_base
-#define TM_COMPLEXITY_SCALE tune_tm_complexity_scale
-#define TM_COMPLEXITY_CAP tune_tm_complexity_cap
 #define CORR_PAWN_WEIGHT tune_corr_pawn_weight
 #define CORR_NONPAWN_WEIGHT tune_corr_nonpawn_weight
 #define CORR_MAX tune_corr_max

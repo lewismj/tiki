@@ -3,14 +3,9 @@
 
 #include "types.h"
 
-typedef struct align {
-    int mvv_lva[12][12];
-} search_const_t ;
-
-/**
- * Singleton instance of the constants.
- */
-extern const search_const_t search_const;
+/* Move ordering of captures by [attacker][victim]: most valuable victim, least valuable attacker
+ * (search_constants.c), within MVV_LVA_MIN..MVV_LVA_MAX. */
+extern const int mvv_lva[12][12];
 
 /**
  * Late move reductions by [depth][moves searched], 0.75 + log(depth) * log(moves) / 2.25 plies, in
@@ -49,8 +44,9 @@ void init_lmr_table();
 #define LMR_KILLER_MAX 0         /* The killers are reduced by at most this (0: never reduced).              */
 #define HIST_BONUS_SCALE 16      /* History bonus (and malus) of a move: min(scale * depth^2, max)           */
 #define HIST_BONUS_MAX 1600      /* (history_bonus).                                                         */
-#define LMR_HISTORY_DIVISOR 1000 /* A quiet move is reduced quiet_history / this plies less (more if        */
-                                 /* negative).                                                               */
+#define LMR_HISTORY_DIVISOR 1300 /* A quiet move is reduced quiet_history / this plies less (more if        */
+                                 /* negative). 1000 for the main history alone, x1.3: quiet_history's rms    */
+                                 /* over the main history's at LMR sites (game sequences, 23 Nov).          */
 /* Correction history (search_state.h, corr_history_t; search.c, eval_correction). */
 #define CORR_GRAIN 32            /* Entries in 1/this cp...                                                  */
 #define CORR_ENTRY_MAX (128 * CORR_GRAIN) /* ...each within +-128 cp (gravity, as the history).               */
@@ -83,13 +79,8 @@ void init_lmr_table();
 #define BAD_CAPTURE_SCORE (-20000) /* Ordering offset for losing captures (SEE < 0), below every quiet move.  */
 #define DELTA_MARGIN 200         /* Qsearch delta pruning, skip a capture if eval + victim + margin <= alpha. */
 #define RFP_MAX_DEPTH 6          /* Reverse futility pruning up to this depth, when static eval - margin     */
-#define RFP_MARGIN 80            /* >= beta (rfp_margin): margin * depth, less RFP_IMPROVING when the        */
-#define RFP_IMPROVING 145        /* position is improving and the opponent can't win material...            */
-#define RFP_OPP_WORSENING 0      /* ...less this when the opponent's last move cost them (the two sides'     */
-#define RFP_OPP_WORSENING_MARGIN 145 /* network evals sum to more than this)...                              */
-#define RFP_NO_TT 0              /* ...less this * depth without a TT entry, at least RFP_MIN_MARGIN.        */
-#define RFP_MIN_MARGIN 0
-#define RFP_BETA_BLEND 0         /* The pruned node returns static eval moved this / 1024 of the way to beta. */
+#define RFP_MARGIN 100           /* >= beta (rfp_margin): margin * depth, less RFP_IMPROVING when the        */
+#define RFP_IMPROVING 50         /* position is improving (cp).                                              */
 #define FUTILITY_MAX_DEPTH 8     /* Futility pruning of quiet moves up to this depth...                      */
 #define FUTILITY_BASE 50         /* ...when static eval + base + margin * depth <= alpha.                    */
 #define FUTILITY_MARGIN 100
@@ -121,7 +112,7 @@ void init_lmr_table();
 #define KILLER_1_SCORE 9000      /* ...the killers...                                                        */
 #define KILLER_2_SCORE 8000
                                  /* ...quiet moves by history, within +-HISTORY_MAX, then losing captures.   */
-#define MVV_LVA_MIN 100          /* The range of search_const.mvv_lva (search_constants.c).                  */
+#define MVV_LVA_MIN 100          /* The range of mvv_lva (search_constants.c).                  */
 #define MVV_LVA_MAX 605
 
 #define CAPTURE_HISTORY_SPAN (CAPTURE_HISTORY_MAX / CAPTURE_HISTORY_DIVISOR)

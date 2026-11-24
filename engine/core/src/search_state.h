@@ -215,8 +215,8 @@ typedef struct align {
     uint8_t pv_length[MAX_PLY];
     uint64_t nodes;
     uint64_t pv_nodes;         /* Nodes that ordered the previous iteration's PV move first (tests). */
-    uint64_t best_move_nodes;  /* Nodes the root's best move took in the last root search (time management). */
-    uint32_t best_move_changes; /* Times another move took the lead at the root this depth (tm_instability_scale). */
+    uint64_t best_move_nodes;  /* Nodes the root's best move took in the last root search (time management)... */
+    uint64_t root_search_start; /* ...and 'nodes' when that root search started (re-searches start again). */
 #ifdef TIKI_SEARCH_STATS
     search_stats_t stats;
     int32_t stat_shadow_history[STAT_SHADOWS][12][64];   /* See STAT_SHADOWS. */
@@ -229,8 +229,6 @@ typedef struct align {
     bool score_pv;
     bool corr_shared;          /* Other threads update the correction history during this search (learn_correction). */
     int score;                 /* Score of the last completed iteration (side to move). */
-    int previous_score;        /* The last search's final score and its side to move, kept from search */
-    int previous_side;         /* to search (time management, tm_falling_scale): -1 if there's none.    */
     int thread_id;             /* 0 for the main thread, which checks the clock and reports. */
     _Atomic uint64_t shared_nodes; /* Helper threads publish 'nodes' here for the main thread. */
     nnue_stack_t nnue;         /* Accumulators along the search path (when a network is loaded). */
@@ -288,7 +286,7 @@ static inline_always void init_search_state_with(search_state_t* search_state, c
     search_state->nodes = 0;
     search_state->pv_nodes = 0;
     search_state->best_move_nodes = 0;
-    search_state->best_move_changes = 0;
+    search_state->root_search_start = 0;
 #ifdef TIKI_SEARCH_STATS
     memset(&search_state->stats, 0, sizeof(search_state->stats));
     memset(search_state->stat_shadow_history, 0, sizeof(search_state->stat_shadow_history));
@@ -300,8 +298,6 @@ static inline_always void init_search_state_with(search_state_t* search_state, c
     memset(search_state->repetition_distance, 0, sizeof(search_state->repetition_distance));
     search_state->null_move_index = 0;
     search_state->score = 0;
-    search_state->previous_score = 0;
-    search_state->previous_side = -1;
     search_state->score_pv = false;
     search_state->follow_pv = true;
     clear_search_tables(search_state);
@@ -323,7 +319,7 @@ static inline_always void clear_pv_table(search_state_t* search_state) {
     search_state->nodes = 0;
     search_state->pv_nodes = 0;
     search_state->best_move_nodes = 0;
-    search_state->best_move_changes = 0;
+    search_state->root_search_start = 0;
     atomic_init(&search_state->shared_nodes, 0);
     search_state->ply = 0;
     search_state->null_move_index = 0;

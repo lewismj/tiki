@@ -52,34 +52,10 @@ int vote_best_thread(const thread_result_t* results, int count);
 /**
  * The factor on the soft time limit after a completed depth (see limits.h): from how many depths
  * in a row the best move has been unchanged ('stability', 0 when it just changed) and the share of
- * the root's nodes ('root_nodes', that depth's) its search took ('best_move_nodes').
+ * the root's nodes ('root_nodes', the last root search's: an aspiration fail searches the root
+ * again) its search took ('best_move_nodes').
  */
 double tm_scale(int stability, uint64_t best_move_nodes, uint64_t root_nodes);
-
-/**
- * A further factor on the soft time limit, for a falling score ('score', the depth just completed): 1 plus
- * TM_FALLING_PREV % per 10 cp it is below the previous search's score ('previous', if 'has_previous': the
- * search for this side's last move) and TM_FALLING_ITER % per 10 cp below the score TM_FALLING_DEPTHS depths
- * before ('earlier', if 'has_earlier'), at most TM_FALLING_MAX %. Never below 1 (a rising score takes the
- * usual time), and 1 with mate or tablebase scores, which are no estimate.
- */
-double tm_falling_scale(int score, bool has_previous, int previous, bool has_earlier, int earlier);
-
-/**
- * A further factor on the soft time limit, for an unstable best move: (TM_INSTABILITY_BASE +
- * TM_INSTABILITY_PER_CHANGE * 'changes') / 100, 'changes' the times another move took the lead at the root during
- * a depth, the total halved after each depth (so recent depths count most).
- */
-double tm_instability_scale(double changes);
-
-/**
- * A further factor on the soft time limit, for a complex position: (TM_COMPLEXITY_BASE + TM_COMPLEXITY_SCALE *
- * complexity / TM_COMPLEXITY_CAP) / 100, the complexity |'score' - 'root_eval'| * ln('depth') (cp), at most
- * TM_COMPLEXITY_CAP. A search that has moved far from the static eval has found something the eval
- * doesn't see, and gets more time; one that agrees with it gets less. 1 without a root eval
- * ('has_eval' false: the root is in check) and with mate or tablebase scores, which are no estimate.
- */
-double tm_complexity_scale(int score, bool has_eval, int root_eval, int depth);
 
 /* The static eval refined by the position's TT entry (NULL for none): the TT score when its bound
  * says the true score is on that side of the eval, otherwise the eval. Mate scores are ignored. */
@@ -136,10 +112,7 @@ bool can_null_move(const board_t* board, const search_state_t* search_state, int
 int null_move_depth(int depth, int static_eval, int beta);
 bool can_reverse_futility_prune(int depth, int static_eval, int beta, bool in_check, bool is_pv_node, int ply,
                                 int margin);
-int rfp_margin(int depth, bool improving_safe, bool opp_worsening, bool tt_hit);
-int rfp_score(int static_eval, int beta);
-bool opp_can_win_material(const board_t* board);
-bool is_opp_worsening(int raw_eval, int parent_raw_eval);
+int rfp_margin(int depth, bool improving);
 bool is_futile(int depth, int static_eval, int alpha, bool in_check, bool is_pv_node);
 bool can_late_move_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node, bool improving);
 bool can_see_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node);

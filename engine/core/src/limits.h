@@ -22,12 +22,7 @@
  * ('movestogo n' divides by n instead). Then two limits:
  *   - soft = base * TM_SOFT_PERCENT / 100, checked between depths: no new depth once the time used
  *     passes soft * scale, where the scale (search.c, tm_scale) is larger when the best move just
- *     changed or got few of the root's nodes, and smaller when it has been stable and took most,
- *     and larger again when the score is falling (tm_falling_scale): against the previous search's
- *     score and against the score TM_FALLING_DEPTHS depths prior; and when the best move has changed
- *     often within recent depths (tm_instability_scale), each change at the root counted, the count
- *     halved after each depth; and by the position's complexity (tm_complexity_scale): more time when the
- *     search's score has moved far from the root's static eval, less when they agree.
+ *     changed or got few of the root's nodes, and smaller when it has been stable and took most.
  *   - hard = base * TM_HARD_PERCENT / 100, never more than half of what's left, stops the search
  *     wherever it is.
  */
@@ -39,20 +34,6 @@
 #define TM_STABILITY_MAX 4       /* Depths of an unchanged best move counted towards the scale.               */
 #define TM_UNSTABLE_PERCENT 250  /* tm_scale's stability factor (%) when the best move just changed.          */
 #define TM_NODES_PERCENT 135     /* tm_scale's node factor: (1.5 - best move's share of nodes) * this / 100.  */
-#define TM_FALLING_PREV 10       /* tm_falling_scale: more time (%) per 10 cp the score is below the previous */
-#define TM_FALLING_ITER 5        /* search's, and per 10 cp it is below TM_FALLING_DEPTHS depths before...    */
-#define TM_FALLING_MAX 200       /* ...within 100% (a rising score takes no less) and this (%).               */
-#define TM_FALLING_DEPTHS 4
-/* tm_instability_scale (%): TM_INSTABILITY_BASE plus TM_INSTABILITY_PER_CHANGE per best move change at the root,
- * the count halved each depth.
- */
-#define TM_INSTABILITY_BASE 100
-#define TM_INSTABILITY_PER_CHANGE 0
-/* tm_complexity_scale (%): TM_COMPLEXITY_BASE plus TM_COMPLEXITY_SCALE * complexity / TM_COMPLEXITY_CAP, the complexity
- * |score - root static eval| * ln(depth), at most TM_COMPLEXITY_CAP (cp). */
-#define TM_COMPLEXITY_BASE 100
-#define TM_COMPLEXITY_SCALE 0
-#define TM_COMPLEXITY_CAP 250
 
 
 typedef struct align {

@@ -169,7 +169,7 @@ static inline_always int score_move_with(move_t move, move_t tt_move, board_t* b
         piece piece = get_piece_moved(move);
         /* En passant, the target square is empty, the victim is the pawn beside it. */
         if (get_enpassant_flag(move)) {
-            return CAPTURE_SCORE + search_const.mvv_lva[piece][board->side == white ? p : P] +
+            return CAPTURE_SCORE + mvv_lva[piece][board->side == white ? p : P] +
                    search_state->capture_history[piece][target][0] / CAPTURE_HISTORY_DIVISOR;
         }
         const int* pieces = (board->side == white) ? black_pieces : white_pieces;
@@ -180,9 +180,9 @@ static inline_always int score_move_with(move_t move, move_t tt_move, board_t* b
                 /* Losing captures (SEE < 0) after the quiet moves. Only possible when the
                  * attacker is worth more than the victim, so SEE is skipped otherwise. */
                 if (see_values[piece] > see_values[pieces[i]] && !see_ge(board, move, 0)) {
-                    return BAD_CAPTURE_SCORE + search_const.mvv_lva[piece][pieces[i]] + history;
+                    return BAD_CAPTURE_SCORE + mvv_lva[piece][pieces[i]] + history;
                 }
-                return CAPTURE_SCORE + search_const.mvv_lva[piece][pieces[i]] + history;
+                return CAPTURE_SCORE + mvv_lva[piece][pieces[i]] + history;
             }
         }
         return 0;
@@ -761,11 +761,11 @@ static inline_always bool is_mate_score(int score) {
 /**
  * Whether the side to move's position is improving: its network eval is above the one at its
  * previous node, two plies up, or four if that node was in check (no eval, -INF). With neither to
- * compare with, it counts as improving (the cautious side: less pruning).
+ * compare with, not improving.
  */
 bool is_improving(int static_eval, int eval_2_plies_up, int eval_4_plies_up) {
     const int previous = eval_2_plies_up != -INF ? eval_2_plies_up : eval_4_plies_up;
-    return previous == -INF || static_eval > previous;
+    return previous != -INF && static_eval > previous;
 }
 
 /**
@@ -805,51 +805,12 @@ int null_move_depth(int depth, int static_eval, int beta) {
 }
 
 /**
- * Whether the opponent (of the side to move) can win material straight away: one of their pawns
- * attacks one of our pieces, a knight or bishop attacks a rook or queen, or a rook attacks a queen.
+ * The reverse futility margin: RFP_MARGIN * depth, less RFP_IMPROVING when the position is improving,
+ * at least 0 (the eval must reach beta).
  */
-bool opp_can_win_material(const board_t* board) {
-    const int us = board->side;
-    const int o = us == white ? 0 : 6;     /* our pieces, P..K or p..k */
-    const int t = us == white ? 6 : 0;     /* theirs */
-    const uint64_t occupancy = board->occupancy[both];
-    uint64_t targets = board->pieces[o + 1] | board->pieces[o + 2] | board->pieces[o + 3] | board->pieces[o + 4];
-    while (targets) {
-        const int sq = trailing_zero_count(targets);
-        targets &= targets - 1;
-        if (pawn_attack((square) sq, (colour) us) & board->pieces[t + 0]) return true;
-    }
-    uint64_t heavy = board->pieces[o + 3] | board->pieces[o + 4];
-    while (heavy) {
-        const int sq = trailing_zero_count(heavy);
-        heavy &= heavy - 1;
-        if (knight_attack((square) sq) & board->pieces[t + 1]) return true;
-        if (bishop_attack((square) sq, occupancy) & board->pieces[t + 2]) return true;
-    }
-    uint64_t queens = board->pieces[o + 4];
-    while (queens) {
-        const int sq = trailing_zero_count(queens);
-        queens &= queens - 1;
-        if (rook_attack((square) sq, occupancy) & board->pieces[t + 3]) return true;
-    }
-    return false;
-}
-
-/* The opponent's last move cost them: this node's network eval and its parent's (each for its side to
- * move) sum to more than RFP_OPP_WORSENING_MARGIN. Not when the parent was in check (no eval, -INF). */
-bool is_opp_worsening(int raw_eval, int parent_raw_eval) {
-    return parent_raw_eval != -INF && raw_eval + parent_raw_eval > RFP_OPP_WORSENING_MARGIN;
-}
-
-/**
- * The reverse futility margin: RFP_MARGIN * depth, less RFP_IMPROVING when the position is improving
- * and the opponent can't win material ('improving_safe'), less RFP_OPP_WORSENING when the opponent's
- * last move cost them, less RFP_NO_TT * depth without a TT entry, at least RFP_MIN_MARGIN.
- */
-int rfp_margin(int depth, bool improving_safe, bool opp_worsening, bool tt_hit) {
-    const int margin = RFP_MARGIN * depth - (improving_safe ? RFP_IMPROVING : 0) -
-                       (opp_worsening ? RFP_OPP_WORSENING : 0) - (tt_hit ? 0 : RFP_NO_TT * depth);
-    return margin > RFP_MIN_MARGIN ? margin : RFP_MIN_MARGIN;
+int rfp_margin(int depth, bool improving) {
+    const int margin = RFP_MARGIN * depth - (improving ? RFP_IMPROVING : 0);
+    return margin > 0 ? margin : 0;
 }
 
 /**
@@ -861,11 +822,6 @@ bool can_reverse_futility_prune(int depth, int static_eval, int beta, bool in_ch
                                 int margin) {
     return ply > 0 && !in_check && !is_pv_node && depth <= RFP_MAX_DEPTH && !is_mate_score(beta) &&
            static_eval - margin >= beta;
-}
-
-/* A pruned node's score (fail-soft): its static eval moved RFP_BETA_BLEND / 1024 of the way to beta. */
-int rfp_score(int static_eval, int beta) {
-    return (int) (((int64_t) static_eval * (1024 - RFP_BETA_BLEND) + (int64_t) beta * RFP_BETA_BLEND) / 1024);
 }
 
 /**
@@ -939,8 +895,8 @@ bool can_history_prune(int depth, int history, int moves_searched, int alpha, bo
  * Late move reduction for a quiet move, from the log table, one ply less in PV nodes, and adjusted
  * by the move's history (quiet_history, the history plus the continuation history):
  * history / LMR_HISTORY_DIVISOR plies less for a move that has often been good, more for one that
- * hasn't. The history alone averages about 900 in magnitude (bench), so a move well above or below
- * average moves a ply. At most depth - 2, so a reduced search keeps at least one ply before the qsearch.
+ * hasn't. Calibrated as 1000 on the main history alone; quiet_history is about 1.3x larger at the
+ * LMR sites (rms over 2207 game positions, history kept between moves), so the divisor is 1300. At most depth - 2, so a reduced search keeps at least one ply before the qsearch.
  * With the history alone, against the same search without it (both with persistent history): SPRT
  * +15.0 +- 7.4 after 3388 games, H1 accepted [0, 5].
  * LMR_CUT_NODE more at an expected cut node (cut_node, see negamax_node): a late move there is
@@ -1105,6 +1061,7 @@ static void verify_qmove(verify_feature_t feature, move_t mv, int alpha, int eva
     char fen[128];
     board_to_fen(board, 1, fen, sizeof(fen));
     const uint64_t hash = board->hash;
+    search_state->path_moves[search_state->ply] = mv;
     ++search_state->ply;
     if (!search_make_move(board, search_state, mv)) {
         --search_state->ply;
@@ -1209,6 +1166,7 @@ static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* 
             }
         }
 
+        search_state->path_moves[search_state->ply] = mv;
         ++search_state->ply;
         if (search_make_move(board, search_state, mv)) {
             has_legal_moves = true;
@@ -1934,6 +1892,7 @@ static int negamax_node(int alpha,
     if (search_state->ply == 0) {
         nnue_reset_root(&search_state->nnue, board);
         search_state->best_move_nodes = 0;
+        search_state->root_search_start = search_state->nodes;
     }
 
     /* Whether this node is on the previous iteration's PV, set by the parent for this node only. */
@@ -1972,19 +1931,20 @@ static int negamax_node(int alpha,
      * every evasion in check (it doesn't stand pat), so a mate there is still found. */
     bool in_check = side_in_check(board);
 
-    if (in_check && search_state->ply < 2 * search_state->root_depth && !VERIFY_PLAIN && !VERIFY_SKIPS(vf_check_ext)) {
+    /* A singular extension search of this node without the TT move (see below). Its result isn't
+     * the node's: it doesn't cut off from the TT, save to it, or prune the whole node. Its depth
+     * comes from the node's, already extended for check, so it isn't extended again. */
+    const move_t excluded_move = search_state->excluded_moves[search_state->ply];
+
+    if (in_check && !excluded_move && search_state->ply < 2 * search_state->root_depth && !VERIFY_PLAIN &&
+        !VERIFY_SKIPS(vf_check_ext)) {
         ++depth;
 #ifdef TIKI_VERIFY
-        if (search_state->ply > 0 && !search_state->excluded_moves[search_state->ply] &&
-            verify_take(vf_check_ext, depth_param))
+        if (search_state->ply > 0 && verify_take(vf_check_ext, depth_param))
             verify_both_ways(vf_check_ext, depth_param, false, alpha, beta, depth_param, cut_node, -INF, board,
                              search_state, limits);
 #endif
     }
-
-    /* A singular extension search of this node without the TT move (see below). Its result isn't
-     * the node's: it doesn't cut off from the TT, save to it, or prune the whole node. */
-    const move_t excluded_move = search_state->excluded_moves[search_state->ply];
 
     /* Probed with the extended depth, the same depth the node is saved with. */
     bool is_pv_node = beta - alpha > 1;
@@ -2050,27 +2010,28 @@ static int negamax_node(int alpha,
     const int static_eval = in_check ? -INF : VERIFY_PLAIN ? corrected_eval : adjusted_eval(corrected_eval, tt_hit ? &tt : NULL);
 
     /* Improving: the network's eval against this side's previous node (is_improving). Every node
-     * two or four plies up is an ancestor, so its entry was written before this node was reached. */
+     * two or four plies up is an ancestor, so its entry was written before this node was reached.
+     * Not straight after a null move: the side to move didn't get a move in between. */
     const int ply = search_state->ply;
     search_state->static_evals[ply] = in_check ? -INF : raw_eval;
-    const bool improving = !in_check && is_improving(raw_eval, ply >= 2 ? search_state->static_evals[ply - 2] : -INF,
-                                                     ply >= 4 ? search_state->static_evals[ply - 4] : -INF);
+    const bool after_null_move =
+        search_state->null_move_index != 0 && search_state->null_move_index == search_state->repetition_index;
+    const bool improving = !in_check && !after_null_move &&
+                           is_improving(raw_eval, ply >= 2 ? search_state->static_evals[ply - 2] : -INF,
+                                        ply >= 4 ? search_state->static_evals[ply - 4] : -INF);
 
-    /* Reverse futility pruning (fail-soft, rfp_score; never a mate score). The threat test only when the
-     * eval clears beta by the smallest margin, the rest can't be pruned anyway. */
+    /* Reverse futility pruning (fail-soft: returns the static eval; never a mate score). */
     if (!excluded_move && !in_check && !is_pv_node && ply > 0 && depth <= RFP_MAX_DEPTH && !VERIFY_PLAIN &&
-        !VERIFY_SKIPS(vf_rfp) && static_eval - RFP_MIN_MARGIN >= beta) {
-        const bool improving_safe = improving && !opp_can_win_material(board);
-        const bool opp_worsening = is_opp_worsening(raw_eval, search_state->static_evals[ply - 1]);
-        const int margin = rfp_margin(depth, improving_safe, opp_worsening, tt_hit);
+        !VERIFY_SKIPS(vf_rfp) && static_eval >= beta) {
+        const int margin = rfp_margin(depth, improving);
         if (can_reverse_futility_prune(depth, static_eval, beta, in_check, is_pv_node, ply, margin)) {
             STAT_EXIT(3);
 #ifdef TIKI_VERIFY
             if (verify_take(vf_rfp, depth))
-                verify_node(vf_rfp, depth, alpha_orig, beta, depth_param, cut_node, static_eval, rfp_score(static_eval, beta),
+                verify_node(vf_rfp, depth, alpha_orig, beta, depth_param, cut_node, static_eval, static_eval,
                             board, search_state, limits);
 #endif
-            return rfp_score(static_eval, beta);
+            return static_eval;
         }
     }
 
@@ -2524,11 +2485,7 @@ static int negamax_node(int alpha,
         if (score > best_score) best_score = score;
         if (score > alpha) {
             best_move = mv;
-            if (search_state->ply == 0) {
-                search_state->best_move_nodes = search_state->nodes - nodes_before_move;
-                /* Another move than the first took the lead (time management, tm_instability_scale). */
-                if (num_moves_searched > 1) search_state->best_move_changes++;
-            }
+            if (search_state->ply == 0) search_state->best_move_nodes = search_state->nodes - nodes_before_move;
 
             search_state->pv_table[search_state->ply][search_state->ply] = mv;
             for (int j = search_state->ply + 1; j < search_state->pv_length[search_state->ply + 1]; j++) {
@@ -2912,26 +2869,6 @@ double tm_scale(int stability, uint64_t best_move_nodes, uint64_t root_nodes) {
     return stability_scale * nodes_scale;
 }
 
-double tm_falling_scale(int score, bool has_previous, int previous, bool has_earlier, int earlier) {
-    if (is_mate_score(score)) return 1.0;
-    int percent = 100;
-    if (has_previous && !is_mate_score(previous) && previous > score) percent += TM_FALLING_PREV * (previous - score) / 10;
-    if (has_earlier && !is_mate_score(earlier) && earlier > score) percent += TM_FALLING_ITER * (earlier - score) / 10;
-    return (percent > TM_FALLING_MAX ? TM_FALLING_MAX : percent) / 100.0;
-}
-
-double tm_instability_scale(double changes) {
-    return (TM_INSTABILITY_BASE + TM_INSTABILITY_PER_CHANGE * changes) / 100.0;
-}
-
-double tm_complexity_scale(int score, bool has_eval, int root_eval, int depth) {
-    if (!has_eval || is_mate_score(score) || depth < 1) return 1.0;
-    const int difference = score > root_eval ? score - root_eval : root_eval - score;
-    double complexity = difference * log((double) depth);
-    if (complexity > TM_COMPLEXITY_CAP) complexity = TM_COMPLEXITY_CAP;
-    return (TM_COMPLEXITY_BASE + TM_COMPLEXITY_SCALE * complexity / TM_COMPLEXITY_CAP) / 100.0;
-}
-
 int vote_best_thread(const thread_result_t* results, int count) {
     int best = -1;
     int min_score = INF;
@@ -3007,11 +2944,7 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
     move_t move = 0;
     move_t previous_move = 0;
     int stability = 0;
-    double best_move_changes = 0.0;  /* Changes of the lead at the root, halved each depth (tm_instability_scale). */
     int completed_depth = 0;
-    int depth_scores[MAX_PLY + 1];   /* Each completed depth's score, for tm_falling_scale. */
-    /* The last search's score, if it was for this side (a search for the previous move, normally). */
-    const bool has_previous = search_state->previous_side == (int) board->side;
 
     /* On the clock, a forced move is played at once, saving the time for later moves. Not with
      * 'movetime', a depth or node limit or 'infinite' (analysis, bench), which search as asked. */
@@ -3027,7 +2960,6 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
     const int helper_count = start_helpers(board, search_state, limits, &helpers);
 
     for (int i = 1; i <= depth; i++) {
-        const uint64_t nodes_before = search_state->nodes;
         score = aspiration_search(board, search_state, limits, i, score);
 
         /* The search may have been stopped, the PV table is then partly overwritten so keep
@@ -3037,7 +2969,6 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
         move = search_state->pv_table[0][0];
         search_state->score = score;
         completed_depth = i;
-        depth_scores[i] = score;
 
         if (search_state->pv_length[0] && !limits->quiet) {
             print_info(score, i, total_nodes(search_state, helpers, helper_count), search_state->pv_table[0],
@@ -3046,24 +2977,15 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
 
         stability = move == previous_move ? stability + 1 : 0;
         previous_move = move;
-        best_move_changes = best_move_changes / 2 + search_state->best_move_changes;
-        search_state->best_move_changes = 0;
 
         /* Soft limit: no new depth after it. With a clock it's scaled by how settled the search is,
          * from TM_SCALE_MIN_DEPTH on, and never later than the hard limit. */
         if (limits->time_set) {
             uint64_t soft_stop = limits->soft_stop_time;
             if (limits->adaptive && i >= TM_SCALE_MIN_DEPTH) {
-                const bool has_earlier = i > TM_FALLING_DEPTHS;
-                /* The root's static eval (negamax_node stores the network's, -INF in check), corrected. */
-                const bool has_root_eval = search_state->static_evals[0] != -INF;
-                const int root_eval = has_root_eval ? search_state->static_evals[0] + eval_correction(board, search_state) : 0;
+                /* The last root search's (an aspiration fail searches the root again). */
                 const double scale = tm_scale(stability, search_state->best_move_nodes,
-                                              search_state->nodes - nodes_before) *
-                                     tm_falling_scale(score, has_previous, search_state->previous_score, has_earlier,
-                                                      has_earlier ? depth_scores[i - TM_FALLING_DEPTHS] : 0) *
-                                     tm_instability_scale(best_move_changes) *
-                                     tm_complexity_scale(score, has_root_eval, root_eval, i);
+                                              search_state->nodes - search_state->root_search_start);
                 soft_stop = limits->start_time +
                             (uint64_t) ((double) (limits->soft_stop_time - limits->start_time) * scale);
                 if (soft_stop > limits->stop_time) soft_stop = limits->stop_time;
@@ -3079,10 +3001,6 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
         move = vote_move(search_state, limits, helpers, helper_count, main_result);
     }
     if (!move) move = first_root_move(board, limits);
-    if (completed_depth > 0) {
-        search_state->previous_score = search_state->score;
-        search_state->previous_side = board->side;
-    }
     syzygy_end_search();
     return move;
 }

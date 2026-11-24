@@ -68,7 +68,7 @@ void test_mvv_lva_range_matches_constants() {
     int lowest = INT32_MAX, highest = INT32_MIN;
     for (int attacker = 0; attacker < 12; attacker++) {
         for (int victim = 0; victim < 12; victim++) {
-            const int v = search_const.mvv_lva[attacker][victim];
+            const int v = mvv_lva[attacker][victim];
             if (v < lowest) lowest = v;
             if (v > highest) highest = v;
         }
@@ -236,14 +236,6 @@ void test_time_limit_stops_at_first_check() {
     TEST_ASSERT_TRUE(make_move(&board, mv));
 }
 
-void test_tm_instability_scale() {
-    /* No change of the lead: the base; each (decayed) change adds TM_INSTABILITY_PER_CHANGE %, linearly. */
-    TEST_ASSERT_TRUE(tm_instability_scale(0.0) == TM_INSTABILITY_BASE / 100.0);
-    TEST_ASSERT_TRUE(tm_instability_scale(1.0) == (TM_INSTABILITY_BASE + TM_INSTABILITY_PER_CHANGE) / 100.0);
-    TEST_ASSERT_TRUE(tm_instability_scale(2.5) == (TM_INSTABILITY_BASE + TM_INSTABILITY_PER_CHANGE * 2.5) / 100.0);
-    TEST_ASSERT_TRUE(tm_instability_scale(3.0) >= tm_instability_scale(1.5));
-}
-
 void test_only_legal_move() {
     board_t board;
     /* In check from an unprotected queen, the king can only take it. */
@@ -256,88 +248,6 @@ void test_only_legal_move() {
     TEST_ASSERT_EQUAL_INT(0, only_legal_move(&board));
     parse_fen("k7/8/8/8/8/8/5q2/7K w - - 0 1", &board);
     TEST_ASSERT_EQUAL_INT(0, only_legal_move(&board));
-}
-
-void test_tm_complexity_scale() {
-    /* No root eval, a mate score: the usual time. */
-    TEST_ASSERT_TRUE(tm_complexity_scale(100, false, 0, 10) == 1.0);
-    TEST_ASSERT_TRUE(tm_complexity_scale(MATE_SCORE, true, 0, 10) == 1.0);
-    /* Search agrees with the eval: the base; at the cap or beyond: base + scale. */
-    TEST_ASSERT_TRUE(tm_complexity_scale(30, true, 30, 10) == TM_COMPLEXITY_BASE / 100.0);
-    TEST_ASSERT_TRUE(tm_complexity_scale(1000, true, 0, 10) == (TM_COMPLEXITY_BASE + TM_COMPLEXITY_SCALE) / 100.0);
-    /* Symmetric in the difference, growing with it and with the depth (constant when TM_COMPLEXITY_SCALE
-     * is 0, the factor switched off). */
-    TEST_ASSERT_TRUE(tm_complexity_scale(-20, true, 20, 8) == tm_complexity_scale(20, true, -20, 8));
-    TEST_ASSERT_TRUE(tm_complexity_scale(40, true, 0, 8) >= tm_complexity_scale(20, true, 0, 8));
-    TEST_ASSERT_TRUE(tm_complexity_scale(20, true, 0, 12) >= tm_complexity_scale(20, true, 0, 6));
-    if (TM_COMPLEXITY_SCALE > 0) {
-        TEST_ASSERT_TRUE(tm_complexity_scale(40, true, 0, 8) > tm_complexity_scale(20, true, 0, 8));
-        TEST_ASSERT_TRUE(tm_complexity_scale(20, true, 0, 12) > tm_complexity_scale(20, true, 0, 6));
-    }
-}
-
-void test_tm_falling_scale() {
-    /* Nothing to compare with, or a rising score: the usual time. */
-    TEST_ASSERT_TRUE(tm_falling_scale(0, false, 0, false, 0) == 1.0);
-    TEST_ASSERT_TRUE(tm_falling_scale(50, true, 0, true, 20) == 1.0);
-    /* Below the previous search's score, below the score some depths ago, and both: more, adding up. */
-    const double previous = tm_falling_scale(0, true, 50, false, 0);
-    const double earlier = tm_falling_scale(0, false, 0, true, 50);
-    const double both = tm_falling_scale(0, true, 50, true, 50);
-    TEST_ASSERT_TRUE(previous == (100 + TM_FALLING_PREV * 5 > TM_FALLING_MAX ? TM_FALLING_MAX
-                                                                              : 100 + TM_FALLING_PREV * 5) / 100.0);
-    TEST_ASSERT_TRUE(earlier == (100 + TM_FALLING_ITER * 5 > TM_FALLING_MAX ? TM_FALLING_MAX
-                                                                             : 100 + TM_FALLING_ITER * 5) / 100.0);
-    TEST_ASSERT_TRUE(both >= previous && both >= earlier);
-    /* A larger fall never gives less, and never more than TM_FALLING_MAX. */
-    for (int fall = 0; fall < 1000; fall += 50) {
-        TEST_ASSERT_TRUE(tm_falling_scale(0, true, fall + 50, true, fall + 50) >=
-                         tm_falling_scale(0, true, fall, true, fall));
-    }
-    TEST_ASSERT_TRUE(tm_falling_scale(0, true, 5000, true, 5000) == TM_FALLING_MAX / 100.0);
-    /* Mate and tablebase scores are no estimate: ignored. */
-    TEST_ASSERT_TRUE(tm_falling_scale(-(MATE_VALUE - 10), true, 0, true, 0) == 1.0);
-    TEST_ASSERT_TRUE(tm_falling_scale(0, true, MATE_VALUE - 10, true, TB_WIN_SCORE) == 1.0);
-}
-
-void test_tm_falling_previous_kept_between_searches() {
-    board_t board;
-    search_state_t search_state;
-    limits_t limits;
-
-    /* A new game has no previous score. */
-    tt_clear();
-    init_search_state(&search_state);
-    TEST_ASSERT_EQUAL_INT(-1, search_state.previous_side);
-
-    /* A search keeps its final score and side to move... */
-    parse_position("position startpos", &board, &search_state);
-    reset_time_control(&limits);
-    limits.depth = 4;
-    limits.quiet = true;
-    find_best_move(&board, &search_state, &limits);
-    TEST_ASSERT_EQUAL_INT(white, search_state.previous_side);
-    TEST_ASSERT_EQUAL_INT(search_state.score, search_state.previous_score);
-    const int white_score = search_state.previous_score;
-
-    /* ...through 'position' (the next 'go' for white compares with it)... */
-    parse_position("position startpos moves e2e4 e7e5", &board, &search_state);
-    TEST_ASSERT_EQUAL_INT(white, search_state.previous_side);
-    TEST_ASSERT_EQUAL_INT(white_score, search_state.previous_score);
-
-    /* ...until the next search, for either side... */
-    parse_position("position startpos moves e2e4", &board, &search_state);
-    reset_time_control(&limits);
-    limits.depth = 4;
-    limits.quiet = true;
-    find_best_move(&board, &search_state, &limits);
-    TEST_ASSERT_EQUAL_INT(black, search_state.previous_side);
-    TEST_ASSERT_EQUAL_INT(search_state.score, search_state.previous_score);
-
-    /* ...and 'ucinewgame' clears it. */
-    TEST_ASSERT_TRUE(handle_uci_command("ucinewgame", &board, &search_state, &limits));
-    TEST_ASSERT_EQUAL_INT(-1, search_state.previous_side);
-    TEST_ASSERT_EQUAL_INT(0, search_state.previous_score);
 }
 
 void test_tm_scale() {
@@ -744,7 +654,7 @@ void test_losing_capture_ordered_after_quiet_moves() {
 }
 
 void test_reverse_futility_guards() {
-    const int m3 = rfp_margin(3, false, false, true);
+    const int m3 = rfp_margin(3, false);
     TEST_ASSERT_EQUAL_INT(3 * RFP_MARGIN, m3);
     /* The margin: eval this far above beta is pruned, one less isn't. */
     TEST_ASSERT_FALSE(can_reverse_futility_prune(3, m3 - 1, 0, false, false, 1, m3));
@@ -755,55 +665,21 @@ void test_reverse_futility_guards() {
     TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 5000, 0, false, true, 1, m3));
     TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 5000, 0, false, false, 0, m3));
     TEST_ASSERT_FALSE(can_reverse_futility_prune(3, MATE_VALUE, MATE_VALUE - 10, false, false, 1, m3));
-    /* Each term makes the margin smaller, down to RFP_MIN_MARGIN. */
-    int expected = 3 * RFP_MARGIN - RFP_IMPROVING;
-    TEST_ASSERT_EQUAL_INT(expected > RFP_MIN_MARGIN ? expected : RFP_MIN_MARGIN, rfp_margin(3, true, false, true));
-    expected = 3 * RFP_MARGIN - RFP_OPP_WORSENING;
-    TEST_ASSERT_EQUAL_INT(expected > RFP_MIN_MARGIN ? expected : RFP_MIN_MARGIN, rfp_margin(3, false, true, true));
-    expected = 3 * RFP_MARGIN - 3 * RFP_NO_TT;
-    TEST_ASSERT_EQUAL_INT(expected > RFP_MIN_MARGIN ? expected : RFP_MIN_MARGIN, rfp_margin(3, false, false, false));
-    TEST_ASSERT_TRUE(rfp_margin(1, true, true, false) >= RFP_MIN_MARGIN);
-    /* The score: static eval moved RFP_BETA_BLEND / 1024 of the way to beta, between the two. */
-    const int score = rfp_score(400, 0);
-    TEST_ASSERT_TRUE(score >= 0 && score <= 400);
-    TEST_ASSERT_EQUAL_INT((int) ((400LL * (1024 - RFP_BETA_BLEND)) / 1024), score);
-    /* Opponent worsening: the two evals sum to more than the margin; never after a check (-INF). */
-    TEST_ASSERT_TRUE(is_opp_worsening(RFP_OPP_WORSENING_MARGIN, 1));
-    TEST_ASSERT_FALSE(is_opp_worsening(RFP_OPP_WORSENING_MARGIN, 0));
-    TEST_ASSERT_FALSE(is_opp_worsening(5000, -INF));
-}
-
-void test_opp_can_win_material() {
-    board_t board;
-    /* Quiet start: nothing attacked. */
-    parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
-    TEST_ASSERT_FALSE(opp_can_win_material(&board));
-    /* A black pawn attacks the white knight on d4. */
-    parse_fen("4k3/8/8/4p3/3N4/8/8/4K3 w - - 0 1", &board);
-    TEST_ASSERT_TRUE(opp_can_win_material(&board));
-    /* A black knight attacks the white rook on d1; a pawn attacking only a pawn doesn't count. */
-    parse_fen("4k3/8/8/8/8/4n3/3P4/3RK3 w - - 0 1", &board);
-    TEST_ASSERT_TRUE(opp_can_win_material(&board));
-    parse_fen("4k3/8/8/8/8/4p3/3P4/4K3 w - - 0 1", &board);
-    TEST_ASSERT_FALSE(opp_can_win_material(&board));
-    /* A black rook attacks the white queen along the file; blocked, it doesn't. */
-    parse_fen("3rk3/8/8/8/8/8/8/3QK3 w - - 0 1", &board);
-    TEST_ASSERT_TRUE(opp_can_win_material(&board));
-    parse_fen("3rk3/8/8/8/3P4/8/8/3QK3 w - - 0 1", &board);
-    TEST_ASSERT_FALSE(opp_can_win_material(&board));
-    /* From black's side: a white bishop attacks the black rook. */
-    parse_fen("r3k3/8/8/8/8/8/6B1/4K3 b - - 0 1", &board);
-    TEST_ASSERT_TRUE(opp_can_win_material(&board));
+    /* Improving makes the margin smaller, never below 0. */
+    const int expected = 3 * RFP_MARGIN - RFP_IMPROVING;
+    TEST_ASSERT_EQUAL_INT(expected > 0 ? expected : 0, rfp_margin(3, true));
+    TEST_ASSERT_TRUE(rfp_margin(1, true) >= 0);
 }
 
 void test_improving() {
-    /* Against two plies up, or four if that was in check (-INF); with neither, improving. */
+    /* Against two plies up, or four if that was in check (-INF); with neither, not improving. */
     TEST_ASSERT_TRUE(is_improving(50, 40, -INF));
     TEST_ASSERT_FALSE(is_improving(40, 40, -INF));
     TEST_ASSERT_FALSE(is_improving(30, 40, 0));
     TEST_ASSERT_TRUE(is_improving(30, -INF, 20));
     TEST_ASSERT_FALSE(is_improving(10, -INF, 20));
-    TEST_ASSERT_TRUE(is_improving(-500, -INF, -INF));
+    TEST_ASSERT_FALSE(is_improving(-500, -INF, -INF));
+    TEST_ASSERT_FALSE(is_improving(500, -INF, -INF));
 }
 
 void test_futility_guards() {

@@ -14,11 +14,6 @@ int tune_see_quiet_margin = SEE_QUIET_MARGIN_DEFAULT;
 int tune_see_capture_margin = SEE_CAPTURE_MARGIN_DEFAULT;
 int tune_se_margin = SE_MARGIN_DEFAULT;
 int tune_rfp_improving = RFP_IMPROVING_DEFAULT;
-int tune_rfp_opp_worsening = RFP_OPP_WORSENING_DEFAULT;
-int tune_rfp_opp_worsening_margin = RFP_OPP_WORSENING_MARGIN_DEFAULT;
-int tune_rfp_no_tt = RFP_NO_TT_DEFAULT;
-int tune_rfp_min_margin = RFP_MIN_MARGIN_DEFAULT;
-int tune_rfp_beta_blend = RFP_BETA_BLEND_DEFAULT;
 int tune_futility_base = FUTILITY_BASE_DEFAULT;
 int tune_lmp_not_improving_pct = LMP_NOT_IMPROVING_PCT_DEFAULT;
 int tune_nmp_min_depth = NMP_MIN_DEPTH_DEFAULT;
@@ -42,14 +37,6 @@ int tune_tm_soft_percent = TM_SOFT_PERCENT_DEFAULT;
 int tune_tm_hard_percent = TM_HARD_PERCENT_DEFAULT;
 int tune_tm_unstable_percent = TM_UNSTABLE_PERCENT_DEFAULT;
 int tune_tm_nodes_percent = TM_NODES_PERCENT_DEFAULT;
-int tune_tm_falling_prev = TM_FALLING_PREV_DEFAULT;
-int tune_tm_falling_iter = TM_FALLING_ITER_DEFAULT;
-int tune_tm_falling_max = TM_FALLING_MAX_DEFAULT;
-int tune_tm_instability_base = TM_INSTABILITY_BASE_DEFAULT;
-int tune_tm_instability_per_change = TM_INSTABILITY_PER_CHANGE_DEFAULT;
-int tune_tm_complexity_base = TM_COMPLEXITY_BASE_DEFAULT;
-int tune_tm_complexity_scale = TM_COMPLEXITY_SCALE_DEFAULT;
-int tune_tm_complexity_cap = TM_COMPLEXITY_CAP_DEFAULT;
 int tune_corr_pawn_weight = CORR_PAWN_WEIGHT_DEFAULT;
 int tune_corr_nonpawn_weight = CORR_NONPAWN_WEIGHT_DEFAULT;
 int tune_corr_max = CORR_MAX_DEFAULT;
@@ -80,11 +67,6 @@ const tunable_t tunables[] = {
     { "RFP_MARGIN",         &tune_rfp_margin,         40, 300, 12.0, 0.002 },
     { "RFP_MAX_DEPTH",      &tune_rfp_max_depth,       3,  10,  0.5, 0.002 },
     { "RFP_IMPROVING",      &tune_rfp_improving,       0, 500, 25.0, 0.002 },
-    { "RFP_OPP_WORSENING",  &tune_rfp_opp_worsening,   0, 200, 10.0, 0.002 },
-    { "RFP_OPP_WORSENING_MARGIN", &tune_rfp_opp_worsening_margin, 0, 400, 20.0, 0.002 },
-    { "RFP_NO_TT",          &tune_rfp_no_tt,           0, 120,  6.0, 0.002 },
-    { "RFP_MIN_MARGIN",     &tune_rfp_min_margin,      0, 100,  5.0, 0.002 },
-    { "RFP_BETA_BLEND",     &tune_rfp_beta_blend,      0, 1024, 50.0, 0.002 },
     { "FUTILITY_BASE",      &tune_futility_base,       0, 150,  8.0, 0.002 },
     { "FUTILITY_MARGIN",    &tune_futility_margin,    40, 250, 10.0, 0.002 },
     { "FUTILITY_MAX_DEPTH", &tune_futility_max_depth,  1,  12,  0.5, 0.002 },
@@ -118,14 +100,6 @@ const tunable_t tunables[] = {
     { "TM_HARD_PERCENT",    &tune_tm_hard_percent,   150, 500, 15.0, 0.002 },
     { "TM_UNSTABLE_PERCENT", &tune_tm_unstable_percent, 130, 400, 13.0, 0.002 },
     { "TM_NODES_PERCENT",   &tune_tm_nodes_percent,   80, 200,  6.0, 0.002 },
-    { "TM_FALLING_PREV",    &tune_tm_falling_prev,     0,  40,  2.0, 0.002 },
-    { "TM_FALLING_ITER",    &tune_tm_falling_iter,     0,  40,  2.0, 0.002 },
-    { "TM_FALLING_MAX",     &tune_tm_falling_max,    100, 400, 15.0, 0.002 },
-    { "TM_INSTABILITY_BASE", &tune_tm_instability_base, 50, 200, 8.0, 0.002 },
-    { "TM_INSTABILITY_PER_CHANGE", &tune_tm_instability_per_change, 0, 500, 20.0, 0.002 },
-    { "TM_COMPLEXITY_BASE", &tune_tm_complexity_base, 40, 100, 3.0, 0.002 },
-    { "TM_COMPLEXITY_SCALE", &tune_tm_complexity_scale, 0, 100, 5.0, 0.002 },
-    { "TM_COMPLEXITY_CAP",  &tune_tm_complexity_cap, 100, 600, 25.0, 0.002 },
     /* Correction history (search_constants.h). */
     { "CORR_PAWN_WEIGHT",   &tune_corr_pawn_weight,    0, 200, 10.0, 0.002 },
     { "CORR_NONPAWN_WEIGHT", &tune_corr_nonpawn_weight, 0, 200, 10.0, 0.002 },
