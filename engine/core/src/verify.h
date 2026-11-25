@@ -28,21 +28,22 @@ typedef enum {
     vf_rfp,          /* reverse futility: node returned >= beta from the static eval              */
     vf_null,         /* null move: node returned >= beta from the null search                     */
     vf_probcut,      /* ProbCut: node returned >= beta from a reduced capture search              */
-    vf_multicut,     /* singular search: another move >= s_beta >= beta, node returned            */
+    vf_multicut,     /* singular search: another move >= s_beta and >= beta, node returned        */
     vf_futility,     /* quiet move skipped, static eval + margin <= alpha                         */
     vf_lmp,          /* quiet move skipped, too late in the list                                  */
     vf_see,          /* move skipped, loses material by SEE                                       */
     vf_history,      /* quiet move skipped, history too low                                       */
     vf_lmr,          /* reduced move failed low, not re-searched at full depth (not a cut node)    */
     vf_lmr_cutnode,  /* the same at a cut node                                                     */
-    vf_se_reduce,    /* the TT move searched a ply shallower (singular_reduce) failed low          */
-    vf_qs_bad,       /* qsearch: losing captures skipped (the first one checked)                   */
-    vf_delta,        /* qsearch: capture skipped by delta pruning                                  */
+    vf_se_reduce,    /* the TT move searched shallower (negative singular extension) failed low    */
+    vf_qs_bad,       /* qsearch: losing capture not searched                                       */
+    vf_qs_futility,  /* qsearch: capture skipped by futility                                       */
+    vf_qs_count,     /* qsearch: moves skipped after the move count (the first one checked)        */
+    vf_qs_evasion,   /* qsearch in check: evasions after the first not searched (one checked)       */
     /* The rest change the depth rather than skip work: checked by searching both ways, 'wrong' is
      * that the result changed against the window (below alpha / inside / at or above beta).        */
     vf_iir,          /* node without a TT move searched a ply shallower                            */
-    vf_se_ext,       /* singular TT move searched a ply deeper                                     */
-    vf_check_ext,    /* node in check searched a ply deeper                                        */
+    vf_se_ext,       /* singular TT move searched deeper (+1..+3)                                  */
     vf_count
 } verify_feature_t;
 
@@ -85,25 +86,6 @@ typedef struct {
 } verify_tt_counts_t;
 
 extern verify_tt_counts_t verify_tt;
-
-/**
- * A pruning rule's exemption, checked where it applies: every move the old rule pruned, those the
- * new rule now searches ('exempted'), and, by making the move, whether each was decided right:
- * an exempted move must give check, a move still pruned must not ('wrong' counts both).
- */
-typedef struct {
-    const char* name;
-    uint64_t old_prunes;
-    uint64_t exempted;
-    uint64_t wrong;
-    uint64_t illegal;   /* pseudo-legal moves that turn out illegal: nothing to decide */
-} verify_rule_t;
-
-extern verify_rule_t verify_delta_rule;
-extern verify_rule_t verify_lmp_rule;
-
-/* 'exempted': the new rule searches the move the old one pruned. 'move' is pseudo-legal on 'board'. */
-void verify_rule_record(verify_rule_t* rule, bool exempted, void* board, uint32_t move);
 
 /* Whether this decision is to be checked (a TIKI_VERIFY build in 'decisions' mode, outside a check,
  * and sampled). Counts the decision either way. */

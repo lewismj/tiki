@@ -23,7 +23,7 @@ const int mvv_lva[12][12] = {
 int16_t lmr_quiet_table[LMR_TABLE_SIZE][LMR_TABLE_SIZE];
 int16_t lmr_capture_table[LMR_TABLE_SIZE][LMR_TABLE_SIZE];
 
-/* The reference's natural log (Math.hpp:68-92), so the tables are its values exactly. */
+/* A fast natural log (a polynomial on the float's mantissa), so the tables don't depend on libm. */
 static float ref_log(float x) {
     int32_t xi, ei;
     memcpy(&xi, &x, sizeof(xi));
@@ -46,7 +46,7 @@ static float ref_log(float x) {
     return i * 0.693147182f + r;
 }
 
-/* reference Search.cpp:231-260: PLY_GRAIN * (bias + scale * ln(depth) * ln(move)), 0 for depth or move 0. */
+/* PLY_GRAIN * (bias + scale * ln(depth) * ln(move)), 0 for depth or move 0. */
 void init_lmr_table() {
     const float quiet_bias = (float) LMR_QUIET_BIAS / 1000.0f, quiet_scale = (float) LMR_QUIET_SCALE / 1000.0f;
     const float capture_bias = (float) LMR_CAPTURE_BIAS / 1000.0f, capture_scale = (float) LMR_CAPTURE_SCALE / 1000.0f;

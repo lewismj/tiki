@@ -79,7 +79,7 @@ void test_mvv_lva_range_matches_constants() {
     TEST_ASSERT_EQUAL_INT(MVV_LVA_MAX, highest);
 }
 
-/* Unit A test helpers: a node's quiet context at the search state's ply, and a quiet move's main, pawn and
+/* Test helpers: a node's quiet context at the search state's ply, and a quiet move's main, pawn and
  * continuation entries set to 'value'. */
 static quiet_ctx_t test_ctx(search_state_t* search_state, board_t* board) {
     return quiet_ctx(search_state->quiet, board, search_state->ply, search_state->path_moves, false);
@@ -244,8 +244,8 @@ void test_quiet_history_new_search() {
     TEST_ASSERT_EQUAL_UINT32(0, search_state.killer_moves[3]);
 }
 
-void test_lmr_tables_match_reference() {
-    /* PLY_GRAIN * (bias + scale * ln d * ln m), truncated; the reference's log differs from libm's by ~1e-7. */
+void test_lmr_tables_match_formula() {
+    /* PLY_GRAIN * (bias + scale * ln d * ln m), truncated; the table's log differs from libm's by ~1e-7. */
     for (int d = 1; d < LMR_TABLE_SIZE; d += 7) {
         for (int m = 1; m < LMR_TABLE_SIZE; m += 5) {
             const double l = log((double) d) * log((double) m);
@@ -266,7 +266,7 @@ void test_lmr_reduction_terms() {
     int expected = (q + LMR_QUIET_NON_PV + LMR_QUIET_CUT_NODE + LMR_QUIET_NOT_IMPROVING - LMR_STAT_OFFSET / LMR_STAT_DIV +
                     PLY_GRAIN / 2) / PLY_GRAIN;
     TEST_ASSERT_EQUAL_INT(expected, lmr_reduction(6, 10, 4, false, true, false, false, true, 0, false, false, 0, false));
-    /* Each term moves it the reference's way: a refutation, a check, a deep TT entry less; a TT capture more. */
+    /* Each term moves it its own way: a refutation, a check, a deep TT entry less; a TT capture more. */
     const int base = lmr_reduction(12, 20, 4, false, false, true, false, true, 0, false, false, 0, false);
     TEST_ASSERT_TRUE(lmr_reduction(12, 20, 4, false, false, true, false, true, 0, false, true, 0, false) < base);
     TEST_ASSERT_TRUE(lmr_reduction(12, 20, 4, false, false, true, true, true, 0, false, false, 0, false) < base);
@@ -289,7 +289,7 @@ void test_move_loop_pruning_thresholds() {
     TEST_ASSERT_EQUAL_INT(8, lmp_threshold(3, false));
     /* History pruning: -234 * d - 148 * d^2. */
     TEST_ASSERT_EQUAL_INT(-1060, history_prune_threshold(2));
-    /* Futility: 19.2 cp * d^2 + stat / 638 (reference 32 and 383 per unit, x 0.60). */
+    /* Futility: 19.2 cp * d^2 + stat / 638. */
     TEST_ASSERT_EQUAL_INT(76 + 1, futility_margin(2, 638));
     /* The reduced depth estimate: quiet moves after the first, the quiet table's rounded reduction, at least 1. */
     TEST_ASSERT_EQUAL_INT(7, lmr_depth_estimate(7, 0, true));
@@ -306,7 +306,7 @@ void test_ref_see_pins_and_values() {
     /* Without the pin the pawn recaptures: rook for knight. */
     parse_fen("4k3/3p4/4n3/8/8/8/8/4R1K1 w - - 0 1", &board);
     TEST_ASSERT_FALSE(see_ge_ref(&board, parse_move("e1e6", &board), 0));
-    /* Bishop for knight is even at the reference's values (300 each), losing at see.h's (330 vs 320). */
+    /* Bishop for knight is even at see_ge_ref's values (300 each), losing at see.h's (330 vs 320). */
     parse_fen("4k3/3p4/4n3/8/2B5/8/8/6K1 w - - 0 1", &board);
     TEST_ASSERT_TRUE(see_ge_ref(&board, parse_move("c4e6", &board), 0));
     TEST_ASSERT_FALSE(see_ge(&board, parse_move("c4e6", &board), 0));
@@ -404,8 +404,8 @@ void test_search_at_max_ply() {
     search_state_t search_state;
     limits_t limits;
 
-    /* A search reaching MAX_PLY (check extensions keep the depth up) returns the static eval
-     * there, within the tables: the PV lengths stay inside the path. */
+    /* A search reaching MAX_PLY returns the static eval there, within the tables: the PV lengths
+     * stay inside the path. */
     setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, 3);
     nnue_reset(&search_state.nnue);
     search_state.ply = MAX_PLY - 2;
@@ -614,16 +614,18 @@ void test_quiescence_sees_quiet_queen_promotion() {
     TEST_ASSERT_TRUE(score > stand_pat + 500);
 }
 
-void test_check_extended_at_horizon() {
+void test_mate_seen_at_horizon() {
     board_t board;
     search_state_t search_state;
     limits_t limits;
 
-    /* Mated, searched at depth 0. Without the extension this went to qsearch and stood pat. */
+    /* Mated, searched at depth 0: in check the qsearch searches every evasion, there are none. */
     setup_position("R5k1/5ppp/8/8/8/8/5PPP/6K1 b - - 0 1", &board, &search_state, &limits, 0);
     TEST_ASSERT_EQUAL_INT(-MATE_VALUE, negamax(-INF, INF, 0, &board, &search_state, &limits));
+    /* Below depth 0 (a negative extension) it's the qsearch too. */
+    TEST_ASSERT_EQUAL_INT(-MATE_VALUE, negamax(-INF, INF, -2, &board, &search_state, &limits));
 
-    /* Mate in 1 at depth 1: Rd8+ leaves the reply at depth 0, it must still see the mate. */
+    /* Mate in 1 at depth 1: Rd8+ leaves the reply at depth 0, the qsearch still sees the mate. */
     setup_position("6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1", &board, &search_state, &limits, 1);
     TEST_ASSERT_EQUAL_INT(MATE_VALUE - 1, negamax(-INF, INF, 1, &board, &search_state, &limits));
 }
@@ -1157,29 +1159,38 @@ void test_quiescence_stand_pat() {
     search_state_t search_state;
     limits_t limits;
 
-    /* No captures, the static eval whatever the window (fail-soft: a stand pat above beta returns
-     * the eval, not beta). */
+    /* No captures: the static eval inside the window; at or above beta the eval moved 519/1024 of the way
+     * to beta (fail-soft, but damped). */
     setup_position("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1", &board, &search_state, &limits, 1);
     const int eval = evaluation(&board, &search_state.nnue);
-    TEST_ASSERT_EQUAL_INT(eval, quiescence(eval - 11, eval - 10, &board, &search_state, &limits));
     TEST_ASSERT_EQUAL_INT(eval, quiescence(-INF, INF, &board, &search_state, &limits));
+    const int beta = eval - 100;
+    TEST_ASSERT_EQUAL_INT((eval * (1024 - QS_STAND_PAT_BLEND) + beta * QS_STAND_PAT_BLEND) / 1024,
+                          quiescence(beta - 1, beta, &board, &search_state, &limits));
 }
 
-void test_quiescence_delta_pruning() {
+void test_quiescence_futility() {
     board_t board;
     search_state_t search_state;
     limits_t limits;
 
-    /* exd5 wins a pawn. With alpha just out of reach of eval + pawn + margin it isn't searched
-     * (only the qsearch node is counted), a point lower and it is. */
-    setup_position("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1", &board, &search_state, &limits, 1);
+    /* Nxd5 exd5 trades evenly (SEE 0, not >= 1): skipped when the stand pat plus QS_FUTILITY_MARGIN is at
+     * or below alpha (only the qsearch node is counted), searched a point lower. */
+    setup_position("4k3/8/4p3/3n4/8/4N3/8/4K3 w - - 0 1", &board, &search_state, &limits, 1);
     const int eval = evaluation(&board, &search_state.nnue);
-    const int reach = eval + see_values[P] + DELTA_MARGIN;
+    const int reach = eval + QS_FUTILITY_MARGIN;
     search_state.nodes = 0;
     quiescence(reach, reach + 1, &board, &search_state, &limits);
     TEST_ASSERT_EQUAL_UINT64(1, search_state.nodes);
     search_state.nodes = 0;
     quiescence(reach - 1, reach, &board, &search_state, &limits);
+    TEST_ASSERT_TRUE(search_state.nodes > 1);
+
+    /* Nxd5 winning a pawn (SEE >= 1) is searched however far alpha is. */
+    setup_position("4k3/8/8/3p4/8/4N3/8/4K3 w - - 0 1", &board, &search_state, &limits, 1);
+    const int eval2 = evaluation(&board, &search_state.nnue);
+    search_state.nodes = 0;
+    quiescence(eval2 + 500, eval2 + 501, &board, &search_state, &limits);
     TEST_ASSERT_TRUE(search_state.nodes > 1);
 }
 
@@ -1303,40 +1314,48 @@ void test_tt_lookup() {
 }
 
 void test_singular_extension_conditions() {
-    const move_t mv = encode_move(g1, f3, N, 0, 0, 0, 0, 0, 0);
-    TEST_ASSERT_TRUE(can_singular_extend(8, 3, 10, mv, 6, tt_beta, 50));
-    TEST_ASSERT_TRUE(can_singular_extend(8, 3, 10, mv, 8 - SE_TT_DEPTH_MARGIN, tt_exact, 50));
+    /* From depth 3, a lower-bound or exact entry at most 3 plies shallower, not a mate score. */
+    TEST_ASSERT_TRUE(can_singular_extend(8, 6, tt_beta, 50));
+    TEST_ASSERT_TRUE(can_singular_extend(8, 8 - SE_TT_DEPTH_MARGIN, tt_exact, 50));
+    TEST_ASSERT_TRUE(can_singular_extend(SE_MIN_DEPTH, SE_MIN_DEPTH, tt_beta, 50));
+    TEST_ASSERT_FALSE(can_singular_extend(SE_MIN_DEPTH - 1, 6, tt_beta, 50));
+    TEST_ASSERT_FALSE(can_singular_extend(8, 8 - SE_TT_DEPTH_MARGIN - 1, tt_beta, 50)); /* entry too shallow */
+    TEST_ASSERT_FALSE(can_singular_extend(8, 6, tt_alpha, 50));                         /* only an upper bound */
+    TEST_ASSERT_FALSE(can_singular_extend(8, 6, tt_none, 50));                          /* the eval only */
+    TEST_ASSERT_FALSE(can_singular_extend(8, 6, tt_beta, MATE_VALUE - 10));
 
-    TEST_ASSERT_FALSE(can_singular_extend(8, 0, 10, mv, 6, tt_beta, 50));       /* the root */
-    TEST_ASSERT_FALSE(can_singular_extend(8, 20, 10, mv, 6, tt_beta, 50));      /* ply >= 2 * root depth */
-    TEST_ASSERT_FALSE(can_singular_extend(SE_MIN_DEPTH - 1, 3, 10, mv, 6, tt_beta, 50));
-    TEST_ASSERT_FALSE(can_singular_extend(8, 3, 10, 0, 6, tt_beta, 50));        /* no TT move */
-    TEST_ASSERT_FALSE(can_singular_extend(8, 3, 10, mv, 4, tt_beta, 50));       /* entry too shallow */
-    TEST_ASSERT_FALSE(can_singular_extend(8, 3, 10, mv, 6, tt_alpha, 50));      /* only an upper bound */
-    TEST_ASSERT_FALSE(can_singular_extend(8, 3, 10, mv, 6, tt_beta, MATE_VALUE - 10));
-
-    TEST_ASSERT_EQUAL_INT(50 - SE_MARGIN * 8 / SE_MARGIN_GRAIN, singular_beta(50, 8));
+    /* The margin: depth units for a bound, (depth * 48 + 127) / 128 for an exact entry: 10 and 4 at depth 10. */
+    TEST_ASSERT_EQUAL_INT(10, singular_margin_ref(10, false));
+    TEST_ASSERT_EQUAL_INT(4, singular_margin_ref(10, true));
+    /* s_beta: 10 units are 6.0 cp, 100 - 6 = 94; 4 units are 2.4 cp, and score < 97.6 is score < 98. */
+    TEST_ASSERT_EQUAL_INT(94, singular_beta(100, 10));
+    TEST_ASSERT_EQUAL_INT(98, singular_beta(100, 4));
+    /* The search depth: max(1, (59 * depth - 215) / 128). */
+    TEST_ASSERT_EQUAL_INT(1, singular_depth(3));
+    TEST_ASSERT_EQUAL_INT(2, singular_depth(8));
+    TEST_ASSERT_EQUAL_INT(3, singular_depth(12));
+    TEST_ASSERT_EQUAL_INT(7, singular_depth(20));
 }
 
 void test_singular_result() {
-    /* TT score 100 at depth 8, so s_beta = 84. */
-    const int s_beta = singular_beta(100, 8);
-
-    /* Every other move below s_beta: singular, at PV and non-PV nodes alike. */
-    TEST_ASSERT_EQUAL_INT(singular_extend, singular_result(s_beta - 1, s_beta, 100, 50, false));
-    TEST_ASSERT_EQUAL_INT(singular_extend, singular_result(s_beta - 1, s_beta, 100, 50, true));
-
-    /* Another move reached s_beta: never anything at a PV node. */
-    TEST_ASSERT_EQUAL_INT(singular_none, singular_result(s_beta, s_beta, 100, 50, true));
-    TEST_ASSERT_EQUAL_INT(singular_none, singular_result(s_beta, s_beta, 100, 90, true));
-
-    /* Outside the PV: s_beta >= beta, another move beats beta, multi-cut. */
-    TEST_ASSERT_EQUAL_INT(singular_multi_cut, singular_result(s_beta, s_beta, 100, 84, false));
-    /* s_beta < beta but the TT move's stored score is at or above beta: the TT move a ply shallower. */
-    TEST_ASSERT_EQUAL_INT(singular_reduce, singular_result(s_beta, s_beta, 100, 90, false));
-    TEST_ASSERT_EQUAL_INT(singular_reduce, singular_result(s_beta, s_beta, 100, 100, false));
-    /* ...and below beta: nothing, the TT move isn't reduced on a score that doesn't beat beta. */
-    TEST_ASSERT_EQUAL_INT(singular_none, singular_result(s_beta, s_beta, 100, 101, false));
+    /* TT score 100, margin 10 units (6.0 cp): s_beta 94, in tenths 940; +2 below 940 - 84, +3 below 940 - 306. */
+    TEST_ASSERT_EQUAL_INT(1, singular_extension(93, 100, 10, 0, 50, false, false, true));
+    TEST_ASSERT_EQUAL_INT(1, singular_extension(86, 100, 10, 0, 50, false, false, true)); /* 860 > 856 */
+    TEST_ASSERT_EQUAL_INT(2, singular_extension(85, 100, 10, 0, 50, false, false, true)); /* 850 < 856 */
+    TEST_ASSERT_EQUAL_INT(2, singular_extension(64, 100, 10, 0, 50, false, false, true)); /* 640 > 634 */
+    TEST_ASSERT_EQUAL_INT(3, singular_extension(63, 100, 10, 0, 50, false, false, true)); /* 630 < 634 */
+    /* At PV nodes both thresholds are SE_PV_BONUS (153.6 cp) further. */
+    TEST_ASSERT_EQUAL_INT(1, singular_extension(63, 100, 10, 0, 50, true, false, true));
+    TEST_ASSERT_EQUAL_INT(2, singular_extension(-70, 100, 10, 0, 50, true, false, true)); /* -700 < -680 */
+    /* Past ply 2 * root depth, singular but not extended. */
+    TEST_ASSERT_EQUAL_INT(0, singular_extension(63, 100, 10, 0, 50, false, false, false));
+    /* Not singular (score 94 reaches s_beta): the TT score at or above beta, -2 at PV nodes, -3 outside. */
+    TEST_ASSERT_EQUAL_INT(-3, singular_extension(94, 100, 10, 0, 90, false, false, true));
+    TEST_ASSERT_EQUAL_INT(-2, singular_extension(94, 100, 10, 0, 90, true, false, true));
+    /* Below beta: -2 at a cut node; otherwise -1 if the TT score is at or below alpha, else 0. */
+    TEST_ASSERT_EQUAL_INT(-2, singular_extension(94, 100, 10, 0, 150, false, true, true));
+    TEST_ASSERT_EQUAL_INT(-1, singular_extension(94, 100, 10, 100, 150, false, false, true));
+    TEST_ASSERT_EQUAL_INT(0, singular_extension(94, 100, 10, 50, 150, false, false, true));
 }
 
 void test_excluded_move_search() {
@@ -1405,7 +1424,7 @@ void test_probcut_conditions() {
 void test_tunable_parameters() {
 #ifdef TIKI_TUNE
     /* A tuning build: the parameters are variables, set by name (any case) and kept in range. */
-    TEST_ASSERT_EQUAL_INT(106, tunable_count);
+    TEST_ASSERT_EQUAL_INT(117, tunable_count);
     const int saved = RFP_MARGIN;
     TEST_ASSERT_TRUE(set_tunable("rfp_margin", 10, 120));
     TEST_ASSERT_EQUAL_INT(120, RFP_MARGIN);

@@ -223,7 +223,8 @@ void test_qsearch_saves_to_tt() {
     tt_info_t info;
     TEST_ASSERT_TRUE(tt_read(board.hash, 0, &info));
     TEST_ASSERT_EQUAL_INT(0, info.depth);
-    TEST_ASSERT_EQUAL_INT(tt_exact, info.type);
+    /* Below beta: an upper bound (qsearch saves a lower bound at or above beta, otherwise an upper one). */
+    TEST_ASSERT_EQUAL_INT(tt_alpha, info.type);
     TEST_ASSERT_EQUAL_INT(score, info.score);
     TEST_ASSERT_TRUE(info.eval != TT_EVAL_NONE);
     TEST_ASSERT_EQUAL_UINT32(encode_move(e4, d5, P, 0, 1, 0, 0, 0, 0), info.move);

@@ -243,10 +243,18 @@ uint64_t bench(int depth) {
            stats.cutoffs ? 100.0 * (double) stats.first_move_cutoffs / (double) stats.cutoffs : 0.0);
     printf("Quiet cutoffs   : %" PRIu64 ", %.2f quiets tried before each\n", stats.quiet_cutoffs,
            stats.quiet_cutoffs ? (double) stats.quiets_before_cutoff / (double) stats.quiet_cutoffs : 0.0);
-    printf("Singular        : %" PRIu64 " searches (%.1f%% of the nodes), %" PRIu64 " extensions, %" PRIu64
-           " reductions, %" PRIu64 " multi-cuts\n", stats.singular_searches,
-           nodes ? 100.0 * (double) stats.singular_nodes / (double) nodes : 0.0,
-           stats.singular_extensions, stats.singular_reductions, stats.multi_cuts);
+    printf("Singular        : %" PRIu64 " searches (%.1f%% of the nodes), %" PRIu64 " multi-cuts; extension -3..+3:",
+           stats.singular_searches, nodes ? 100.0 * (double) stats.singular_nodes / (double) nodes : 0.0, stats.multi_cuts);
+    for (int e = 0; e < 7; e++) printf(" %" PRIu64, stats.singular_outcome[e]);
+    printf("\n");
+    for (int b = 0; b < 4; b++) {
+        static const char* bands[4] = { "1-3", "4-6", "7-9", "10+" };
+        uint64_t all = 0;
+        for (int e = 0; e < 7; e++) all += stats.ext_hist[b][e];
+        printf("Extensions %-4s : moves searched %" PRIu64 ", extension -3..+3 (%%):", bands[b], all);
+        for (int e = 0; e < 7; e++) printf(" %.2f", all ? 100.0 * (double) stats.ext_hist[b][e] / (double) all : 0.0);
+        printf("\n");
+    }
     {
         const double c = stats.cutoffs ? 100.0 / (double) stats.cutoffs : 0.0;
         const uint64_t* at = stats.cutoff_at;

@@ -2,13 +2,13 @@
 #define TIKI_REF_SEE_H
 
 /**
- * The reference engine's static exchange test (Position.cpp:784-908), for the decisions unit A ports
- * from it (SEE pruning in the move loop, the losing-capture class in the reductions): values pawn
- * 100, knight 300, bishop 300, rook 500, queen 900 (see.h's knight and bishop are 320 and 330); a
- * piece pinned to its king doesn't recapture while its pinner is on the board; a promotion adds
- * nothing; an en passant capture leaves the captured pawn's square occupied (as the reference).
+ * A static exchange test for the search's pruning decisions (SEE pruning in the move loop, the
+ * losing-capture class in the reductions, qsearch futility and losing promotions): values pawn 100,
+ * knight 300, bishop 300, rook 500, queen 900 (see.h's knight and bishop are 320 and 330); a piece
+ * pinned to its king doesn't recapture while its pinner is on the board; a promotion adds nothing; an
+ * en passant capture leaves the captured pawn's square occupied.
  * see_ge_ref(board, move, threshold): whether the exchange on the target square gains at least
- * 'threshold'. tiki's other SEE uses (qsearch, capture ordering) keep see.h.
+ * 'threshold'. Capture ordering keeps see.h.
  */
 
 #include "types.h"

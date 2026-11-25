@@ -18,11 +18,11 @@ typedef struct {
     uint64_t first_move_cutoffs;
     uint64_t quiet_cutoffs;
     uint64_t quiets_before_cutoff;
-    uint64_t singular_searches;   /* Searches without the TT move, the nodes they took, and what came of them. */
+    uint64_t singular_searches;   /* Searches without the TT move, the nodes they took, and what came of them: */
     uint64_t singular_nodes;
-    uint64_t singular_extensions;
-    uint64_t singular_reductions;
-    uint64_t multi_cuts;
+    uint64_t singular_outcome[7]; /* the TT move's extension -3..+3, or...                                      */
+    uint64_t multi_cuts;          /* ...a multi-cut.                                                          */
+    uint64_t ext_hist[4][7];      /* Each move searched by [depth 1-3, 4-6, 7-9, 10+][its extension -3..+3].  */
     uint64_t cutoff_at[5];        /* Cutoffs by the cutting move's place among those searched: 1, 2, 3-4, 5-8, 9+. */
     uint64_t capture_cutoffs;     /* Cutoffs by a capture (promotions that don't capture count as quiet). */
     uint64_t tt_move_nodes;       /* Move loops (negamax) with a TT move... */
@@ -186,8 +186,8 @@ static inline_always void clear_search_tables(search_state_t* search_state) {
 }
 
 /**
- * Before each search: the quiet history ages by the reference's rule (quiet_history_new_search);
- * the capture history is halved (tiki's rule, until it's ported too).
+ * Before each search: the quiet history ages (quiet_history_new_search); the capture history is
+ * halved.
  */
 static inline_always void age_history(search_state_t* search_state) {
     quiet_history_new_search(search_state->quiet);

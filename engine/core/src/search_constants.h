@@ -41,11 +41,8 @@ void init_lmr_table();
 #define PLY_GRAIN 1024           /* Depth adjustments that sum several terms (LMR, null move R) are worked   */
                                  /* out in 1/this ply and rounded once.                                      */
 /*
- * Unit A (tiki-analysis/port-spec-history-2026-11-25.md, port-spec-lmr-razoring-2026-11-25.md): the
- * reference engine's quiet history, ordering, late move reductions and move loop pruning. Constants
- * on the history are in history units (quiet_history.h) and are the reference's values; [p] marks
- * 1/PLY_GRAIN ply; eval-unit constants are the reference's x 0.60 (tiki cp per reference unit,
- * measured on raw static evals of 3,000 positions, 25 Nov, net 11-21), the original in brackets.
+ * Quiet history, ordering, late move reductions and move loop pruning. Constants on the history are in
+ * history units (quiet_history.h); [p] marks 1/PLY_GRAIN ply; eval constants are cp.
  */
 /* History (quiet_history.h). */
 #define HIST_CLEAR_MAIN 802      /* Counters after 'ucinewgame': main...                                     */
@@ -53,7 +50,7 @@ void init_lmr_table();
 #define HIST_CLEAR_PAWN 0        /* ...pawn structure.                                                       */
 #define HIST_BONUS_OFFSET (-113) /* Quiet update at a fail high (quiet_history_update), main and pawn:       */
 #define HIST_BONUS_LINEAR 164    /* bonus min(offset + linear * depth + diff * score_diff / 64, limit)...   */
-#define HIST_BONUS_SCORE_DIFF 247 /* (per cp; reference 148 per unit)                                        */
+#define HIST_BONUS_SCORE_DIFF 247 /* (per cp)                                                                 */
 #define HIST_BONUS_LIMIT 2178
 #define HIST_MALUS_OFFSET (-51)  /* ...malus -min(...), the same shape...                                    */
 #define HIST_MALUS_LINEAR 160
@@ -102,7 +99,7 @@ void init_lmr_table();
 #define LMR_STAT_OFFSET 6877     /* ...and -(stat + offset) / div (stat: quiet_stat).                        */
 #define LMR_STAT_DIV 15
 #define LMR_CAPTURE_WINNING 1008 /* Capture (or promotion): less when it wins (attacker below victim)...     */
-#define LMR_CAPTURE_BAD (-192)   /* ...plus this when it loses (reference SEE)...                            */
+#define LMR_CAPTURE_BAD (-192)   /* ...plus this when it loses (see_ge_ref)...                               */
 #define LMR_CAPTURE_CUT_NODE 1296 /* ...more at an expected cut node...                                      */
 #define LMR_CAPTURE_NOT_IMPROVING (-288) /* ...plus this when not improving...                               */
 #define LMR_CAPTURE_CHECK (-64)  /* ...less this when it gives check.                                        */
@@ -119,10 +116,10 @@ void init_lmr_table();
 #define HIST_PRUNE_MAX_DEPTH 9   /* History pruning below this depth: stat < -linear * lmr_depth...          */
 #define HIST_PRUNE_LINEAR 234
 #define HIST_PRUNE_QUAD 148      /* ...- quad * lmr_depth^2.                                                 */
-#define FUTILITY_LMR_SQ 192      /* Futility: corrected eval + this / 10 cp * lmr_depth^2 (32 per unit)...   */
-#define FUTILITY_STAT_DIV 638    /* ...+ stat / this (383 per unit) < alpha.                                 */
+#define FUTILITY_LMR_SQ 192      /* Futility: corrected eval + this / 10 cp * lmr_depth^2...                 */
+#define FUTILITY_STAT_DIV 638    /* ...+ stat / this < alpha.                                                */
 #define SEE_CAPTURE_DEPTH 5      /* SEE pruning, target square attacked: losing captures to this depth,      */
-#define SEE_CAPTURE_MULT 120     /* SEE < -mult * depth (reference SEE values)...                            */
+#define SEE_CAPTURE_MULT 120     /* SEE < -mult * depth (see_ge_ref values)...                               */
 #define SEE_QUIET_DEPTH 9        /* ...other moves to this depth, SEE < -mult * lmr_depth - stat / div.     */
 #define SEE_QUIET_MULT 49
 #define SEE_QUIET_STAT_DIV 134
@@ -145,7 +142,11 @@ void init_lmr_table();
 #define CAPTURE_HIST_BONUS_MAX 1600
 #define CAPTURE_HISTORY_DIVISOR 32 /* ...and moves a capture's ordering score by history / this (+-218, about */
                                    /* two victims in MVV-LVA, whose victims are 100 apart).                  */
-#define DELTA_MARGIN 200         /* Qsearch delta pruning, skip a capture if eval + victim + margin <= alpha. */
+#define QS_FUTILITY_MARGIN 46    /* Qsearch (quiescence_node): futility over the stand pat (cp)...           */
+#define QS_MOVE_COUNT 3          /* ...moves searched before the rest are skipped...                         */
+#define QS_STAND_PAT_BLEND 519   /* ...a stand pat at or above beta, and a best score above beta, returned  */
+#define QS_FAIL_HIGH_BLEND 540   /* this / 1024 of the way towards beta...                                   */
+#define QS_TT_HALFMOVE_LIMIT 80  /* ...TT cutoffs while the fifty-move counter is below this.               */
 #define RFP_MAX_DEPTH 6          /* Reverse futility pruning up to this depth, when static eval - margin     */
 #define RFP_MARGIN 50            /* >= beta (rfp_margin): margin * depth, less RFP_IMPROVING when the        */
 #define RFP_IMPROVING 87         /* position is improving and the opponent can't win material, less          */
@@ -153,22 +154,28 @@ void init_lmr_table();
 #define RFP_OPP_WORSENING_MARGIN 45 /* sides' network evals sum to more than this), less RFP_NO_TT * depth   */
 #define RFP_NO_TT 16             /* without a TT entry, at least RFP_MIN_MARGIN (all cp). The pruned node    */
 #define RFP_MIN_MARGIN 10        /* returns the static eval moved RFP_BETA_BLEND / 1024 of the way to beta.  */
-#define RFP_BETA_BLEND 525       /* Sizes: reference values 83, 145, 32, 75, 26, 16 (reference's internal    */
-                                 /* static-eval units) x 0.60 = tiki cp per reference unit, measured on raw  */
-                                 /* static evals of 3,000 reference positions (25 Nov, net 11-21; least      */
-                                 /* squares 0.60-0.61 by band, medians 0.55-0.63). Re-measure for a new net. */
+#define RFP_BETA_BLEND 525       /* The margins are scaled to net 11-21's eval; re-measure for a new net.    */
 #define PROBCUT_MIN_DEPTH 5      /* ProbCut from this depth: a capture that still beats beta + margin...     */
 #define PROBCUT_MARGIN 200       /* ...(this much less when the position is improving)...                    */
 #define PROBCUT_IMPROVING 50
 #define PROBCUT_REDUCTION 4      /* ...in a search this much shallower cuts the node off (can_probcut).      */
 /* The depth a ProbCut cutoff is worth in the TT: the reduced search plus the move made before it. */
 #define PROBCUT_TT_DEPTH(depth) ((depth) - PROBCUT_REDUCTION + 1)
-#define SE_MIN_DEPTH 6           /* Singular extensions from this depth, with a TT entry at least...         */
-#define SE_TT_DEPTH_MARGIN 3     /* ...this much shallower than the node, if every other move scores below...*/
-#define SE_REDUCTION 1           /* A TT move that isn't singular but beat beta is searched this much        */
-                                 /* shallower (singular_reduce).                                             */
-#define SE_MARGIN 32             /* ...the TT score - margin * depth / SE_MARGIN_GRAIN (cp) in a search of   */
-#define SE_MARGIN_GRAIN 16       /* half the depth: SE_MARGIN in 1/16 cp per ply.                            */
+/* Singular extension (singular_margin_ref, singular_beta, singular_depth, singular_extension). */
+#define SE_MIN_DEPTH 3           /* From this depth, with a lower-bound or exact TT entry at most...         */
+#define SE_TT_DEPTH_MARGIN 3     /* ...this much shallower than the node.                                    */
+#define SE_EXACT_MUL 48          /* The margin in margin units: depth, or (depth * this + 127) / 128 for an  */
+                                 /* exact entry...                                                           */
+#define SE_MARGIN_SCALE 6        /* ...each this / 10 cp (a unit, not tuned).                                */
+#define SE_DEPTH_MUL 59          /* The search without the TT move at max(1, (mul * depth - sub) / 128).    */
+#define SE_DEPTH_SUB 215
+#define SE_DOUBLE_MARGIN 84      /* Singular: +1, +1 more this far below s_beta (tenths of a cp),           */
+#define SE_TRIPLE_MARGIN 306     /* +1 more this far, each this much further at PV nodes (tenths of a cp)...*/
+#define SE_PV_BONUS 1536         /* ...below ply 2 * root depth.                                             */
+#define SE_FAIL_HIGH_NEG 2       /* Not singular: the TT move this many plies shallower (one more outside    */
+                                 /* the PV) when its TT score is at or above beta...                         */
+#define SE_CUT_NODE_NEG 2        /* ...this many at a cut node...                                            */
+#define SE_TT_ALPHA_NEG 1        /* ...this many when its TT score is at or below alpha.                     */
 
 /* Move ordering (score_move), highest first. Each category is an offset, the bands mustn't overlap. */
 #define TT_MOVE_SCORE 1000000000 /* The TT move...                                                           */

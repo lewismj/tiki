@@ -27,8 +27,9 @@ Moves are generated in stages: captures and promotions first, quiet moves only w
 
 - Iterative deepening with aspiration windows
 - Principal variation search (PVS)
-- Staged move ordering: TT move, MVV-LVA with capture history, killers, history
-- Butterfly, capture and continuation histories (1, 2 and 4 plies)
+- Staged move ordering: TT move, captures (MVV-LVA with capture history), killer and counter move, quiet moves
+- Quiet history by threatened from/to squares, pawn-structure history, continuation histories (up to 6 plies),
+  capture history; a node cache orders moves near the root
 - Correction history (pawn structure and non-pawn pieces)
 - Reverse futility pruning
 - Null move pruning, with verification search at high depth
@@ -39,8 +40,8 @@ Moves are generated in stages: captures and promotions first, quiet moves only w
 - History pruning
 - Internal iterative reductions
 - Late move reductions
-- Singular extensions, check extensions
-- Quiescence search with SEE and delta pruning
+- Singular extensions (up to three plies), negative extensions and multi-cut; recapture extensions at PV nodes
+- Quiescence search with SEE-based futility and move-count pruning, one evasion in check
 - Transposition table: lock-less, 4-entry buckets, prefetched
 - Lazy SMP with shared TT and correction history, thread voting
 - Draw detection: repetition, fifty-move rule, insufficient material

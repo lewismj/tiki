@@ -7,7 +7,6 @@
 #ifdef TIKI_TUNE
 int tune_rfp_margin = RFP_MARGIN_DEFAULT;
 int tune_rfp_max_depth = RFP_MAX_DEPTH_DEFAULT;
-int tune_se_margin = SE_MARGIN_DEFAULT;
 int tune_rfp_improving = RFP_IMPROVING_DEFAULT;
 int tune_rfp_opp_worsening = RFP_OPP_WORSENING_DEFAULT;
 int tune_rfp_opp_worsening_margin = RFP_OPP_WORSENING_MARGIN_DEFAULT;
@@ -103,10 +102,22 @@ int tune_corr_max = CORR_MAX_DEFAULT;
 int tune_corr_rate = CORR_RATE_DEFAULT;
 int tune_se_min_depth = SE_MIN_DEPTH_DEFAULT;
 int tune_se_tt_depth_margin = SE_TT_DEPTH_MARGIN_DEFAULT;
-int tune_se_reduction = SE_REDUCTION_DEFAULT;
+int tune_qs_futility_margin = QS_FUTILITY_MARGIN_DEFAULT;
+int tune_qs_move_count = QS_MOVE_COUNT_DEFAULT;
+int tune_qs_stand_pat_blend = QS_STAND_PAT_BLEND_DEFAULT;
+int tune_qs_fail_high_blend = QS_FAIL_HIGH_BLEND_DEFAULT;
+int tune_qs_tt_halfmove_limit = QS_TT_HALFMOVE_LIMIT_DEFAULT;
+int tune_se_exact_mul = SE_EXACT_MUL_DEFAULT;
+int tune_se_depth_mul = SE_DEPTH_MUL_DEFAULT;
+int tune_se_depth_sub = SE_DEPTH_SUB_DEFAULT;
+int tune_se_double_margin = SE_DOUBLE_MARGIN_DEFAULT;
+int tune_se_triple_margin = SE_TRIPLE_MARGIN_DEFAULT;
+int tune_se_pv_bonus = SE_PV_BONUS_DEFAULT;
+int tune_se_fail_high_neg = SE_FAIL_HIGH_NEG_DEFAULT;
+int tune_se_cut_node_neg = SE_CUT_NODE_NEG_DEFAULT;
+int tune_se_tt_alpha_neg = SE_TT_ALPHA_NEG_DEFAULT;
 int tune_iir_min_depth = IIR_MIN_DEPTH_DEFAULT;
 int tune_aspiration_window = ASPIRATION_WINDOW_DEFAULT;
-int tune_delta_margin = DELTA_MARGIN_DEFAULT;
 int tune_capture_history_divisor = CAPTURE_HISTORY_DIVISOR_DEFAULT;
 int tune_probcut_min_depth = PROBCUT_MIN_DEPTH_DEFAULT;
 int tune_probcut_margin = PROBCUT_MARGIN_DEFAULT;
@@ -195,7 +206,6 @@ const tunable_t tunables[] = {
     { "SEE_QUIET_DEPTH", &tune_see_quiet_depth, 1, 12, 0.6, 0.002 },
     { "SEE_QUIET_MULT", &tune_see_quiet_mult, 10, 100, 4.5, 0.002 },
     { "SEE_QUIET_STAT_DIV", &tune_see_quiet_stat_div, 64, 256, 9.6, 0.002 },
-    { "SE_MARGIN",          &tune_se_margin,          16,  96,  8.0, 0.002 },  /* 1/16 cp per ply */
     { "NMP_MIN_DEPTH",      &tune_nmp_min_depth,       1,   6,  0.5, 0.002 },
     /* Null move R in 1/PLY_GRAIN ply (the depth rate per ply of depth). */
     { "NMP_R_BASE",         &tune_nmp_r_base,       2048, 6144, 512.0, 0.002 },
@@ -216,12 +226,24 @@ const tunable_t tunables[] = {
     { "CORR_NONPAWN_WEIGHT", &tune_corr_nonpawn_weight, 0, 200, 10.0, 0.002 },
     { "CORR_MAX",           &tune_corr_max,           16, 200,  9.0, 0.002 },
     { "CORR_RATE",          &tune_corr_rate,          16, 128,  6.0, 0.002 },
-    { "SE_MIN_DEPTH",        &tune_se_min_depth,    4,   10,    0.5, 0.002 },
+    { "SE_MIN_DEPTH",        &tune_se_min_depth,    2,   10,    0.5, 0.002 },
     { "SE_TT_DEPTH_MARGIN",  &tune_se_tt_depth_margin,    1,    6,    0.5, 0.002 },
-    { "SE_REDUCTION",        &tune_se_reduction,    0,    3,    0.5, 0.002 },
+    { "QS_FUTILITY_MARGIN", &tune_qs_futility_margin, 24, 72, 2.4, 0.002 },
+    { "QS_MOVE_COUNT", &tune_qs_move_count, 2, 5, 0.5, 0.002 },
+    { "QS_STAND_PAT_BLEND", &tune_qs_stand_pat_blend, 1, 1024, 51.1, 0.002 },
+    { "QS_FAIL_HIGH_BLEND", &tune_qs_fail_high_blend, 1, 1024, 51.1, 0.002 },
+    { "QS_TT_HALFMOVE_LIMIT", &tune_qs_tt_halfmove_limit, 60, 99, 1.9, 0.002 },
+    { "SE_EXACT_MUL", &tune_se_exact_mul, 16, 128, 5.6, 0.002 },
+    { "SE_DEPTH_MUL", &tune_se_depth_mul, 32, 128, 4.8, 0.002 },
+    { "SE_DEPTH_SUB", &tune_se_depth_sub, 0, 512, 25.6, 0.002 },
+    { "SE_DOUBLE_MARGIN", &tune_se_double_margin, 30, 150, 6.0, 0.002 },
+    { "SE_TRIPLE_MARGIN", &tune_se_triple_margin, 90, 600, 25.5, 0.002 },
+    { "SE_PV_BONUS", &tune_se_pv_bonus, 384, 3072, 134.4, 0.002 },
+    { "SE_FAIL_HIGH_NEG", &tune_se_fail_high_neg, 1, 4, 0.5, 0.002 },
+    { "SE_CUT_NODE_NEG", &tune_se_cut_node_neg, 1, 4, 0.5, 0.002 },
+    { "SE_TT_ALPHA_NEG", &tune_se_tt_alpha_neg, 0, 3, 0.5, 0.002 },
     { "IIR_MIN_DEPTH",       &tune_iir_min_depth,    2,    8,    0.5, 0.002 },
     { "ASPIRATION_WINDOW",   &tune_aspiration_window,    8,   80,    3.6, 0.002 },
-    { "DELTA_MARGIN",        &tune_delta_margin,   50,  400,   17.5, 0.002 },
     { "CAPTURE_HISTORY_DIVISOR", &tune_capture_history_divisor,    8,   64,    2.8, 0.002 },
     /* The minimum depth stays above PROBCUT_REDUCTION (4), so the reduced search has a depth. */
     { "PROBCUT_MIN_DEPTH",   &tune_probcut_min_depth,    5,   10,    0.5, 0.002 },

@@ -118,7 +118,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_clock_search_within_hard_limit);
     RUN_TEST(test_pick_next_move_order);
     RUN_TEST(test_quiescence_sees_quiet_queen_promotion);
-    RUN_TEST(test_check_extended_at_horizon);
+    RUN_TEST(test_mate_seen_at_horizon);
     RUN_TEST(test_null_move_guards);
     RUN_TEST(test_null_move_depth);
     RUN_TEST(test_null_move_verification_restores_state);
@@ -139,7 +139,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_threat_terms_in_quiet_order);
     RUN_TEST(test_node_cache);
     RUN_TEST(test_quiet_history_new_search);
-    RUN_TEST(test_lmr_tables_match_reference);
+    RUN_TEST(test_lmr_tables_match_formula);
     RUN_TEST(test_lmr_reduction_terms);
     RUN_TEST(test_move_loop_pruning_thresholds);
     RUN_TEST(test_ref_see_pins_and_values);
@@ -158,7 +158,7 @@ int main(int argc, char* argv[]) {
     RUN_TEST(test_pv_is_legal);
     RUN_TEST(test_mate_distance_scores);
     RUN_TEST(test_quiescence_stand_pat);
-    RUN_TEST(test_quiescence_delta_pruning);
+    RUN_TEST(test_quiescence_futility);
     RUN_TEST(test_quiescence_in_check);
     RUN_TEST(test_fifty_move_rule_and_mate);
     RUN_TEST(test_smp_helpers_grow_and_shrink);

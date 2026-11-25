@@ -186,10 +186,6 @@ static inline_always int stat_capture_history(const search_state_t* search_state
     return search_state->capture_history[get_piece_moved(mv)][get_target_square(mv)][captured_type(board, mv)];
 }
 
-static inline_always int stat_history_bucket(int h) {
-    return h < -1000 ? 0 : h > 1000 ? 2 : 1;
-}
-
 /* The node's captures other than the TT move, with their place among them as ordered and as they
  * would be with no capture history (ties keep move generation order, as pick_next_move does). */
 typedef struct {
@@ -625,8 +621,8 @@ bool can_reverse_futility_prune(int depth, int static_eval, int beta, bool in_ch
 }
 
 /**
- * The depth a quiet move would be searched at after the quiet table's reduction alone, at least 1
- * (reference Search.cpp:1972-1974), for the move loop's pruning; the node's depth for other moves and
+ * The depth a quiet move would be searched at after the quiet table's reduction alone, at least 1,
+ * for the move loop's pruning; the node's depth for other moves and
  * the first move. 'moves_made': legal moves made at the node before this one.
  */
 int lmr_depth_estimate(int depth, int moves_made, bool is_quiet) {
@@ -638,26 +634,25 @@ int lmr_depth_estimate(int depth, int moves_made, bool is_quiet) {
 }
 
 /* Late move pruning: quiet moves (counted as picked, pruned or not) from this many on are skipped
- * (reference Search.cpp:153-158). 'depth': the node's, plus LMP_PV_SCALE at PV nodes. */
+ * 'depth': the node's, plus LMP_PV_SCALE at PV nodes. */
 int lmp_threshold(int depth, bool improving) {
     return improving ? LMP_BASE + depth * depth : LMP_BASE + depth * depth / 2;
 }
 
-/* History pruning: a quiet move whose stat is below this is skipped (reference Search.cpp:160-163). */
+/* History pruning: a quiet move whose stat is below this is skipped. */
 int history_prune_threshold(int lmr_depth) {
     return -HIST_PRUNE_LINEAR * lmr_depth - HIST_PRUNE_QUAD * lmr_depth * lmr_depth;
 }
 
-/* Futility pruning: the margin over the corrected eval for a quiet move (reference Search.cpp:2000-2001,
- * 32 * lmr_depth^2 + stat / 383 in reference eval units, here cp). */
+/* Futility pruning: the margin over the corrected eval for a quiet move (cp): FUTILITY_LMR_SQ / 10 *
+ * lmr_depth^2 + stat / FUTILITY_STAT_DIV. */
 int futility_margin(int lmr_depth, int stat) {
     return FUTILITY_LMR_SQ * lmr_depth * lmr_depth / 10 + stat / FUTILITY_STAT_DIV;
 }
 
 /**
- * A capture's or promotion's class for the reductions, as the reference's ordering scores make it
- * (MoveOrderer.cpp:400-408, PromotionValues): 2 winning (attacker type below the victim's), 1 good
- * (same type, or reference SEE >= 0), 0 losing; a promotion without a capture, and any
+ * A capture's or promotion's class for the reductions and qsearch: 2 winning (attacker type below the
+ * victim's), 1 good (same type, or see_ge_ref >= 0), 0 losing; a promotion without a capture, and any
  * underpromotion, is below the good captures (0).
  */
 int ref_capture_class(const board_t* board, move_t mv) {
@@ -670,7 +665,7 @@ int ref_capture_class(const board_t* board, move_t mv) {
 }
 
 /**
- * Late move reduction in 1/PLY_GRAIN ply, rounded to whole plies (reference Search.cpp:2112-2177), not
+ * Late move reduction in 1/PLY_GRAIN ply, rounded to whole plies, not
  * yet limited to the new depth. 'move_number': the move's place among those made (1-based, > 1);
  * 'refutation': the TT, PV, killer or counter move (ordered at or above the counter move).
  */
@@ -728,48 +723,67 @@ bool can_probcut(int depth, int ply, int beta, bool in_check, bool is_pv_node, b
 }
 
 /**
- * Singular extensions: whether the TT move is worth testing for being much better than every
- * other move. The entry must be deep enough and a lower bound or exact (an upper bound says
- * nothing about how good the move is), not a mate score, and not at the root. Below ply 2 *
- * root depth only, so a line of singular moves can't extend the search without end.
+ * Singular extension: whether the TT move is tested for being much better
+ * than every other move. From SE_MIN_DEPTH, with a TT entry that's a lower bound or exact (an upper bound
+ * says nothing about how good the move is) at most SE_TT_DEPTH_MARGIN plies shallower than the node, not a
+ * mate or tablebase score. Not at the root, nor in a singular search (the caller's).
  */
-bool can_singular_extend(int depth, int ply, int root_depth, move_t tt_move, int tt_depth, tt_entry_type tt_type,
-                         int tt_score) {
-    return ply > 0 && ply < 2 * root_depth && depth >= SE_MIN_DEPTH && tt_move != 0 &&
-           tt_depth >= depth - SE_TT_DEPTH_MARGIN && tt_type != tt_alpha && !is_mate_score(tt_score);
+bool can_singular_extend(int depth, int tt_depth, tt_entry_type tt_type, int tt_score) {
+    return depth >= SE_MIN_DEPTH && (tt_type == tt_beta || tt_type == tt_exact) &&
+           tt_depth >= depth - SE_TT_DEPTH_MARGIN && !is_mate_score(tt_score);
 }
 
-/* The other moves must all score below this for the TT move to be singular. */
-int singular_beta(int tt_score, int depth) {
-    return tt_score - SE_MARGIN * depth / SE_MARGIN_GRAIN;
+/* The singular margin in margin units (SE_MARGIN_SCALE / 10 cp each): depth, or (depth * SE_EXACT_MUL + 127) / 128
+ * for an exact entry (more reliable, so a tighter window). */
+int singular_margin_ref(int depth, bool exact) {
+    return exact ? (depth * SE_EXACT_MUL + 127) / 128 : depth;
+}
+
+/* The singular beta in cp: the TT score less the margin x SE_MARGIN_SCALE / 10, the margin rounded down so
+ * that 'score < s_beta' for an integer score is exactly 'score < TT score - unrounded margin'. */
+int singular_beta(int tt_score, int margin_ref) {
+    return tt_score - SE_MARGIN_SCALE * margin_ref / 10;
+}
+
+/* The singular search's depth: max(1, (SE_DEPTH_MUL * depth - SE_DEPTH_SUB) / 128), the product truncated to
+ * 16 bits first. */
+int singular_depth(int depth) {
+    const int d = (int) (int16_t) (SE_DEPTH_MUL * depth - SE_DEPTH_SUB) / 128;
+    return d > 1 ? d : 1;
 }
 
 /**
- * What the search without the TT move ('score', against s_beta) says about the TT move:
- * - every other move fell below s_beta: the TT move is singular, extended;
- * - another move reached s_beta, so the TT move isn't singular. At a PV node nothing changes.
- *   Outside the PV, if s_beta >= beta another move already beats beta and the node fails high
- *   (multi-cut); otherwise, if the TT move's own stored score is at or above beta, it's searched a
- *   ply shallower, since it isn't the node's only good move.
+ * The TT move's extension from the singular search's 'score' (the multi-cut, score >= beta while not below
+ * s_beta, is the caller's). Below s_beta, singular: +1, +1 more when SE_DOUBLE_MARGIN below the unrounded
+ * s_beta and +1 more when SE_TRIPLE_MARGIN below, each SE_PV_BONUS further at PV nodes (tenths of
+ * a cp, compared exactly), only if 'may_extend' (below ply 2 * root depth). Otherwise: the TT score at or above
+ * beta, -SE_FAIL_HIGH_NEG (one more outside the PV); at a cut node, -SE_CUT_NODE_NEG; the TT score at or below
+ * alpha, -SE_TT_ALPHA_NEG.
  */
-singular_result_t singular_result(int score, int s_beta, int tt_score, int beta, bool is_pv_node) {
-    if (score < s_beta) return singular_extend;
-    if (is_pv_node) return singular_none;
-    if (s_beta >= beta) return singular_multi_cut;
-    if (tt_score >= beta) return singular_reduce;
-    return singular_none;
+int singular_extension(int score, int tt_score, int margin_ref, int alpha, int beta, bool is_pv_node, bool cut_node,
+                       bool may_extend) {
+    if (score < singular_beta(tt_score, margin_ref)) {
+        if (!may_extend) return 0;
+        const int s_beta_10 = 10 * tt_score - SE_MARGIN_SCALE * margin_ref;
+        const int pv = is_pv_node ? SE_PV_BONUS : 0;
+        return 1 + (10 * score < s_beta_10 - SE_DOUBLE_MARGIN - pv) + (10 * score < s_beta_10 - SE_TRIPLE_MARGIN - pv);
+    }
+    if (tt_score >= beta) return -SE_FAIL_HIGH_NEG - (is_pv_node ? 0 : 1);
+    if (cut_node) return -SE_CUT_NODE_NEG;
+    if (tt_score <= alpha) return -SE_TT_ALPHA_NEG;
+    return 0;
 }
 
-/* What came of a singular search, for the statistics. Nothing unless built with TIKI_SEARCH_STATS. */
-static inline_always void count_singular(search_state_t* search_state, uint64_t nodes, singular_result_t result) {
+/* What came of a singular search, for the statistics ('extension' -3..+3, 'multi_cut'). Nothing unless built
+ * with TIKI_SEARCH_STATS. */
+static inline_always void count_singular(search_state_t* search_state, uint64_t nodes, int extension, bool multi_cut) {
 #ifdef TIKI_SEARCH_STATS
     search_state->stats.singular_searches++;
     search_state->stats.singular_nodes += nodes;
-    if (result == singular_extend) search_state->stats.singular_extensions++;
-    if (result == singular_reduce) search_state->stats.singular_reductions++;
-    if (result == singular_multi_cut) search_state->stats.multi_cuts++;
+    if (multi_cut) search_state->stats.multi_cuts++;
+    else search_state->stats.singular_outcome[extension < -3 ? 0 : extension > 3 ? 6 : extension + 3]++;
 #else
-    (void) search_state; (void) nodes; (void) result;
+    (void) search_state; (void) nodes; (void) extension; (void) multi_cut;
 #endif
 }
 
@@ -861,116 +875,146 @@ static void verify_qmove(verify_feature_t feature, move_t mv, int alpha, int eva
 }
 #endif
 
-/* The qsearch node itself, already counted: by quiescence, or by negamax at depth 0. */
+/**
+ * The qsearch node itself, already counted: by quiescence, or by negamax at depth 0 or below.
+ *   - After a capture, insufficient material is a draw (no repetition check here).
+ *   - The TT: outside the PV, an exact entry, an upper bound at or below alpha or a lower bound at or
+ *     above beta cuts off, while the fifty-move counter is below QS_TT_HALFMOVE_LIMIT.
+ *   - Out of check, the stand pat is the corrected static eval refined by the TT bound
+ *     (adjusted_eval); at or above beta it returns moved QS_STAND_PAT_BLEND / 1024 of the way to beta.
+ *     A new position's eval is saved straight away.
+ *   - Out of check the moves are the TT move, captures and promotions except losing captures that
+ *     aren't the TT move (ref_capture_class) and underpromotions; in check, every evasion, and only the first legal one
+ *     is searched.
+ *   - Once a stand pat is there: at most QS_MOVE_COUNT moves; with a piece besides pawns, a capture
+ *     that doesn't win material (SEE >= 1), isn't a recapture and can't lift the stand pat
+ *     plus QS_FUTILITY_MARGIN above alpha is skipped (that bound counts towards the best score), and a
+ *     promotion that loses the pawn (SEE < 0) ends the moves.
+ *   - A best score above beta is moved QS_FAIL_HIGH_BLEND / 1024 of the way to beta. Saved as a lower
+ *     bound at or above beta, else an upper bound.
+ */
 static int quiescence_node(int alpha, int beta, board_t* board, search_state_t* search_state, limits_t* limits) {
     if (search_state->ply == 0) nnue_reset_root(&search_state->nnue, board);
     if (search_state->ply > MAX_PLY-1) return evaluation(board, &search_state->nnue);
 
-    /* The TT, saved at depth 0 by qsearch (and depth 0 negamax nodes, which are qsearch). Outside
-     * the PV any bound that fits the window cuts off, as in negamax. */
+    const int ply = search_state->ply;
+    const move_t previous = ply > 0 ? search_state->path_moves[ply - 1] : 0;
+    if (previous && get_capture_flag(previous) && is_insufficient_material(board)) return 0;
+
     const bool is_pv_node = beta - alpha > 1;
     tt_info_t tt;
-    const bool tt_hit = tt_read(board->hash, search_state->ply, &tt);
-    if (!is_pv_node && tt_hit && tt_cut_allowed(&tt, 0)) {
+    const bool tt_hit = tt_read(board->hash, ply, &tt);
+    if (!is_pv_node && tt_hit && board->fifty_move < QS_TT_HALFMOVE_LIMIT && tt_cut_allowed(&tt, 0)) {
         const int cutoff = tt_cutoff(&tt, 0, alpha, beta);
         if (cutoff != TT_NOT_FOUND) return cutoff;
     }
 
-    /* In check there's no standing pat (the position may be lost), every evasion is searched.
-     * Otherwise the stand pat is the static eval, from the TT if it's there and refined by the
-     * TT score's bound (adjusted_eval); 'raw_eval' is the network's, the one saved. The correction
-     * history (eval_correction) corrects it first, qsearch doesn't update it. */
     const bool in_check = side_in_check(board);
     int raw_eval = TT_EVAL_NONE;
-    int eval = -INF;
+    int best_score = -INF;          /* No stand pat in check: every evasion may be needed. */
+    int futility_base = -INF;
     if (!in_check) {
         raw_eval = tt_hit && tt.eval != TT_EVAL_NONE ? tt.eval : evaluation(board, &search_state->nnue);
-        eval = VERIFY_PLAIN ? raw_eval
-                            : adjusted_eval(raw_eval + eval_correction(board, search_state), tt_hit ? &tt : NULL);
+        if (!tt_hit) tt_save(board->hash, tt_none, 0, ply, 0, 0, raw_eval);
+        best_score = VERIFY_PLAIN ? raw_eval
+                                  : adjusted_eval(raw_eval + eval_correction(board, search_state), tt_hit ? &tt : NULL);
+        if (best_score >= beta)
+            return VERIFY_PLAIN ? best_score
+                                : (int) (((int64_t) best_score * (1024 - QS_STAND_PAT_BLEND) + (int64_t) beta * QS_STAND_PAT_BLEND) / 1024);
+        if (best_score > alpha) alpha = best_score;
+        futility_base = best_score + QS_FUTILITY_MARGIN;
     }
-    /* Fail-soft: the scores returned are the ones found (the stand pat, a capture's), which may lie
-     * outside the window, never clamped to alpha or beta. */
-    if (eval >= beta) {
-        tt_save(board->hash, tt_beta, 0, search_state->ply, eval, 0, raw_eval);
-        return eval;
-    }
-    const int alpha_orig = alpha;
-    if (eval > alpha) alpha = eval;
-    int best_score = eval;  /* -INF in check: every evasion is searched, no stand pat. */
+    const int eval = best_score;    /* The stand pat, for the verification log. */
+    (void) eval;
 
     move_buffer_t buffer;
     int scores[MOVE_BUFFER_SIZE];
     if (in_check) generate_moves(board, &buffer);
     else generate_captures(board, &buffer);
     quiet_ctx_t qctx;
-    if (in_check) qctx = quiet_ctx(search_state->quiet, board, search_state->ply, search_state->path_moves, false);
-    score_moves(&buffer, scores, tt_hit ? tt.move : 0, board, search_state, in_check ? &qctx : NULL);
+    if (in_check) qctx = quiet_ctx(search_state->quiet, board, ply, search_state->path_moves, false);
+    const move_t tt_move = tt_hit ? tt.move : 0;
+    score_moves(&buffer, scores, tt_move, board, search_state, in_check ? &qctx : NULL);
 
-    /* Out of check, captures and queen promotions only. */
-    bool has_legal_moves = false;
+    const int prev_target = previous ? get_target_square(previous) : -1;
+    const bool has_pieces = has_non_pawn_material(board);
+    int moves_made = 0;
     move_t best_move = 0;
-    for (int i=0; i< buffer.index; i++) {
+    for (int i = 0; i < buffer.index; i++) {
         move_t mv = pick_next_move(&buffer, scores, i);
-        tt_prefetch(hash_after_move(board, mv));
-
-        if (!in_check && !VERIFY_PLAIN) {
-            /* Sorted best first, so from here on every capture loses material (SEE < 0). Quiet queen
-             * promotions (QUEEN_PROMOTION_SCORE) sort with the winning captures, before this. */
-            if (scores[i] < 0 && get_capture_flag(mv)) {
+        const piece promoted = get_promoted_piece(mv);
+        if (!in_check) {
+            /* Not searched out of check: underpromotions, losing captures other than the TT move. */
+            if (promoted && promoted != Q && promoted != q) continue;
+            if (get_capture_flag(mv) && mv != tt_move && !VERIFY_PLAIN && ref_capture_class(board, mv) == 0) {
 #ifdef TIKI_VERIFY
-                /* The first one skipped, the best ordered of them. */
                 if (verify_take(vf_qs_bad, 0)) verify_qmove(vf_qs_bad, mv, alpha, eval, board, search_state, limits);
+#endif
+                continue;
+            }
+        }
+        if (best_score > -TB_WIN_MIN && !VERIFY_PLAIN) {
+            /* Move count pruning. */
+            if (moves_made > QS_MOVE_COUNT) {
+#ifdef TIKI_VERIFY
+                if (verify_take(vf_qs_count, 0)) verify_qmove(vf_qs_count, mv, alpha, eval, board, search_state, limits);
 #endif
                 break;
             }
-
-            /* Delta pruning, even winning the piece can't bring the score up to alpha. Its optimistic
-             * score still counts towards the best, so a fail low stays a valid upper bound. */
-            if (!get_promoted_piece(mv)) {
-                const int optimistic = eval + captured_value(board, mv) + DELTA_MARGIN;
-                const bool delta_prune = optimistic <= alpha;
+            if (has_pieces && !in_check) {
+                /* Futility: a capture that can't reach alpha, unless it wins material or recaptures. */
+                if (get_capture_flag(mv) && futility_base > -TB_WIN_MIN && futility_base <= alpha &&
+                    get_target_square(mv) != prev_target && !see_ge_ref(board, mv, 1)) {
 #ifdef TIKI_VERIFY
-                if (verify_cfg.decisions && verify_cfg.nesting == 0 && optimistic <= alpha)
-                    verify_rule_record(&verify_delta_rule, !delta_prune, board, mv);
+                    if (verify_take(vf_qs_futility, 0)) verify_qmove(vf_qs_futility, mv, alpha, eval, board, search_state, limits);
 #endif
-                if (delta_prune) {
-#ifdef TIKI_VERIFY
-                    if (verify_take(vf_delta, 0)) verify_qmove(vf_delta, mv, alpha, eval, board, search_state, limits);
-#endif
-                    if (optimistic > best_score) best_score = optimistic;
+                    if (futility_base > best_score) best_score = futility_base;
                     continue;
                 }
+                /* A promotion (not the TT move) that loses the pawn ends the moves. */
+                if (!get_capture_flag(mv) && mv != tt_move && !see_ge_ref(board, mv, 0)) break;
             }
         }
 
-        search_state->path_moves[search_state->ply] = mv;
+        tt_prefetch(hash_after_move(board, mv));
+        search_state->path_moves[ply] = mv;
         ++search_state->ply;
-        if (search_make_move(board, search_state, mv)) {
-            has_legal_moves = true;
-            int score = -quiescence(-beta, -alpha, board, search_state, limits);
+        if (!search_make_move(board, search_state, mv)) {
             --search_state->ply;
-            search_pop_move(board, search_state);
+            pop_move(board);
+            continue;
+        }
+        moves_made++;
+        const int score = -quiescence(-beta, -alpha, board, search_state, limits);
+        --search_state->ply;
+        search_pop_move(board, search_state);
+        if (limits->stop_search_flag) return STOPPED_SEARCH;
 
-            if (limits->stop_search_flag) return STOPPED_SEARCH;
-
-            if (score > best_score) best_score = score;
+        if (score > best_score) {
+            best_score = score;
             if (score > alpha) {
                 alpha = score;
                 best_move = mv;
-                if (score >= beta) {
-                    tt_save(board->hash, tt_beta, 0, search_state->ply, score, mv, raw_eval);
-                    return score;
-                }
+                if (score >= beta) break;
             }
-        } else {
-            --search_state->ply;
-            pop_move(board);
+            /* In check only the first legal evasion is searched. */
+            if (in_check) {
+#ifdef TIKI_VERIFY
+                for (int j = i + 1; j < buffer.index; j++) {
+                    if (verify_take(vf_qs_evasion, 0)) {
+                        verify_qmove(vf_qs_evasion, pick_next_move(&buffer, scores, j), alpha, eval, board, search_state, limits);
+                        break;
+                    }
+                }
+#endif
+                if (!VERIFY_PLAIN) break;
+            }
         }
     }
-    if (in_check && !has_legal_moves) return -MATE_VALUE + search_state->ply;
-    /* An exact score if something (the stand pat or a move) raised alpha, otherwise an upper bound. */
-    tt_save(board->hash, alpha > alpha_orig ? tt_exact : tt_alpha, 0, search_state->ply, best_score, best_move,
-            raw_eval);
+    if (in_check && moves_made == 0) return -MATE_VALUE + ply;
+    if (!VERIFY_PLAIN && !is_mate_score(best_score) && best_score > beta)
+        best_score = (int) (((int64_t) best_score * (1024 - QS_FAIL_HIGH_BLEND) + (int64_t) beta * QS_FAIL_HIGH_BLEND) / 1024);
+    tt_save(board->hash, best_score >= beta ? tt_beta : tt_alpha, 0, ply, best_score, best_move, raw_eval);
     return best_score;
 }
 
@@ -988,8 +1032,7 @@ int quiescence(int alpha, int beta, board_t* board, search_state_t* search_state
  *   2. winning and equal captures and queen promotions (generate_noisy), by their scores;
  *   3. the killer, then the counter move, if they're possible here and quiet;
  *   4. the other quiet moves and underpromotions (generate_quiets), by quiet_order_score, generated only now;
- *   5. the losing captures (SEE < 0), left over from 2 (the reference orders these among the quiet
- *      moves; tiki's capture ordering stays until it's ported).
+ *   5. the losing captures (SEE < 0), left over from 2.
  * The bands don't overlap (search_constants.h), so it's the order of one sorted list, but for ties
  * within a band. Each move is returned once: the TT move and killers are skipped where they come up
  * again. In check and on the previous iteration's PV (or built with TIKI_SEARCH_STATS) everything is
@@ -1081,7 +1124,7 @@ static inline_always bool picker_killer_ok(move_picker_t* picker, move_t killer)
     return move_is_pseudo_legal(picker->board, killer);
 }
 
-/* Futility pruning: the quiet stage ends (reference MovePicker::SkipQuiets): nothing scored below the
+/* Futility pruning: the quiet stage ends: nothing scored below the
  * counter move is returned any more. */
 static inline_always void picker_skip_quiets(move_picker_t* picker) {
     if (picker->skip_quiets) return;
@@ -1435,7 +1478,8 @@ static int negamax_node(int alpha,
 #ifdef TIKI_SEARCH_STATS
     const int stat_entry_depth = depth < 0 ? 0 : depth > 16 ? 16 : depth;
     search_state->stats.nodes_at_depth[stat_entry_depth]++;
-    if (search_state->root_depth > 0) {
+    /* Main search nodes only (depth > 0; depth 0 and below is the qsearch). */
+    if (search_state->root_depth > 0 && depth > 0) {
         const int net = search_state->ply + depth - search_state->root_depth;
         search_state->stats.ext_net[net < -10 ? 0 : net > 21 ? 31 : net + 10]++;
         const int q = search_state->ply * 4 / search_state->root_depth;
@@ -1477,7 +1521,7 @@ static int negamax_node(int alpha,
         return 0;
     }
 
-    /* The next ply's killer belongs to the nodes below this one (reference Search.cpp:1615-1616). */
+    /* The next ply's killer belongs to the nodes below this one. */
     search_state->killer_moves[search_state->ply + 1] = 0;
 
     /* The deepest ply the tables hold. No moves are made from here, so no node is ever at MAX_PLY
@@ -1492,19 +1536,9 @@ static int negamax_node(int alpha,
     bool in_check = side_in_check(board);
 
     /* A singular extension search of this node without the TT move (see below). Its result isn't
-     * the node's: it doesn't cut off from the TT, save to it, or prune the whole node. Its depth
-     * comes from the node's, already extended for check, so it isn't extended again. */
+     * the node's: it doesn't cut off from the TT, save to it, or prune the whole node. No check
+     * extension: moves that give check are reduced less instead (lmr_reduction). */
     const move_t excluded_move = search_state->excluded_moves[search_state->ply];
-
-    if (in_check && !excluded_move && search_state->ply < 2 * search_state->root_depth && !VERIFY_PLAIN &&
-        !VERIFY_SKIPS(vf_check_ext)) {
-        ++depth;
-#ifdef TIKI_VERIFY
-        if (search_state->ply > 0 && verify_take(vf_check_ext, depth_param))
-            verify_both_ways(vf_check_ext, depth_param, false, alpha, beta, depth_param, cut_node, -INF, board,
-                             search_state, limits);
-#endif
-    }
 
     /* Probed with the extended depth, the same depth the node is saved with. */
     bool is_pv_node = beta - alpha > 1;
@@ -1520,7 +1554,8 @@ static int negamax_node(int alpha,
         }
     }
 
-    if (depth == 0) {
+    /* Out of depth (a negative singular extension can take a move below 0): the qsearch. */
+    if (depth <= 0) {
         return quiescence_node(alpha, beta, board, search_state, limits);
     }
 
@@ -1707,46 +1742,51 @@ static int negamax_node(int alpha,
     }
 
     /**
-     * Singular extensions: search the node without the TT move, at half the depth and with a null
-     * window just under its TT score. If every other move fails low, the TT move is singular, much
-     * better than the rest, and it's searched one ply deeper. Otherwise, outside the PV, the node
-     * may fail high now (multi-cut) or the TT move be searched a ply shallower, see
-     * singular_result. 'extension' only ever applies to the TT move.
+     * Singular extension: search the node without the TT move
+     * (singular_depth, null window at singular_beta, not a cut node). Every other move below it: the
+     * TT move is singular and searched up to three plies deeper; another move at or above it and beta:
+     * the node fails high (multi-cut); otherwise the TT move may be searched shallower
+     * (singular_extension). When the test doesn't apply, a PV node's TT move that recaptures is
+     * extended. 'extension' only ever applies to the TT move.
      */
     int extension = 0;
-    if (!excluded_move && tt_move && !VERIFY_PLAIN) {
-        move_t stored_move;
-        int tt_score, tt_depth;
-        tt_entry_type tt_type;
-        if (tt_lookup(board->hash, search_state->ply, &stored_move, &tt_score, &tt_depth, &tt_type) &&
-            stored_move == tt_move &&
-            can_singular_extend(depth, search_state->ply, search_state->root_depth, tt_move, tt_depth, tt_type,
-                                tt_score)) {
-            const int s_beta = singular_beta(tt_score, depth);
-            search_state->excluded_moves[search_state->ply] = tt_move;
-            search_state->follow_pv = false;
-            const uint64_t nodes_before = search_state->nodes;
-            const int score = negamax_node(s_beta - 1, s_beta, (depth - 1) / 2, cut_node, board, search_state, limits);
-            search_state->excluded_moves[search_state->ply] = 0;
-            /* The search without the TT move used this ply's PV row, the node starts its own. */
-            search_state->pv_length[search_state->ply] = search_state->ply;
-            if (limits->stop_search_flag) return STOPPED_SEARCH;
+    if (!excluded_move && ply > 0 && tt_move && !VERIFY_PLAIN && tt_hit && move_is_pseudo_legal(board, tt_move) &&
+        can_singular_extend(depth, tt.depth, tt.type, tt.score)) {
+        /* The node's TT entry as read at entry (a ProbCut search may have written to it since). */
+        const int margin_ref = singular_margin_ref(depth, tt.type == tt_exact);
+        const int s_beta = singular_beta(tt.score, margin_ref);
+        const int s_depth = singular_depth(depth);
+        search_state->excluded_moves[search_state->ply] = tt_move;
+        search_state->follow_pv = false;
+        const uint64_t nodes_before = search_state->nodes;
+        const int score = negamax_node(s_beta - 1, s_beta, s_depth, false, board, search_state, limits);
+        search_state->excluded_moves[search_state->ply] = 0;
+        /* The search without the TT move used this ply's PV row, the node starts its own. */
+        search_state->pv_length[search_state->ply] = search_state->ply;
+        if (limits->stop_search_flag) return STOPPED_SEARCH;
 
-            const singular_result_t result = singular_result(score, s_beta, tt_score, beta, is_pv_node);
-            count_singular(search_state, search_state->nodes - nodes_before, result);
-            /* Fail-soft: another move reached s_beta (>= beta), a lower bound on the node. */
-            if (result == singular_multi_cut && !VERIFY_SKIPS(vf_multicut)) {
-                STAT_EXIT(6);
+        /* Multi-cut: another move reached s_beta and beta, the node fails high with the score moved towards
+         * beta (fail-soft), PV nodes too. */
+        if (score >= s_beta && score >= beta && !VERIFY_SKIPS(vf_multicut)) {
+            count_singular(search_state, search_state->nodes - nodes_before, 0, true);
+            const int multi_cut = (score * s_depth + beta) / (s_depth + 1);
+            STAT_EXIT(6);
 #ifdef TIKI_VERIFY
-                if (verify_take(vf_multicut, depth))
-                    verify_node(vf_multicut, depth, alpha_orig, beta, depth_param, cut_node, static_eval, s_beta, board,
-                                search_state, limits);
+            if (verify_take(vf_multicut, depth))
+                verify_node(vf_multicut, depth, alpha_orig, beta, depth_param, cut_node, static_eval, multi_cut, board,
+                            search_state, limits);
 #endif
-                return s_beta;
-            }
-            if (result == singular_extend) extension = 1;
-            else if (result == singular_reduce) extension = -SE_REDUCTION;
+            return multi_cut;
         }
+        extension = singular_extension(score, tt.score, margin_ref, alpha, beta, is_pv_node, cut_node,
+                                       ply < 2 * search_state->root_depth);
+        count_singular(search_state, search_state->nodes - nodes_before, extension, false);
+    } else if (is_pv_node && ply > 0 && tt_move && (get_capture_flag(tt_move) || get_promoted_piece(tt_move)) &&
+               search_state->path_moves[ply - 1] &&
+               get_target_square(tt_move) == get_target_square(search_state->path_moves[ply - 1])) {
+        /* Recapture extension: at a PV node the TT move recapturing on the
+         * square the opponent just moved to, when the singular test didn't apply. */
+        extension = 1;
     }
 
     /* The moves, best first (move_picker_t): staged, or all at once in check, on the previous
@@ -1772,14 +1812,14 @@ static int negamax_node(int alpha,
     if (!excluded_move) stat_capture_ranks(&capture_ranks, &buffer, scores, tt_move, board, search_state, depth, is_pv_node);
 #endif
 
-    /* In the move loop a node whose static eval is already at or above beta counts as improving
-     * (reference Search.cpp:1872-1874). */
+    /* In the move loop a node whose static eval is already at or above beta counts as improving. */
     const bool loop_improving = improving || (!in_check && raw_eval >= beta);
-    const bool tt_capture = tt_move != 0 && (get_capture_flag(tt_move) || get_promoted_piece(tt_move));
+    /* A singular search doesn't use the node's TT entry: no TT terms in its reductions. */
+    const bool tt_capture = !excluded_move && tt_move != 0 && (get_capture_flag(tt_move) || get_promoted_piece(tt_move));
 
     bool has_legal_moves = false;
-    int num_moves_searched = 0; /* Legal moves made so far (the reference's moveIndex before the next). */
-    int quiet_index = 0;        /* Quiet moves picked so far, pruned or not (quietMoveIndex). */
+    int num_moves_searched = 0; /* Legal moves made so far. */
+    int quiet_index = 0;        /* Quiet moves picked so far, pruned or not. */
     int score;
     /* Fail-soft: the best score of the moves searched, returned whatever the window (alpha only moves
      * when a move scores above it). */
@@ -1810,7 +1850,7 @@ static int negamax_node(int alpha,
         const int stat = is_quiet ? quiet_stat(&qc, mv) : 0;
         if (is_quiet) quiet_index++;
 
-        /* Pruning before the move is made (reference Search.cpp:1968-2027): not at the root, and only once a
+        /* Pruning before the move is made: not at the root, and only once a
          * move has been searched (best_score was -INF) and the best score isn't a decisive loss. */
         const int lmr_depth = lmr_depth_estimate(depth, num_moves_searched, is_quiet);
         if (ply > 0 && best_score > -TB_WIN_MIN && !VERIFY_PLAIN) {
@@ -1847,7 +1887,7 @@ static int negamax_node(int alpha,
                     }
                 }
             }
-            /* SEE pruning, only for a move to a square the opponent attacks (reference SEE). */
+            /* SEE pruning (see_ge_ref), only for a move to a square the opponent attacks. */
             if ((qc.threats.all >> get_target_square(mv)) & 1) {
                 const bool see_prune = is_capture ?
                     depth <= SEE_CAPTURE_DEPTH && ref_capture_class(board, mv) == 0 &&
@@ -1883,10 +1923,17 @@ static int negamax_node(int alpha,
         int reduction = 0;
         if (!VERIFY_PLAIN && depth >= LMR_MIN_DEPTH && move_number > 1 && (!is_pv_node || is_quiet)) {
             reduction = lmr_reduction(depth, move_number, ply, is_pv_node, cut_node, loop_improving, side_in_check(board),
-                                      is_quiet, stat, tt_capture, refutation, capture_class, tt_hit && tt.depth >= depth);
+                                      is_quiet, stat, tt_capture, refutation, capture_class,
+                                      !excluded_move && tt_hit && tt.depth >= depth);
         }
         /* The TT move a ply deeper if it's singular, shallower if it isn't but beat beta (see above). */
         int new_depth = depth - 1 + (mv == tt_move ? extension : 0);
+#ifdef TIKI_SEARCH_STATS
+        if (!excluded_move) {
+            const int e = mv == tt_move ? extension : 0;
+            search_state->stats.ext_hist[depth <= 3 ? 0 : depth <= 6 ? 1 : depth <= 9 ? 2 : 3][e < -3 ? 0 : e > 3 ? 6 : e + 3]++;
+        }
+#endif
         if (reduction > new_depth) reduction = new_depth;
         if (reduction < 0) reduction = 0;
 #ifdef TIKI_SEARCH_STATS
@@ -1921,7 +1968,7 @@ static int negamax_node(int alpha,
 #endif
         if (move_number == 1 && mv == tt_move && !excluded_move) COUNT_STAT(search_state, tt_move_first);
 
-        /* Principal variation search (reference Search.cpp:2179-2237): a reduced null-window search
+        /* Principal variation search: a reduced null-window search
          * (the child a cut node) that beats alpha is searched again at the new depth, a ply deeper if it
          * beat the best score by more than LMR_DEEPER_MARGIN, a ply shallower if not by the new depth's
          * worth, and only if that's deeper than the reduced search; otherwise (no reduction) a
@@ -1967,7 +2014,7 @@ static int negamax_node(int alpha,
             score = -negamax_node(-alpha - 1, -alpha, new_depth, !cut_node, board, search_state, limits);
         }
         if (is_pv_node && (move_number == 1 || (score > alpha && (ply == 0 || score < beta)))) {
-            /* The TT move isn't dropped into qsearch here (reference Search.cpp:2227-2229). */
+            /* The TT move isn't dropped into qsearch here. */
             if (mv == tt_move && search_state->root_depth > PV_TT_MOVE_MIN_ROOT_DEPTH && tt_hit && tt.depth > 1 &&
                 new_depth < 1)
                 new_depth = 1;
@@ -1992,7 +2039,7 @@ static int negamax_node(int alpha,
 
         if (limits->stop_search_flag) return STOPPED_SEARCH;
 
-        /* Near the root, the nodes each move took (reference Search.cpp:2250-2256). */
+        /* Near the root, the nodes each move took. */
         if (qc.cache) node_cache_add(qc.cache, mv, search_state->nodes - nodes_before_move);
         if (is_quiet && num_quiets_tried < QUIETS_TRIED_MAX) quiets_tried[num_quiets_tried++] = mv;
 
@@ -2010,6 +2057,8 @@ static int negamax_node(int alpha,
             alpha = score;
 
             if (score >= beta) {
+                /* The score moved towards beta, the more the shallower (not at the root or for decisive scores). */
+                if (ply > 0 && !VERIFY_PLAIN && !is_mate_score(score)) score = (score * depth + beta) / (depth + 1);
                 count_cutoff(search_state, num_moves_searched, is_quiet, num_quiets_tried - (is_quiet ? 1 : 0), is_capture, tt_move != 0,
                              mv == tt_move);
                 if (!excluded_move) {
@@ -2017,8 +2066,8 @@ static int negamax_node(int alpha,
                     if (!in_check) learn_correction(search_state, board->side, corr_idx, depth, score, raw_eval,
                                                     corrected_eval, tt_beta, mv);
                 }
-                /* The reference's update at a fail high (Search.cpp:2339-2350): a quiet best move updates
-                 * the quiet history (quiet_history_update) and becomes the killer. */
+                /* A quiet best move updates the quiet history (quiet_history_update) and becomes the
+                 * killer. */
                 if (is_quiet) {
                     const int score_diff = score - beta < HIST_SCORE_DIFF_MAX ? score - beta : HIST_SCORE_DIFF_MAX;
                     quiet_history_update(&qc, quiets_tried, num_quiets_tried, mv, depth, score_diff);
@@ -2039,7 +2088,7 @@ static int negamax_node(int alpha,
 #endif
                 return score;
             }
-            /* Alpha raised: the remaining moves are searched a ply shallower (reference Search.cpp:2317). */
+            /* Alpha raised: the remaining moves are searched a ply shallower. */
             if (depth > ALPHA_IMPROVEMENT_MIN_DEPTH) depth--;
         }
 
@@ -2061,8 +2110,7 @@ static int negamax_node(int alpha,
      * the pruning assumed, so alpha is the upper bound. */
     if (best_score == -INF) best_score = alpha;
 
-    /* A fail low: the quiet move that led here gains in the parent's continuation history (reference
-     * Search.cpp:2352-2358). */
+    /* A fail low: the quiet move that led here gains in the parent's continuation history. */
     if (ply > 0 && best_score <= alpha_orig && qc.prev_move && is_quiet_move(qc.prev_move)) {
         piece_to_history_t* parent_rows[CONT_PLIES];
         cont_rows_at(search_state->quiet, board->side ^ 1, ply - 1, search_state->path_moves, parent_rows);

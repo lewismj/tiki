@@ -41,7 +41,6 @@ void print_spsa_input(void);
 enum {
     RFP_MARGIN_DEFAULT = RFP_MARGIN,
     RFP_MAX_DEPTH_DEFAULT = RFP_MAX_DEPTH,
-    SE_MARGIN_DEFAULT = SE_MARGIN,
     RFP_IMPROVING_DEFAULT = RFP_IMPROVING,
     RFP_OPP_WORSENING_DEFAULT = RFP_OPP_WORSENING,
     RFP_OPP_WORSENING_MARGIN_DEFAULT = RFP_OPP_WORSENING_MARGIN,
@@ -137,10 +136,22 @@ enum {
     CORR_RATE_DEFAULT = CORR_RATE,
     SE_MIN_DEPTH_DEFAULT = SE_MIN_DEPTH,
     SE_TT_DEPTH_MARGIN_DEFAULT = SE_TT_DEPTH_MARGIN,
-    SE_REDUCTION_DEFAULT = SE_REDUCTION,
+    QS_FUTILITY_MARGIN_DEFAULT = QS_FUTILITY_MARGIN,
+    QS_MOVE_COUNT_DEFAULT = QS_MOVE_COUNT,
+    QS_STAND_PAT_BLEND_DEFAULT = QS_STAND_PAT_BLEND,
+    QS_FAIL_HIGH_BLEND_DEFAULT = QS_FAIL_HIGH_BLEND,
+    QS_TT_HALFMOVE_LIMIT_DEFAULT = QS_TT_HALFMOVE_LIMIT,
+    SE_EXACT_MUL_DEFAULT = SE_EXACT_MUL,
+    SE_DEPTH_MUL_DEFAULT = SE_DEPTH_MUL,
+    SE_DEPTH_SUB_DEFAULT = SE_DEPTH_SUB,
+    SE_DOUBLE_MARGIN_DEFAULT = SE_DOUBLE_MARGIN,
+    SE_TRIPLE_MARGIN_DEFAULT = SE_TRIPLE_MARGIN,
+    SE_PV_BONUS_DEFAULT = SE_PV_BONUS,
+    SE_FAIL_HIGH_NEG_DEFAULT = SE_FAIL_HIGH_NEG,
+    SE_CUT_NODE_NEG_DEFAULT = SE_CUT_NODE_NEG,
+    SE_TT_ALPHA_NEG_DEFAULT = SE_TT_ALPHA_NEG,
     IIR_MIN_DEPTH_DEFAULT = IIR_MIN_DEPTH,
     ASPIRATION_WINDOW_DEFAULT = ASPIRATION_WINDOW,
-    DELTA_MARGIN_DEFAULT = DELTA_MARGIN,
     CAPTURE_HISTORY_DIVISOR_DEFAULT = CAPTURE_HISTORY_DIVISOR,
     PROBCUT_MIN_DEPTH_DEFAULT = PROBCUT_MIN_DEPTH,
     PROBCUT_MARGIN_DEFAULT = PROBCUT_MARGIN,
@@ -149,7 +160,6 @@ enum {
 
 extern int tune_rfp_margin;
 extern int tune_rfp_max_depth;
-extern int tune_se_margin;
 extern int tune_rfp_improving;
 extern int tune_rfp_opp_worsening;
 extern int tune_rfp_opp_worsening_margin;
@@ -245,10 +255,22 @@ extern int tune_corr_max;
 extern int tune_corr_rate;
 extern int tune_se_min_depth;
 extern int tune_se_tt_depth_margin;
-extern int tune_se_reduction;
+extern int tune_qs_futility_margin;
+extern int tune_qs_move_count;
+extern int tune_qs_stand_pat_blend;
+extern int tune_qs_fail_high_blend;
+extern int tune_qs_tt_halfmove_limit;
+extern int tune_se_exact_mul;
+extern int tune_se_depth_mul;
+extern int tune_se_depth_sub;
+extern int tune_se_double_margin;
+extern int tune_se_triple_margin;
+extern int tune_se_pv_bonus;
+extern int tune_se_fail_high_neg;
+extern int tune_se_cut_node_neg;
+extern int tune_se_tt_alpha_neg;
 extern int tune_iir_min_depth;
 extern int tune_aspiration_window;
-extern int tune_delta_margin;
 extern int tune_capture_history_divisor;
 extern int tune_probcut_min_depth;
 extern int tune_probcut_margin;
@@ -256,7 +278,6 @@ extern int tune_probcut_improving;
 
 #undef RFP_MARGIN
 #undef RFP_MAX_DEPTH
-#undef SE_MARGIN
 #undef RFP_IMPROVING
 #undef RFP_OPP_WORSENING
 #undef RFP_OPP_WORSENING_MARGIN
@@ -352,17 +373,28 @@ extern int tune_probcut_improving;
 #undef CORR_RATE
 #undef SE_MIN_DEPTH
 #undef SE_TT_DEPTH_MARGIN
-#undef SE_REDUCTION
+#undef QS_FUTILITY_MARGIN
+#undef QS_MOVE_COUNT
+#undef QS_STAND_PAT_BLEND
+#undef QS_FAIL_HIGH_BLEND
+#undef QS_TT_HALFMOVE_LIMIT
+#undef SE_EXACT_MUL
+#undef SE_DEPTH_MUL
+#undef SE_DEPTH_SUB
+#undef SE_DOUBLE_MARGIN
+#undef SE_TRIPLE_MARGIN
+#undef SE_PV_BONUS
+#undef SE_FAIL_HIGH_NEG
+#undef SE_CUT_NODE_NEG
+#undef SE_TT_ALPHA_NEG
 #undef IIR_MIN_DEPTH
 #undef ASPIRATION_WINDOW
-#undef DELTA_MARGIN
 #undef CAPTURE_HISTORY_DIVISOR
 #undef PROBCUT_MIN_DEPTH
 #undef PROBCUT_MARGIN
 #undef PROBCUT_IMPROVING
 #define RFP_MARGIN tune_rfp_margin
 #define RFP_MAX_DEPTH tune_rfp_max_depth
-#define SE_MARGIN tune_se_margin
 #define RFP_IMPROVING tune_rfp_improving
 #define RFP_OPP_WORSENING tune_rfp_opp_worsening
 #define RFP_OPP_WORSENING_MARGIN tune_rfp_opp_worsening_margin
@@ -458,10 +490,22 @@ extern int tune_probcut_improving;
 #define CORR_RATE tune_corr_rate
 #define SE_MIN_DEPTH tune_se_min_depth
 #define SE_TT_DEPTH_MARGIN tune_se_tt_depth_margin
-#define SE_REDUCTION tune_se_reduction
+#define QS_FUTILITY_MARGIN tune_qs_futility_margin
+#define QS_MOVE_COUNT tune_qs_move_count
+#define QS_STAND_PAT_BLEND tune_qs_stand_pat_blend
+#define QS_FAIL_HIGH_BLEND tune_qs_fail_high_blend
+#define QS_TT_HALFMOVE_LIMIT tune_qs_tt_halfmove_limit
+#define SE_EXACT_MUL tune_se_exact_mul
+#define SE_DEPTH_MUL tune_se_depth_mul
+#define SE_DEPTH_SUB tune_se_depth_sub
+#define SE_DOUBLE_MARGIN tune_se_double_margin
+#define SE_TRIPLE_MARGIN tune_se_triple_margin
+#define SE_PV_BONUS tune_se_pv_bonus
+#define SE_FAIL_HIGH_NEG tune_se_fail_high_neg
+#define SE_CUT_NODE_NEG tune_se_cut_node_neg
+#define SE_TT_ALPHA_NEG tune_se_tt_alpha_neg
 #define IIR_MIN_DEPTH tune_iir_min_depth
 #define ASPIRATION_WINDOW tune_aspiration_window
-#define DELTA_MARGIN tune_delta_margin
 #define CAPTURE_HISTORY_DIVISOR tune_capture_history_divisor
 #define PROBCUT_MIN_DEPTH tune_probcut_min_depth
 #define PROBCUT_MARGIN tune_probcut_margin

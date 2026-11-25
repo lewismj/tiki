@@ -19,35 +19,19 @@
 verify_config_t verify_cfg = { .sample = 16, .skip_ply = -1, .rng = 0x9E3779B97F4A7C15ULL };
 verify_tt_counts_t verify_tt;
 verify_class_counts_t verify_classes[vf_count];
-verify_rule_t verify_delta_rule = { .name = "delta pruning: captures that give check" };
-verify_rule_t verify_lmp_rule = { .name = "late move pruning: quiet moves that give check" };
 
 static bool ref_in_check(board_t* board);
 int verify_node_search(board_t* board, search_state_t* search_state, limits_t* limits, int alpha, int depth);
 
-void verify_rule_record(verify_rule_t* rule, bool exempted, void* board_ptr, uint32_t move) {
-    board_t* board = board_ptr;
-    rule->old_prunes++;
-    rule->exempted += exempted;
-    if (!make_move(board, move)) {
-        pop_move(board);
-        rule->illegal++;
-        return;
-    }
-    const bool check = ref_in_check(board);
-    pop_move(board);
-    if (check != exempted) rule->wrong++;
-}
-
 static const char* const feature_names[vf_count] = {
     "RFP", "null move", "ProbCut", "multi-cut", "futility", "LMP (first)", "SEE pruning", "history pruning",
-    "LMR fail low", "LMR fail low cut", "SE reduce", "qs losing caps", "delta pruning",
-    "IIR (changed)", "SE ext (changed)", "check ext (chg)",
+    "LMR fail low", "LMR fail low cut", "SE reduce", "qs losing caps", "qs futility", "qs move count", "qs evasions",
+    "IIR (changed)", "SE ext (changed)",
 };
 
 /* qsearch decisions have no depth, they're counted at depth 0 (printed 'q'). */
 static bool is_qsearch_feature(int f) {
-    return f == vf_qs_bad || f == vf_delta;
+    return f == vf_qs_bad || f == vf_qs_futility || f == vf_qs_count || f == vf_qs_evasion;
 }
 
 #define VERIFY_LOG_MAX 50000
@@ -383,17 +367,6 @@ static void print_decisions(uint64_t total_nodes) {
            verify_tt.kept_deeper_new_move, 100.0 * (double) verify_tt.kept_deeper_new_move / saves);
 }
 
-static void print_rules(void) {
-    const verify_rule_t* rules[] = { &verify_delta_rule, &verify_lmp_rule };
-    for (size_t i = 0; i < sizeof(rules) / sizeof(rules[0]); i++) {
-        const verify_rule_t* r = rules[i];
-        if (!r->old_prunes) continue;
-        printf("\nRule %s: old rule pruned %" PRIu64 ", now searched %" PRIu64 " (%.2f%%), decided wrong %" PRIu64
-               " (must be 0), illegal %" PRIu64 "\n", r->name, r->old_prunes, r->exempted,
-               100.0 * (double) r->exempted / (double) r->old_prunes, r->wrong, r->illegal);
-    }
-}
-
 static void print_classes(void) {
     static const char* const class_names[vc_count] = { "node", "check", "capture", "quiet" };
     printf("\nWrong decisions by what was skipped (counts of wrong decisions; see verify.h for the kinds)\n");
@@ -608,7 +581,6 @@ int verify_main(int argc, char* argv[]) {
         printf("decisions depth %d, %d positions, %" PRIu64 " nodes (checks included)\n", depth, count, nodes);
         print_decisions(nodes);
         print_classes();
-        print_rules();
     } else {
         usage();
         failures = 1;

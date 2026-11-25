@@ -2,11 +2,10 @@
 #define TIKI_QUIET_HISTORY_H
 
 /**
- * Quiet move history, killers, counter moves, the node cache and the opponent's threat squares, in
- * the reference engine's layout and units (tiki-analysis/port-spec-history-2026-11-25.md). Counters
- * are int16 in "history units" with gravity 16384, so every constant on them is the reference's
- * value; only inputs in eval units are converted (x 0.60, tiki cp per reference eval unit, measured
- * on raw static evals). The capture history is tiki's (search_state.h) until it is ported too.
+ * Quiet move history, killers, counter moves, the node cache and the opponent's threat squares.
+ * Counters are int16 in "history units" with gravity 16384; constants on them are in those units,
+ * inputs in eval units (score differences) are in cp. The capture history is separate
+ * (search_state.h).
  *
  * Piece types are 0..5 (pawn .. king, get_piece_moved % 6); "piece-to" is type * 64 + target square.
  */
@@ -50,7 +49,7 @@ typedef struct {
     uint32_t node_cache_generation;
 } quiet_history_t;
 
-/* The opponent's attacks (reference Position.cpp:912-944): by pawns; by pawns and minors; by pawns,
+/* The opponent's attacks: by pawns; by pawns and minors; by pawns,
  * minors and rooks; and every square they attack. The side to move's king isn't an obstacle for
  * their sliders. */
 typedef struct {
@@ -86,8 +85,8 @@ static inline_always bool is_quiet_move(move_t mv) { return !get_capture_flag(mv
 
 /**
  * What a node needs to score and update quiet moves, found once per node: its side, threats,
- * continuation rows for the moves 1..6 plies back (reference MoveOrderer.cpp:158-176: none past the
- * root, NULL for a null move), its pawn history row and node cache entry.
+ * continuation rows for the moves 1..6 plies back (none past the root, NULL for a null move), its
+ * pawn history row and node cache entry.
  */
 typedef struct {
     quiet_history_t* tables;
@@ -113,7 +112,7 @@ static inline_always void cont_rows_at(quiet_history_t* tables, int side, int pl
     }
 }
 
-/* The node cache entry of a position (reference NodeCache.cpp:133-156): its own entry, else a new one
+/* The node cache entry of a position: its own entry, else a new one
  * in a slot not used by this search, else none. */
 static inline_always node_cache_entry_t* node_cache_entry(quiet_history_t* tables, uint64_t key) {
     node_cache_entry_t* entry = &tables->node_cache[key % NODE_CACHE_SIZE];
@@ -130,7 +129,7 @@ static inline_always node_cache_entry_t* node_cache_entry(quiet_history_t* table
     return NULL;
 }
 
-/* Nodes a move's search took (reference NodeCache.cpp:58-104): added to its slot, or replacing the
+/* Nodes a move's search took: added to its slot, or replacing the
  * least visited slot that took fewer nodes than this. */
 static inline_always void node_cache_add(node_cache_entry_t* entry, move_t mv, uint64_t nodes) {
     uint64_t min_nodes = UINT64_MAX;
@@ -181,8 +180,8 @@ static inline_always int16_t* main_history_entry(const quiet_ctx_t* q, move_t mv
     return &q->tables->main[q->side][(q->threats.all >> from) & 1][(q->threats.all >> to) & 1][from * 64 + to];
 }
 
-/* The history value the reductions and the move loop's pruning read (reference Search.cpp:1956-1963):
- * main + continuation 1, 2 and 4 plies back. */
+/* The history value the reductions and the move loop's pruning read: main + continuation 1, 2 and 4
+ * plies back. */
 static inline_always int quiet_stat(const quiet_ctx_t* q, move_t mv) {
     const int pt = piece_to(mv);
     int stat = *main_history_entry(q, mv);
@@ -192,7 +191,7 @@ static inline_always int quiet_stat(const quiet_ctx_t* q, move_t mv) {
     return stat;
 }
 
-/* A quiet move's (or underpromotion's) ordering score (reference MoveOrderer.cpp:422-465). */
+/* A quiet move's (or underpromotion's) ordering score. */
 static inline_always int quiet_order_score(const quiet_ctx_t* q, move_t mv) {
     const int pt = piece_to(mv);
     const bitboard from = 1ULL << get_source_square(mv), to = 1ULL << get_target_square(mv);
@@ -230,13 +229,13 @@ static inline_always int quiet_order_score(const quiet_ctx_t* q, move_t mv) {
     return score;
 }
 
-/* reference MoveOrderer.cpp:245-254 */
+/* A history counter moved by 'delta', less the more it already is (gravity HISTORY_GRAVITY). */
 static inline_always void history_counter_update(int16_t* counter, int delta) {
     const int v = *counter;
     *counter = (int16_t) (v + delta - v * (delta < 0 ? -delta : delta) / HISTORY_GRAVITY);
 }
 
-/* Continuation rows of a node, each by its weight (reference MoveOrderer.cpp:256-266). */
+/* Continuation rows of a node, each by its weight. */
 static inline_always void cont_history_update(piece_to_history_t* const rows[CONT_PLIES], move_t mv, int delta) {
     const int pt = piece_to(mv);
     if (rows[0]) history_counter_update(&(*rows[0])[pt], delta);
@@ -249,11 +248,11 @@ static inline_always void cont_history_update(piece_to_history_t* const rows[CON
 static inline_always int min_int(int a, int b) { return a < b ? a : b; }
 
 /**
- * A node failed high with a quiet best move (reference MoveOrderer.cpp:269-325): its counter move is
+ * A node failed high with a quiet best move: its counter move is
  * stored; then, unless the update is uncertain (one quiet tried at depth < 2), the best move gets the
  * bonus and every other quiet tried the malus, in the main, pawn and continuation histories. The
  * sizes grow with depth and with how far the score beat beta ('score_diff', cp, at most
- * HIST_SCORE_DIFF_MAX); the score diff terms are per cp in 1/64 (reference per eval unit / 0.60).
+ * HIST_SCORE_DIFF_MAX); the score diff terms are per cp in 1/64.
  */
 static inline_always void quiet_history_update(const quiet_ctx_t* q, const move_t* tried, int count, move_t best,
                                                int depth, int score_diff) {
@@ -283,12 +282,12 @@ static inline_always move_t counter_move(const quiet_ctx_t* q) {
     return q->prev_move ? q->tables->counter[q->side][piece_type(q->prev_move)][get_target_square(q->prev_move)] : 0;
 }
 
-/* Every counter of a table to 'value' (reference MoveOrderer.cpp:198-216). */
+/* Every counter of a table to 'value'. */
 static inline_always void fill_history(int16_t* table, size_t count, int16_t value) {
     for (size_t i = 0; i < count; i++) table[i] = value;
 }
 
-/* 'ucinewgame' (reference MoveOrderer.cpp:204-216, NodeCache::Reset). */
+/* 'ucinewgame': the histories to their start values, counter moves and the node cache cleared. */
 static inline_always void quiet_history_clear(quiet_history_t* tables) {
     fill_history(&tables->main[0][0][0][0], sizeof(tables->main) / sizeof(int16_t), (int16_t) HIST_CLEAR_MAIN);
     fill_history(&tables->pawn[0][0][0], sizeof(tables->pawn) / sizeof(int16_t), (int16_t) HIST_CLEAR_PAWN);
@@ -298,7 +297,7 @@ static inline_always void quiet_history_clear(quiet_history_t* tables) {
     tables->node_cache_generation = 0;
 }
 
-/* Each 'go' (reference MoveOrderer.cpp:184-196, NodeCache::OnNewSearch): main and pawn history x 7/8,
+/* Each 'go': main and pawn history x 7/8,
  * continuation history kept, a new node cache generation. */
 static inline_always void quiet_history_new_search(quiet_history_t* tables) {
     int16_t* m = &tables->main[0][0][0][0];
