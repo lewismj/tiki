@@ -304,7 +304,10 @@ void test_search_stores_exact_root() {
     TEST_ASSERT_TRUE(tt_load(board.hash, &data));
     TEST_ASSERT_EQUAL_INT(tt_exact, tt_data_type(data));
     TEST_ASSERT_EQUAL_UINT32(search_state.pv_table[0][0], tt_data_move(data));
-    TEST_ASSERT_EQUAL_INT(score, tt_probe(board.hash, 3, 0, -INF, INF, &tt_move));
+    /* Saved at the node's depth when its search ended: a ply less once alpha was raised above depth 2. */
+    const int saved_depth = tt_data_depth(data);
+    TEST_ASSERT_TRUE(saved_depth == 3 || saved_depth == 2);
+    TEST_ASSERT_EQUAL_INT(score, tt_probe(board.hash, saved_depth, 0, -INF, INF, &tt_move));
 }
 
 void test_search_mate_score_with_warm_tt() {

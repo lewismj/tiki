@@ -6,7 +6,7 @@
 a 16 MB TT cleared before each, and prints the total nodes and nodes per second.
 
 - The node count changes only when the search or the network does, so it's a signature for changes that shouldn't
-  change behaviour. With `models/tiki-2026-11-21.nnue` it's **718,236** (network format version 6), the same
+  change behaviour. With `models/tiki-2026-11-21.nnue` it's **256,480** (network format version 6), the same
   at every CPU level.
 - Timings vary between runs, so only compare times from back-to-back runs on an idle machine.
 - `build/engine/benchmark/tiki_benchmark` runs Google Benchmark micro-benchmarks of evaluation, move generation,
@@ -39,7 +39,7 @@ reference machine. Workers build with the root `Makefile` ([building.md](buildin
 ## SPSA tuning
 
 `TUNE=1` (CMake `-DTIKI_TUNE=ON`) turns the search parameters in `engine/core/src/tune.h` into variables, each with a
-UCI option of its name (`RFP_MARGIN`, `LMR_BASE`, `TM_SOFT_PERCENT`, ...), and `tiki tune` prints OpenBench's SPSA
+UCI option of its name (`RFP_MARGIN`, `LMR_QUIET_SCALE`, `TM_SOFT_PERCENT`, ...), and `tiki tune` prints OpenBench's SPSA
 input for them (name, type, value, min, max, C_end, R_end). A normal build keeps them as constants. OpenBench can't
 pass `TUNE=1`, so a tune runs from a branch that has it:
 

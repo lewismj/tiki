@@ -6,6 +6,7 @@
 #include <stdatomic.h>
 #include "search_constants.h"
 #include "nnue/nnue.h"
+#include "quiet_history.h"
 
 static_assert(NNUE_STACK_SIZE > MAX_PLY + 1, "the NNUE stack must hold the deepest search path");
 
@@ -94,12 +95,12 @@ typedef struct {
     /* Moves searched at nodes entered with depth 2-4, by [depth - 2][kind: TT or first move, check, good
      * capture or promotion, killer, bad capture, other quiet][full depth, reduced]. */
     uint64_t move_kind[3][6][2];
-    /* Move ordering diagnostic (stat_order_cut, stat_order_loop_end), singular searches left out. By
-     * [depth band 1-3, 4-6, 7+]: move loops by the node's expected type [PV or all node, cut node],
-     * those that cut off and those cut by the first move searched; the cutting move's ordering band
-     * [TT or PV move, good capture or queen promotion, killer 1, killer 2, quiet, losing capture];
-     * the nodes the move loops took [didn't cut off, cut off] and, of the ones that cut off, the
-     * nodes spent on the moves searched before the cutting move (by depth band and by its band). */
+    /* Move ordering (stat_order_cut, stat_order_loop_end), singular searches left out. By [depth
+     * band 1-3, 4-6, 7+]: move loops by the node's expected type [PV or all node, cut node], those
+     * that cut off and those cut by the first move searched; the cutting move's ordering band [TT or
+     * PV move, good capture or queen promotion, killer, counter move, quiet, losing capture]; the
+     * nodes the move loops took [didn't cut off, cut off] and, of the ones that cut off, the nodes
+     * spent on the moves searched before the cutting move (by depth band and by its band). */
     uint64_t ord_loops[3][2];
     uint64_t ord_cuts[3][2];
     uint64_t ord_first[3][2];
@@ -107,75 +108,12 @@ typedef struct {
     uint64_t ord_loop_nodes[3][2];
     uint64_t ord_wasted[3];
     uint64_t ord_wasted_band[6];
-    /* History weighting diagnostic (stat_order_cut), the same quiet-band cutoffs and candidates: the
-     * cutting move's rank among the quiet-band moves by [depth band][order: as ordered, main history
-     * only, continuation 1 ply back only, 2 only, 4 only, the three continuations, main + 2 * ply 1
-     * + 2 * ply 2 + ply 4], from the history values when the moves were scored. The sum of ranks
-     * (mean), ranks 1..31 and 32+ (median), the rank buckets 1, 2, 3-4, 5-8, 9+, and against the
-     * order as it is: cutters ranked higher, lower, 4+ places higher, 4+ places lower. 'ordh_missing':
-     * cutoffs left out, a candidate's values not found (shouldn't happen). */
-    uint64_t ordh_cuts[3];
-    uint64_t ordh_rank_sum[3][7];
-    uint64_t ordh_rank_hist[3][7][32];
-    uint64_t ordh_bucket[3][7][5];
-    uint64_t ordh_up[3][7];
-    uint64_t ordh_down[3][7];
-    uint64_t ordh_up4[3][7];
-    uint64_t ordh_down4[3][7];
-    uint64_t ordh_missing;
-    /* Main vs continuation history at the same cutoffs, by [depth band][main history alone ranks the
-     * cutting move in the top 3][the three continuations alone do]: cutoffs, and the sum of its
-     * rank as ordered. */
-    uint64_t ordh_agree[3][2][2];
-    uint64_t ordh_agree_rank[3][2][2];
-    /* History updates (stat_history_update), by the node's depth (1..11, [12] 12+): bonuses (a quiet
-     * move raised alpha), those that didn't cut off, maluses; the nominal sizes and the main history's
-     * actual change (gravity shrinks it near the bound). And the maluses at a quiet cutoff, by [depth
-     * band][0, 1, 2, 3-4, 5-8, 9+]. */
-    uint64_t upd_bonus[13];
-    uint64_t upd_bonus_no_cut[13];
-    uint64_t upd_malus[13];
-    uint64_t upd_nominal[13];
-    uint64_t upd_actual[13];
-    uint64_t upd_malus_per_cut[3][6];
-    /* Update rules: the same cutoffs and candidates ranked by a shadow main history (STAT_SHADOWS,
-     * learnt from the same search events by another rule) plus the continuation history, by [depth
-     * band][order: as ordered, then shadow 0..4], as ordh_*: rank sum, buckets, higher / lower. */
-    uint64_t ordu_rank_sum[3][6];
-    uint64_t ordu_bucket[3][6][5];
-    uint64_t ordu_up[3][6];
-    uint64_t ordu_down[3][6];
 } search_stats_t;
-
-/* Shadow main history tables (statistics only, the search doesn't read them), each learnt by
- * another update rule from the same bonuses and maluses: 0 the engine's rule (a check: it must rank
- * as the engine does), 1 a linear bonus min(100 * depth, HIST_BONUS_MAX), 2 no malus, 3 half the
- * malus, 4 a bonus only for a move that cut off (not one that only raised alpha). */
-#define STAT_SHADOWS 5
 
 /* Only 64-bit counters, so the bench can sum two of them word by word. */
 static_assert(sizeof(search_stats_t) % sizeof(uint64_t) == 0, "search_stats_t holds uint64_t counters only");
 #endif
 
-
-/**
- * Continuation history: how good a quiet move has been as a follow-up to the move made 1, 2 and 4
- * plies before it (the opponent's last move, our previous one, our one before that),
- * [ply back index][that move's key][this move's key], a key being piece * 64 + target square (piece
- * with its colour). Within +-HISTORY_MAX, updated with the history's bonus and malus. Kept for the
- * game (cleared by 'ucinewgame', not aged between moves: it's far sparser than the history, so
- * halving it every move would keep it near zero). 3.5 MB, so it's kept outside the search state:
- * main_cont_history for the main search, each Lazy SMP helper allocates its own.
- */
-#define CONT_PLIES 3
-#define CONT_KEYS (12 * 64)
-static inline_always int cont_ply_back(int i) { return i == 2 ? 4 : i + 1; } /* 1, 2, 4 */
-typedef int16_t cont_history_t[CONT_PLIES][CONT_KEYS][CONT_KEYS];
-extern cont_history_t main_cont_history;
-/* quiet_history (search.c) sums the history and CONT_PLIES continuation entries: ordered by the sum /
- * this, which keeps quiet moves inside their band (within +-HISTORY_MAX, under the killers). */
-#define QUIET_ORDER_DIVISOR (CONT_PLIES + 1)
-static_assert((CONT_PLIES + 1) * HISTORY_MAX / QUIET_ORDER_DIVISOR <= HISTORY_MAX, "quiet moves stay in their band");
 
 /**
  * Correction history: how far the search's scores have come out from the static eval in positions
@@ -192,6 +130,7 @@ static_assert((CONT_PLIES + 1) * HISTORY_MAX / QUIET_ORDER_DIVISOR <= HISTORY_MA
 #define CORR_TABLES 3
 typedef _Atomic int16_t corr_history_t[2][CORR_TABLES][CORR_SIZE];
 extern corr_history_t main_corr_history;
+extern quiet_history_t main_quiet_history;
 
 typedef struct align {
     /*
@@ -202,15 +141,14 @@ typedef struct align {
     uint64_t repetition_check[MAX_MOVES];
     int16_t repetition_distance[MAX_MOVES]; /* Per entry of repetition_check, see find_repetition. */
     uint32_t pv_table[MAX_PLY][MAX_PLY];
-    int32_t history_moves[12][64];
     int32_t capture_history[12][64][6]; /* [moving piece][target square][captured piece type], see score_move. */
-    uint32_t killer_moves[2][MAX_PLY];
+    uint32_t killer_moves[MAX_PLY + 1]; /* One per ply (quiet_history.h), the next ply's cleared at node entry. */
     uint32_t excluded_moves[MAX_PLY]; /* The TT move a singular extension search leaves out at this ply (0: none). */
     int static_evals[MAX_PLY];        /* The network's eval at each ply of the search path, -INF in check (improving). */
     uint8_t nmp_min_ply;              /* No null move below this ply (0: none), during a null move verification. */
     uint32_t path_moves[MAX_PLY];     /* The move made at each ply of the search path (0: a null move), set before */
                                       /* its child is searched (continuation history).                             */
-    cont_history_t* cont_history;     /* See cont_history_t. */
+    quiet_history_t* quiet;           /* Quiet history, counter moves, node cache (quiet_history.h). */
     corr_history_t* corr_history;     /* See corr_history_t. */
     uint8_t pv_length[MAX_PLY];
     uint64_t nodes;
@@ -219,7 +157,6 @@ typedef struct align {
     uint64_t root_search_start; /* ...and 'nodes' when that root search started (re-searches start again). */
 #ifdef TIKI_SEARCH_STATS
     search_stats_t stats;
-    int32_t stat_shadow_history[STAT_SHADOWS][12][64];   /* See STAT_SHADOWS. */
 #endif
     uint8_t ply;
     uint8_t root_depth;        /* Depth of the iteration being searched, bounds the singular extensions. */
@@ -249,38 +186,21 @@ static inline_always void clear_search_tables(search_state_t* search_state) {
 }
 
 /**
- * History is kept from move to move in a game, halved before each search so older results fade.
- * Keeping it unchanged lost Elo (SPRT -16 +- 9, before the scaled bonus). Halving it against
- * clearing it: +4.7 +- 5.6 after 5960 games, stopped at LLR 1.23 [0, 5] (kept as not a loss).
+ * Before each search: the quiet history ages by the reference's rule (quiet_history_new_search);
+ * the capture history is halved (tiki's rule, until it's ported too).
  */
-#ifdef TIKI_SEARCH_STATS
-/* Stats builds: the quarters of the history kept before each search, 2 (halved) unless the bench
- * says otherwise (TIKI_BENCH_AGE, bench.c). The capture history is halved regardless. */
-extern int stat_history_age_quarters;
-#endif
 static inline_always void age_history(search_state_t* search_state) {
-    int32_t* h = &search_state->history_moves[0][0];
-#ifdef TIKI_SEARCH_STATS
-    const int quarters = stat_history_age_quarters;
-    for (size_t i = 0; i < sizeof(search_state->history_moves) / sizeof(*h); i++)
-        h[i] = quarters == 2 ? h[i] / 2 : h[i] * quarters / 4;
-    /* The shadow tables are aged as the history is. */
-    int32_t* sh = &search_state->stat_shadow_history[0][0][0];
-    for (size_t i = 0; i < sizeof(search_state->stat_shadow_history) / sizeof(*sh); i++)
-        sh[i] = quarters == 2 ? sh[i] / 2 : sh[i] * quarters / 4;
-#else
-    for (size_t i = 0; i < sizeof(search_state->history_moves) / sizeof(*h); i++) h[i] /= 2;
-#endif
+    quiet_history_new_search(search_state->quiet);
     int32_t* c = &search_state->capture_history[0][0][0];
     for (size_t i = 0; i < sizeof(search_state->capture_history) / sizeof(*c); i++) c[i] /= 2;
 }
 
-/* A new search state (as 'ucinewgame') using 'table' for its continuation history, cleared, and the
+/* A new search state (as 'ucinewgame') using 'table' for its quiet history, cleared, and the
  * shared correction history, 'corrections', as it is (shared, so init_search_state clears it). */
-static inline_always void init_search_state_with(search_state_t* search_state, cont_history_t* table,
+static inline_always void init_search_state_with(search_state_t* search_state, quiet_history_t* table,
                                                  corr_history_t* corrections) {
-    search_state->cont_history = table;
-    memset(*table, 0, sizeof(cont_history_t));
+    search_state->quiet = table;
+    quiet_history_clear(table);
     search_state->corr_history = corrections;
     search_state->corr_shared = false;
     search_state->nodes = 0;
@@ -289,7 +209,6 @@ static inline_always void init_search_state_with(search_state_t* search_state, c
     search_state->root_search_start = 0;
 #ifdef TIKI_SEARCH_STATS
     memset(&search_state->stats, 0, sizeof(search_state->stats));
-    memset(search_state->stat_shadow_history, 0, sizeof(search_state->stat_shadow_history));
 #endif
     search_state->thread_id = 0;
     atomic_init(&search_state->shared_nodes, 0);
@@ -301,7 +220,6 @@ static inline_always void init_search_state_with(search_state_t* search_state, c
     search_state->score_pv = false;
     search_state->follow_pv = true;
     clear_search_tables(search_state);
-    memset(search_state->history_moves, 0, sizeof (search_state->history_moves));
     memset(search_state->capture_history, 0, sizeof (search_state->capture_history));
     memset(search_state->repetition_check, 0ULL, sizeof(search_state->repetition_check));
     nnue_stack_init(&search_state->nnue);
@@ -311,7 +229,7 @@ static inline_always void init_search_state_with(search_state_t* search_state, c
  * both cleared. */
 static inline_always void init_search_state(search_state_t* search_state) {
     memset(main_corr_history, 0, sizeof(corr_history_t));
-    init_search_state_with(search_state, &main_cont_history, &main_corr_history);
+    init_search_state_with(search_state, &main_quiet_history, &main_corr_history);
 }
 
 /* Before each search ('go'). The game history from 'position' is kept for the repetition checks. */

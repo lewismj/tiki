@@ -81,23 +81,21 @@ move_t first_legal_move(board_t* board);
 /* The only legal move, 0 if there are none or more than one (find_best_move plays it at once on the clock). */
 move_t only_legal_move(board_t* board);
 
-/* Move ordering score: TT move, PV move, winning captures, killers, history, losing captures. */
+/* Move ordering score: TT move, PV move, winning captures, killer, counter move, quiet moves, losing
+ * captures, underpromotions (the node's quiet context from the search state's path). */
 int score_move(move_t move, move_t tt_move, board_t* board, search_state_t* search_state);
-/* Scores all of a node's moves, then clears the PV flag so it only ever applies to this node. */
-void score_moves(const move_buffer_t* buffer, int* scores, move_t tt_move, board_t* board, search_state_t* search_state);
+/* Scores all of a node's moves ('qc': its quiet context, NULL if no quiet moves are scored), then
+ * clears the PV flag so it only ever applies to this node. */
+void score_moves(const move_buffer_t* buffer, int* scores, move_t tt_move, board_t* board, search_state_t* search_state,
+                 const quiet_ctx_t* qc);
 
 /* Selection sort one step: swap the best scored move from i onwards into i and return it. */
 move_t pick_next_move(move_buffer_t* buffer, int* scores, int i);
 
-/* Quiet move raised alpha, the history_bonus with gravity, bounded by HISTORY_MAX. */
-void update_history(search_state_t* search_state, move_t mv, int depth);
-void penalise_history(search_state_t* search_state, move_t mv, int depth);
 /* Capture history: a capture caused a cutoff, or was searched before the move that did ('board' is
- * the position the capture is made from). The same bonus and gravity as quiet history. */
+ * the position the capture is made from), capture_history_bonus with gravity. */
 void update_capture_history(search_state_t* search_state, const board_t* board, move_t mv, int depth);
 void penalise_capture_history(search_state_t* search_state, const board_t* board, move_t mv, int depth);
-/* Non-capture caused a cutoff, the first killer at this ply (the old first becomes the second). */
-void store_killer(search_state_t* search_state, move_t mv);
 
 /* Fifty-move rule (unless the last move mated), insufficient material or repetition. */
 bool is_draw(board_t* board, search_state_t* search_state);
@@ -112,21 +110,17 @@ bool can_null_move(const board_t* board, const search_state_t* search_state, int
 int null_move_depth(int depth, int static_eval, int beta);
 bool can_reverse_futility_prune(int depth, int static_eval, int beta, bool in_check, bool is_pv_node, int ply,
                                 int margin);
-int rfp_margin(int depth, bool improving);
-bool is_futile(int depth, int static_eval, int alpha, bool in_check, bool is_pv_node);
-bool can_late_move_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node, bool improving);
-bool can_see_prune(int depth, int moves_searched, int alpha, bool in_check, bool is_pv_node);
-int see_prune_threshold(int depth, bool is_quiet);
-bool can_reduce(int depth, int moves_searched, bool is_quiet, bool gives_check, bool in_check, bool is_killer,
-                bool is_bad_capture);
-bool can_history_prune(int depth, int history, int moves_searched, int alpha, bool in_check, bool is_pv_node,
-                       bool is_killer);
-/* A quiet move's history at the node: its history plus its continuation history after the moves 1, 2
- * and 4 plies back (search_state->path_moves, those there are). */
-int quiet_history(const search_state_t* search_state, move_t mv);
-int lmr_reduction(int depth, int moves_searched, bool is_pv_node, int history, bool cut_node, bool improving);
-int lmr_reduction_full(int depth, int moves_searched, bool is_pv_node, int history, bool cut_node, bool improving,
-                       bool gives_check);
+int rfp_margin(int depth, bool improving_safe, bool opp_worsening, bool tt_hit);
+int rfp_score(int static_eval, int beta);
+bool opp_can_win_material(const board_t* board);
+bool is_opp_worsening(int raw_eval, int parent_raw_eval);
+int lmr_depth_estimate(int depth, int moves_made, bool is_quiet);
+int lmp_threshold(int depth, bool improving);
+int history_prune_threshold(int lmr_depth);
+int futility_margin(int lmr_depth, int stat);
+int ref_capture_class(const board_t* board, move_t mv);
+int lmr_reduction(int depth, int move_number, int ply, bool is_pv_node, bool cut_node, bool improving, bool gives_check,
+                  bool is_quiet, int stat, bool tt_capture, bool refutation, int capture_class, bool tt_deep);
 /* Correction history (corr_history_t): the correction to the position's static eval, within
  * +-CORR_MAX, and an update moving it towards 'error' (score - corrected eval) at this depth. */
 int eval_correction(const board_t* board, const search_state_t* search_state);

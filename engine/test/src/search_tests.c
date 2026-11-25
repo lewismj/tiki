@@ -1,3 +1,4 @@
+#include <math.h>
 #include "unity.h"
 #include "search_tests.h"
 
@@ -10,6 +11,7 @@
 #include "../../core/src/uci.h"
 #include "../../core/src/bench.h"
 #include "../../core/src/see.h"
+#include "../../core/src/ref_see.h"
 #include "../../core/src/tune.h"
 
 
@@ -77,6 +79,291 @@ void test_mvv_lva_range_matches_constants() {
     TEST_ASSERT_EQUAL_INT(MVV_LVA_MAX, highest);
 }
 
+/* Unit A test helpers: a node's quiet context at the search state's ply, and a quiet move's main, pawn and
+ * continuation entries set to 'value'. */
+static quiet_ctx_t test_ctx(search_state_t* search_state, board_t* board) {
+    return quiet_ctx(search_state->quiet, board, search_state->ply, search_state->path_moves, false);
+}
+
+static void set_quiet_history(search_state_t* search_state, board_t* board, move_t mv, int16_t value) {
+    const quiet_ctx_t qc = test_ctx(search_state, board);
+    *main_history_entry(&qc, mv) = value;
+    (*qc.pawn)[piece_to(mv)] = value;
+    for (int i = 0; i < CONT_PLIES; i++)
+        if (qc.cont[i]) (*qc.cont[i])[piece_to(mv)] = value;
+}
+
+void test_quiet_history_update() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+    setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, 1);
+    const move_t best = parse_move("g1f3", &board), other = parse_move("a2a3", &board);
+    const move_t tried[2] = { other, best };
+    const quiet_ctx_t qc = test_ctx(&search_state, &board);
+    /* Depth 5, no score difference: main and pawn bonus min(-113 + 164 * 5, 2178) = 707, malus
+     * -min(-51 + 160 * 5, 1844) = -749. From the cleared 802: 802 + 707 - 802 * 707 / 16384 = 1475 and
+     * 802 - 749 - 802 * 749 / 16384 = 17; the pawn history from 0: 707 and -749. */
+    quiet_history_update(&qc, tried, 2, best, 5, 0);
+    TEST_ASSERT_EQUAL_INT(1475, *main_history_entry(&qc, best));
+    TEST_ASSERT_EQUAL_INT(17, *main_history_entry(&qc, other));
+    TEST_ASSERT_EQUAL_INT(707, (*qc.pawn)[piece_to(best)]);
+    TEST_ASSERT_EQUAL_INT(-749, (*qc.pawn)[piece_to(other)]);
+    /* The score difference: 64 cp adds HIST_BONUS_SCORE_DIFF (247) to the bonus: 954; capped at
+     * HIST_SCORE_DIFF_MAX by the caller. */
+    quiet_history_clear(search_state.quiet);
+    quiet_history_update(&qc, tried, 2, best, 5, 64);
+    TEST_ASSERT_EQUAL_INT(954, (*qc.pawn)[piece_to(best)]);
+    /* The bonus is capped: depth 20, min(-113 + 3280, 2178) = 2178. */
+    quiet_history_clear(search_state.quiet);
+    quiet_history_update(&qc, tried, 2, best, 20, 0);
+    TEST_ASSERT_EQUAL_INT(2178, (*qc.pawn)[piece_to(best)]);
+}
+
+void test_quiet_history_skips_uncertain_updates() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+    setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, 1);
+    const move_t best = parse_move("g1f3", &board);
+    const quiet_ctx_t qc = test_ctx(&search_state, &board);
+    /* One quiet move tried at depth 1: no update; at depth 2 it is updated. */
+    quiet_history_update(&qc, &best, 1, best, 1, 0);
+    TEST_ASSERT_EQUAL_INT(HIST_CLEAR_MAIN, *main_history_entry(&qc, best));
+    quiet_history_update(&qc, &best, 1, best, 2, 0);
+    TEST_ASSERT_TRUE(*main_history_entry(&qc, best) > HIST_CLEAR_MAIN);
+}
+
+void test_history_counter_gravity() {
+    /* v += d - v * |d| / 16384: 16000 + 2000 - 1953 = 16047, under the bound; and symmetric. */
+    int16_t v = 16000;
+    history_counter_update(&v, 2000);
+    TEST_ASSERT_EQUAL_INT(16047, v);
+    v = -16000;
+    history_counter_update(&v, -2000);
+    TEST_ASSERT_EQUAL_INT(-16047, v);
+    for (int i = 0; i < 1000; i++) history_counter_update(&v, -4000);
+    TEST_ASSERT_TRUE(v > -16384 - 4000 && v < -16000);
+}
+
+void test_cont_rows_follow_the_path() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+    /* Black to move at ply 3 after white e2e4 (ply 0), a null move (ply 1), white d2xd5 capture (ply 2). */
+    setup_position("rnbqkbnr/ppp1pppp/8/3P4/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2", &board, &search_state, &limits, 1);
+    const move_t pawn_e4 = encode_move(e2, e4, P, 0, 0, 1, 0, 0, 0);
+    const move_t xd5 = encode_move(e4, d5, P, 0, 1, 0, 0, 0, 0);
+    search_state.path_moves[0] = pawn_e4;
+    search_state.path_moves[1] = 0;
+    search_state.path_moves[2] = xd5;
+    piece_to_history_t* rows[CONT_PLIES];
+    cont_rows_at(search_state.quiet, black, 3, search_state.path_moves, rows);
+    /* 1 back: white's capture xd5 -> [captured][black][white][pawn][d5]; 2 back: the null move, none;
+     * 3 back: white's e4 -> [quiet][black][white][pawn][e4]; 4 back and further: before the root, none. */
+    TEST_ASSERT_TRUE(rows[0] == &search_state.quiet->cont[1][black][white][0][d5]);
+    TEST_ASSERT_NULL(rows[1]);
+    TEST_ASSERT_TRUE(rows[2] == &search_state.quiet->cont[0][black][white][0][e4]);
+    TEST_ASSERT_NULL(rows[3]);
+    TEST_ASSERT_NULL(rows[5]);
+}
+
+void test_quiet_stat_and_order_score() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+    setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, 1);
+    /* Ply 6 so every continuation row exists (the path: quiet moves of both sides). */
+    const move_t path[6] = { parse_move("g1f3", &board), encode_move(g8, f6, n, 0, 0, 0, 0, 0, 0),
+                             parse_move("b1c3", &board), encode_move(b8, c6, n, 0, 0, 0, 0, 0, 0),
+                             parse_move("a2a3", &board), encode_move(a7, a6, p, 0, 0, 0, 0, 0, 0) };
+    for (int i = 0; i < 6; i++) search_state.path_moves[i] = path[i];
+    search_state.ply = 6;
+    const move_t mv = parse_move("e2e4", &board);
+    const quiet_ctx_t qc = test_ctx(&search_state, &board);
+    *main_history_entry(&qc, mv) = 1000;
+    (*qc.pawn)[piece_to(mv)] = 400;
+    const int16_t c[6] = { 100, 200, 300, 400, 500, 600 };
+    for (int i = 0; i < 6; i++) (*qc.cont[i])[piece_to(mv)] = c[i];
+    /* stat: main + 1, 2 and 4 plies back = 1000 + 100 + 200 + 400. */
+    TEST_ASSERT_EQUAL_INT(1700, quiet_stat(&qc, mv));
+    /* order: main + pawn + c1 + c2 * 1019/1024 + c4 * 555/1024 + c6 * 582/1024 = 1000 + 400 + 100 + 199 + 216 + 341. */
+    TEST_ASSERT_EQUAL_INT(2256, quiet_order_score(&qc, mv));
+    search_state.ply = 0;
+}
+
+void test_threat_terms_in_quiet_order() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+    /* The white knight on d4 is attacked by the pawn on e5: leaving earns +4000; c3 -> b5 moves into
+     * the a6 pawn's attack (-4000). */
+    setup_position("4k3/8/p7/4p3/3N4/2N5/8/4K3 w - - 0 1", &board, &search_state, &limits, 1);
+    const quiet_ctx_t qc = test_ctx(&search_state, &board);
+    const move_t escape = parse_move("d4f3", &board), enter = parse_move("c3b5", &board), plain = parse_move("c3e2", &board);
+    TEST_ASSERT_EQUAL_INT(quiet_order_score(&qc, plain) + THREAT_ESCAPE_MINOR -
+                          (*main_history_entry(&qc, plain) - *main_history_entry(&qc, escape)),
+                          quiet_order_score(&qc, escape));
+    TEST_ASSERT_TRUE(quiet_order_score(&qc, enter) < quiet_order_score(&qc, plain) - THREAT_ENTER_MINOR / 2);
+    TEST_ASSERT_TRUE(qc.threats.pawns & (1ULL << d4));
+}
+
+void test_node_cache() {
+    quiet_history_t* tables = &main_quiet_history;
+    quiet_history_clear(tables);
+    tables->node_cache_generation = 1;
+    node_cache_entry_t* e = node_cache_entry(tables, 0x1234);
+    TEST_ASSERT_NOT_NULL(e);
+    node_cache_add(e, 11, 300);
+    node_cache_add(e, 22, 100);
+    node_cache_add(e, 11, 100);
+    TEST_ASSERT_EQUAL_UINT64(500, e->nodes_sum);
+    /* The same position finds it again; another one in the slot is refused in this generation, taken next. */
+    TEST_ASSERT_TRUE(node_cache_entry(tables, 0x1234) == e);
+    TEST_ASSERT_NULL(node_cache_entry(tables, 0x1234 + NODE_CACHE_SIZE));
+    tables->node_cache_generation = 2;
+    TEST_ASSERT_TRUE(node_cache_entry(tables, 0x1234 + NODE_CACHE_SIZE) == e);
+    TEST_ASSERT_EQUAL_UINT64(0, e->nodes_sum);
+    quiet_history_clear(tables);
+}
+
+void test_quiet_history_new_search() {
+    search_state_t search_state;
+    init_search_state(&search_state);
+    TEST_ASSERT_EQUAL_INT(HIST_CLEAR_MAIN, search_state.quiet->main[0][0][0][0]);
+    TEST_ASSERT_EQUAL_INT(HIST_CLEAR_CONT, search_state.quiet->cont[0][0][0][0][0][0]);
+    search_state.quiet->main[white][1][0][100] = 800;
+    search_state.quiet->pawn[black][7][50] = -400;
+    search_state.quiet->cont[0][white][black][1][10][20] = 1000;
+    search_state.killer_moves[3] = 77;
+    /* Before each 'go': main and pawn x 7/8, continuation kept, killers emptied. */
+    clear_pv_table(&search_state);
+    TEST_ASSERT_EQUAL_INT(700, search_state.quiet->main[white][1][0][100]);
+    TEST_ASSERT_EQUAL_INT(-350, search_state.quiet->pawn[black][7][50]);
+    TEST_ASSERT_EQUAL_INT(1000, search_state.quiet->cont[0][white][black][1][10][20]);
+    TEST_ASSERT_EQUAL_UINT32(0, search_state.killer_moves[3]);
+}
+
+void test_lmr_tables_match_reference() {
+    /* PLY_GRAIN * (bias + scale * ln d * ln m), truncated; the reference's log differs from libm's by ~1e-7. */
+    for (int d = 1; d < LMR_TABLE_SIZE; d += 7) {
+        for (int m = 1; m < LMR_TABLE_SIZE; m += 5) {
+            const double l = log((double) d) * log((double) m);
+            const int quiet = (int) (PLY_GRAIN * (LMR_QUIET_BIAS / 1000.0 + LMR_QUIET_SCALE / 1000.0 * l));
+            const int capture = (int) (PLY_GRAIN * (LMR_CAPTURE_BIAS / 1000.0 + LMR_CAPTURE_SCALE / 1000.0 * l));
+            TEST_ASSERT_INT_WITHIN(1, quiet, lmr_quiet_table[d][m]);
+            TEST_ASSERT_INT_WITHIN(1, capture, lmr_capture_table[d][m]);
+        }
+    }
+    TEST_ASSERT_EQUAL_INT(0, lmr_quiet_table[0][5]);
+    TEST_ASSERT_EQUAL_INT(0, lmr_capture_table[5][0]);
+}
+
+void test_lmr_reduction_terms() {
+    /* Quiet, depth 6, move 10, non-PV, cut node, not improving, stat 0: table + 240 + 2928 + 608 - 6877 / 15,
+     * rounded to the nearest ply. */
+    const int q = lmr_quiet_table[6][10];
+    int expected = (q + LMR_QUIET_NON_PV + LMR_QUIET_CUT_NODE + LMR_QUIET_NOT_IMPROVING - LMR_STAT_OFFSET / LMR_STAT_DIV +
+                    PLY_GRAIN / 2) / PLY_GRAIN;
+    TEST_ASSERT_EQUAL_INT(expected, lmr_reduction(6, 10, 4, false, true, false, false, true, 0, false, false, 0, false));
+    /* Each term moves it the reference's way: a refutation, a check, a deep TT entry less; a TT capture more. */
+    const int base = lmr_reduction(12, 20, 4, false, false, true, false, true, 0, false, false, 0, false);
+    TEST_ASSERT_TRUE(lmr_reduction(12, 20, 4, false, false, true, false, true, 0, false, true, 0, false) < base);
+    TEST_ASSERT_TRUE(lmr_reduction(12, 20, 4, false, false, true, true, true, 0, false, false, 0, false) < base);
+    TEST_ASSERT_TRUE(lmr_reduction(12, 20, 4, false, false, true, false, true, 0, true, false, 0, false) > base);
+    /* A good history reduces less: stat 15360 is a ply. */
+    TEST_ASSERT_EQUAL_INT(base - 1, lmr_reduction(12, 20, 4, false, false, true, false, true, LMR_STAT_DIV * PLY_GRAIN, false,
+                                                  false, 0, false));
+    /* Captures: the capture table, a winning capture less, at a cut node more. */
+    const int c = lmr_capture_table[8][12];
+    expected = (c - LMR_CAPTURE_WINNING + LMR_CAPTURE_CUT_NODE + PLY_GRAIN / 2) / PLY_GRAIN;
+    TEST_ASSERT_EQUAL_INT(expected, lmr_reduction(8, 12, 3, false, true, true, false, false, 0, false, false, 2, false));
+    /* PV nodes: PLY_GRAIN * depth / (1 + ply + depth) less. */
+    expected = (lmr_quiet_table[6][10] - LMR_STAT_OFFSET / LMR_STAT_DIV - PLY_GRAIN * 6 / (1 + 2 + 6) + PLY_GRAIN / 2) / PLY_GRAIN;
+    TEST_ASSERT_EQUAL_INT(expected, lmr_reduction(6, 10, 2, true, false, true, false, true, 0, false, false, 0, false));
+}
+
+void test_move_loop_pruning_thresholds() {
+    /* LMP: 4 + d^2 improving, 4 + d^2 / 2 not. */
+    TEST_ASSERT_EQUAL_INT(13, lmp_threshold(3, true));
+    TEST_ASSERT_EQUAL_INT(8, lmp_threshold(3, false));
+    /* History pruning: -234 * d - 148 * d^2. */
+    TEST_ASSERT_EQUAL_INT(-1060, history_prune_threshold(2));
+    /* Futility: 19.2 cp * d^2 + stat / 638 (reference 32 and 383 per unit, x 0.60). */
+    TEST_ASSERT_EQUAL_INT(76 + 1, futility_margin(2, 638));
+    /* The reduced depth estimate: quiet moves after the first, the quiet table's rounded reduction, at least 1. */
+    TEST_ASSERT_EQUAL_INT(7, lmr_depth_estimate(7, 0, true));
+    TEST_ASSERT_EQUAL_INT(7, lmr_depth_estimate(7, 5, false));
+    TEST_ASSERT_EQUAL_INT(7 - (lmr_quiet_table[7][6] + PLY_GRAIN / 2) / PLY_GRAIN, lmr_depth_estimate(7, 5, true));
+    TEST_ASSERT_EQUAL_INT(1, lmr_depth_estimate(2, 40, true));
+}
+
+void test_ref_see_pins_and_values() {
+    board_t board;
+    /* Rxe6: the e6 knight's defender d7 is pinned to e8 by b5, so it doesn't recapture: a knight won. */
+    parse_fen("4k3/3p4/4n3/1B6/8/8/8/4R1K1 w - - 0 1", &board);
+    TEST_ASSERT_TRUE(see_ge_ref(&board, parse_move("e1e6", &board), 0));
+    /* Without the pin the pawn recaptures: rook for knight. */
+    parse_fen("4k3/3p4/4n3/8/8/8/8/4R1K1 w - - 0 1", &board);
+    TEST_ASSERT_FALSE(see_ge_ref(&board, parse_move("e1e6", &board), 0));
+    /* Bishop for knight is even at the reference's values (300 each), losing at see.h's (330 vs 320). */
+    parse_fen("4k3/3p4/4n3/8/2B5/8/8/6K1 w - - 0 1", &board);
+    TEST_ASSERT_TRUE(see_ge_ref(&board, parse_move("c4e6", &board), 0));
+    TEST_ASSERT_FALSE(see_ge(&board, parse_move("c4e6", &board), 0));
+}
+
+void test_ref_capture_class() {
+    board_t board;
+    /* Nxe6 wins (knight below bishop), Bxe6 is good (even), Rxe6 with the pawn recapturing loses. */
+    parse_fen("4k3/3p4/4b3/2N5/8/8/8/4R1K1 w - - 0 1", &board);
+    TEST_ASSERT_EQUAL_INT(2, ref_capture_class(&board, parse_move("c5e6", &board)));
+    TEST_ASSERT_EQUAL_INT(0, ref_capture_class(&board, parse_move("e1e6", &board)));
+    parse_fen("4k3/3p4/4n3/8/2B5/8/8/6K1 w - - 0 1", &board);
+    TEST_ASSERT_EQUAL_INT(1, ref_capture_class(&board, parse_move("c4e6", &board)));
+    /* A promotion without a capture is below the good captures. */
+    parse_fen("4k3/P7/8/8/8/8/8/6K1 w - - 0 1", &board);
+    TEST_ASSERT_EQUAL_INT(0, ref_capture_class(&board, parse_move("a7a8q", &board)));
+}
+
+void test_killer_and_counter_scores() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+    setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, 1);
+    const move_t killer = parse_move("g1f3", &board), counter = parse_move("b1c3", &board), quiet = parse_move("a2a3", &board);
+    search_state.killer_moves[0] = killer;
+    /* The counter move answers the move that led here (none at the root): with a previous move it is
+     * stored at a fail high and scored just under the killer. */
+    search_state.path_moves[0] = encode_move(e7, e5, p, 0, 0, 1, 0, 0, 0);
+    search_state.ply = 1;
+    search_state.killer_moves[1] = killer;
+    const quiet_ctx_t qc = test_ctx(&search_state, &board);
+    quiet_history_update(&qc, &counter, 1, counter, 5, 0);
+    TEST_ASSERT_EQUAL_UINT32(counter, counter_move(&qc));
+    TEST_ASSERT_EQUAL_INT(KILLER_SCORE, score_move(killer, 0, &board, &search_state));
+    TEST_ASSERT_EQUAL_INT(COUNTER_SCORE, score_move(counter, 0, &board, &search_state));
+    TEST_ASSERT_TRUE(score_move(quiet, 0, &board, &search_state) < COUNTER_SCORE);
+    search_state.ply = 0;
+}
+
+void test_prior_counter_move_bonus() {
+    board_t board;
+    search_state_t search_state;
+    limits_t limits;
+    /* A fail low at a node raises the quiet move that led to it in the parent's continuation history:
+     * min(1200, 120 * depth - 100), weighted per ply back. */
+    setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, 1);
+    const move_t first = parse_move("g1f3", &board);
+    const move_t reply = encode_move(g8, f6, n, 0, 0, 0, 0, 0, 0);
+    search_state.path_moves[0] = first;
+    piece_to_history_t* rows[CONT_PLIES];
+    cont_rows_at(search_state.quiet, black, 1, search_state.path_moves, rows);
+    TEST_ASSERT_NOT_NULL(rows[0]);
+    const int before = (*rows[0])[piece_to(reply)];
+    cont_history_update(rows, reply, 5 * PRIOR_CMH_SCALE - PRIOR_CMH_BIAS);
+    TEST_ASSERT_EQUAL_INT(before + 500 - before * 500 / HISTORY_GRAVITY, (*rows[0])[piece_to(reply)]);
+}
+
 void test_pv_flag_applies_to_one_node() {
     board_t board;
     search_state_t search_state;
@@ -94,19 +381,20 @@ void test_pv_flag_applies_to_one_node() {
     TEST_ASSERT_TRUE(index >= 0);
 
     /* The PV move is also the TT move, so it's scored as the TT move and the flag isn't used... */
+    const quiet_ctx_t qc = test_ctx(&search_state, &board);
     search_state.pv_table[0][0] = pv_move;
     search_state.score_pv = true;
-    score_moves(&buffer, scores, pv_move, &board, &search_state);
+    score_moves(&buffer, scores, pv_move, &board, &search_state, &qc);
     TEST_ASSERT_EQUAL_INT(TT_MOVE_SCORE, scores[index]);
     TEST_ASSERT_FALSE(search_state.score_pv);
 
     /* ...and the next node to score the same move at this ply doesn't get it as the PV move. */
-    score_moves(&buffer, scores, 0, &board, &search_state);
-    TEST_ASSERT_TRUE(scores[index] < KILLER_2_SCORE);
+    score_moves(&buffer, scores, 0, &board, &search_state, &qc);
+    TEST_ASSERT_TRUE(scores[index] < COUNTER_SCORE);
 
     /* Flagged and not the TT move, it's scored as the PV move. */
     search_state.score_pv = true;
-    score_moves(&buffer, scores, 0, &board, &search_state);
+    score_moves(&buffer, scores, 0, &board, &search_state, &qc);
     TEST_ASSERT_EQUAL_INT(PV_MOVE_SCORE, scores[index]);
     TEST_ASSERT_FALSE(search_state.score_pv);
 }
@@ -132,21 +420,19 @@ void test_search_at_max_ply() {
 void test_search_tables_cleared_between_searches() {
     search_state_t search_state;
     init_search_state(&search_state);
-    search_state.history_moves[N][f3] = 123;
-    search_state.history_moves[n][c6] = -77;
-    search_state.killer_moves[0][3] = 77;
+    search_state.quiet->main[white][0][0][g1 * 64 + f3] = 1600;
+    search_state.killer_moves[3] = 77;
     search_state.pv_table[0][0] = 88;
 
-    /* Before each 'go': the path tables are emptied, history is halved. */
+    /* Before each 'go': the path tables are emptied, the main history x 7/8. */
     clear_pv_table(&search_state);
-    TEST_ASSERT_EQUAL_INT(61, search_state.history_moves[N][f3]);
-    TEST_ASSERT_EQUAL_INT(-38, search_state.history_moves[n][c6]);
-    TEST_ASSERT_EQUAL_UINT32(0, search_state.killer_moves[0][3]);
+    TEST_ASSERT_EQUAL_INT(1400, search_state.quiet->main[white][0][0][g1 * 64 + f3]);
+    TEST_ASSERT_EQUAL_UINT32(0, search_state.killer_moves[3]);
     TEST_ASSERT_EQUAL_UINT32(0, search_state.pv_table[0][0]);
 
-    /* A new game ('ucinewgame') starts with no history. */
+    /* A new game ('ucinewgame') starts from the cleared values. */
     init_search_state(&search_state);
-    TEST_ASSERT_EQUAL_INT(0, search_state.history_moves[N][f3]);
+    TEST_ASSERT_EQUAL_INT(HIST_CLEAR_MAIN, search_state.quiet->main[white][0][0][g1 * 64 + f3]);
 }
 
 void test_search_stalemate_root() {
@@ -223,8 +509,8 @@ void test_time_limit_stops_at_first_check() {
     search_state_t search_state;
     limits_t limits;
 
-    /* Already out of time, the first check (at 2048 nodes) stops the search. */
-    setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, 10);
+    /* Already out of time, the first check (at 2048 nodes) stops the search (deep enough not to finish first). */
+    setup_position("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board, &search_state, &limits, 40);
     limits.time_set = true;
     limits.stop_time = 0;
     limits.soft_stop_time = UINT64_MAX; /* Only the hard limit, the soft one would stop after depth 1. */
@@ -436,62 +722,7 @@ void test_null_move_verification_restores_state() {
     TEST_ASSERT_TRUE(score > 300);
 }
 
-void test_history_bonus_and_bound() {
-    search_state_t search_state;
-    init_search_state(&search_state);
-    const move_t mv = encode_move(g1, f3, N, 0, 0, 0, 0, 0, 0);
-    const int32_t* h = &search_state.history_moves[N][f3];
-    const int bonus_3 = HIST_BONUS_SCALE * 9;
-    const int bonus_10 = HIST_BONUS_SCALE * 100 < HIST_BONUS_MAX ? HIST_BONUS_SCALE * 100 : HIST_BONUS_MAX;
 
-    /* From zero the bonus is HIST_BONUS_SCALE * depth^2... */
-    update_history(&search_state, mv, 3);
-    TEST_ASSERT_EQUAL_INT(bonus_3, *h);
-
-    /* ...capped at HIST_BONUS_MAX (bonus_10: the bonus at depth 10, capped or not). */
-    search_state.history_moves[N][f3] = 0;
-    update_history(&search_state, mv, 10);
-    TEST_ASSERT_EQUAL_INT(bonus_10, *h);
-    search_state.history_moves[N][f3] = 0;
-    update_history(&search_state, mv, 40);
-    TEST_ASSERT_EQUAL_INT(HIST_BONUS_MAX, *h);
-
-    /* Deep, long searches saturate at HISTORY_MAX instead of growing without bound. */
-    for (int i = 0; i < 100000; i++) update_history(&search_state, mv, 40);
-    TEST_ASSERT_TRUE(*h <= HISTORY_MAX);
-    TEST_ASSERT_TRUE(*h > HISTORY_MAX * 9 / 10);
-
-    /* Near the bound the same bonus adds less than it did from zero. */
-    search_state.history_moves[N][f3] = HISTORY_MAX / 2;
-    update_history(&search_state, mv, 10);
-    TEST_ASSERT_EQUAL_INT(HISTORY_MAX / 2 + bonus_10 - (HISTORY_MAX / 2) * bonus_10 / HISTORY_MAX, *h);
-}
-
-void test_history_malus_and_bound() {
-    search_state_t search_state;
-    init_search_state(&search_state);
-    const move_t mv = encode_move(g1, f3, N, 0, 0, 0, 0, 0, 0);
-    const int32_t* h = &search_state.history_moves[N][f3];
-    const int bonus_3 = HIST_BONUS_SCALE * 9;
-    const int bonus_10 = HIST_BONUS_SCALE * 100 < HIST_BONUS_MAX ? HIST_BONUS_SCALE * 100 : HIST_BONUS_MAX;
-
-    /* From zero the malus is HIST_BONUS_SCALE * depth^2, and a bonus of the same depth from there lands back
-     * near zero (gravity adds bonus^2 / HISTORY_MAX, 2 or so, as it pulls toward the opposite sign). */
-    penalise_history(&search_state, mv, 3);
-    TEST_ASSERT_EQUAL_INT(-bonus_3, *h);
-    update_history(&search_state, mv, 3);
-    TEST_ASSERT_EQUAL_INT(bonus_3 * bonus_3 / HISTORY_MAX, *h);
-
-    /* Saturates at -HISTORY_MAX. */
-    for (int i = 0; i < 100000; i++) penalise_history(&search_state, mv, 40);
-    TEST_ASSERT_TRUE(*h >= -HISTORY_MAX);
-    TEST_ASSERT_TRUE(*h < -HISTORY_MAX * 9 / 10);
-
-    /* Near the bound the same malus takes off less than it did from zero. */
-    search_state.history_moves[N][f3] = -HISTORY_MAX / 2;
-    penalise_history(&search_state, mv, 10);
-    TEST_ASSERT_EQUAL_INT(-HISTORY_MAX / 2 - bonus_10 + (HISTORY_MAX / 2) * bonus_10 / HISTORY_MAX, *h);
-}
 
 void test_penalised_quiet_stays_above_losing_captures() {
     board_t board;
@@ -503,7 +734,7 @@ void test_penalised_quiet_stays_above_losing_captures() {
     const move_t quiet = parse_move("g1f3", &board);
     const move_t losing_capture = parse_move("h5f7", &board);
 
-    for (int i = 0; i < 100000; i++) penalise_history(&search_state, quiet, 40);
+    set_quiet_history(&search_state, &board, quiet, -16384);
     TEST_ASSERT_TRUE(score_move(losing_capture, 0, &board, &search_state) < 0);
     TEST_ASSERT_TRUE(score_move(quiet, 0, &board, &search_state) >
                      score_move(losing_capture, 0, &board, &search_state));
@@ -520,8 +751,8 @@ void test_history_stays_below_killers_and_captures() {
     const move_t killer = parse_move("b1c3", &board);
     const move_t capture = parse_move("e4d5", &board);
 
-    for (int i = 0; i < 100000; i++) update_history(&search_state, quiet, 40);
-    search_state.killer_moves[1][0] = killer; /* Second killer, the lower of the two. */
+    set_quiet_history(&search_state, &board, quiet, 16383);
+    search_state.killer_moves[0] = killer;
 
     const int quiet_score = score_move(quiet, 0, &board, &search_state);
     const int killer_score = score_move(killer, 0, &board, &search_state);
@@ -541,13 +772,13 @@ void test_queen_promotion_ordered_with_captures() {
     const move_t knight = parse_move("b7b8n", &board);
     const move_t quiet = parse_move("e1e2", &board);
     const move_t killer = parse_move("e1d1", &board);
-    for (int i = 0; i < 100000; i++) update_history(&search_state, quiet, 40);
-    search_state.killer_moves[0][0] = killer;
+    set_quiet_history(&search_state, &board, quiet, 16383);
+    search_state.killer_moves[0] = killer;
 
     TEST_ASSERT_EQUAL_INT(QUEEN_PROMOTION_SCORE, score_move(queen, 0, &board, &search_state));
     TEST_ASSERT_TRUE(score_move(queen, 0, &board, &search_state) > score_move(killer, 0, &board, &search_state));
     TEST_ASSERT_TRUE(score_move(queen, 0, &board, &search_state) > score_move(quiet, 0, &board, &search_state));
-    TEST_ASSERT_TRUE(score_move(knight, 0, &board, &search_state) < KILLER_2_SCORE);
+    TEST_ASSERT_TRUE(score_move(knight, 0, &board, &search_state) < COUNTER_SCORE);
 }
 
 void test_capture_history_shifts_captures_within_band() {
@@ -567,7 +798,7 @@ void test_capture_history_shifts_captures_within_band() {
     for (int i = 0; i < 100000; i++) penalise_capture_history(&search_state, &board, capture, 40);
     TEST_ASSERT_EQUAL_INT(-CAPTURE_HISTORY_MAX, search_state.capture_history[P][d5][0]);
     TEST_ASSERT_EQUAL_INT(base - CAPTURE_HISTORY_SPAN, score_move(capture, 0, &board, &search_state));
-    TEST_ASSERT_TRUE(score_move(capture, 0, &board, &search_state) > KILLER_1_SCORE);
+    TEST_ASSERT_TRUE(score_move(capture, 0, &board, &search_state) > KILLER_SCORE);
 
     /* Halved before each search, like quiet history. */
     clear_pv_table(&search_state);
@@ -606,7 +837,7 @@ void test_losing_capture_with_history_stays_under_quiets() {
     const move_t quiet = parse_move("g1f3", &board);
     const move_t losing_capture = parse_move("h5f7", &board);
     for (int i = 0; i < 100000; i++) {
-        penalise_history(&search_state, quiet, 40);
+        set_quiet_history(&search_state, &board, quiet, -16384);
         update_capture_history(&search_state, &board, losing_capture, 40);
     }
     TEST_ASSERT_TRUE(score_move(losing_capture, 0, &board, &search_state) < score_move(quiet, 0, &board, &search_state));
@@ -654,7 +885,7 @@ void test_losing_capture_ordered_after_quiet_moves() {
 }
 
 void test_reverse_futility_guards() {
-    const int m3 = rfp_margin(3, false);
+    const int m3 = rfp_margin(3, false, false, true);
     TEST_ASSERT_EQUAL_INT(3 * RFP_MARGIN, m3);
     /* The margin: eval this far above beta is pruned, one less isn't. */
     TEST_ASSERT_FALSE(can_reverse_futility_prune(3, m3 - 1, 0, false, false, 1, m3));
@@ -665,10 +896,48 @@ void test_reverse_futility_guards() {
     TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 5000, 0, false, true, 1, m3));
     TEST_ASSERT_FALSE(can_reverse_futility_prune(3, 5000, 0, false, false, 0, m3));
     TEST_ASSERT_FALSE(can_reverse_futility_prune(3, MATE_VALUE, MATE_VALUE - 10, false, false, 1, m3));
-    /* Improving makes the margin smaller, never below 0. */
-    const int expected = 3 * RFP_MARGIN - RFP_IMPROVING;
-    TEST_ASSERT_EQUAL_INT(expected > 0 ? expected : 0, rfp_margin(3, true));
-    TEST_ASSERT_TRUE(rfp_margin(1, true) >= 0);
+    /* Each term makes the margin smaller, down to RFP_MIN_MARGIN. */
+    int expected = 3 * RFP_MARGIN - RFP_IMPROVING;
+    TEST_ASSERT_EQUAL_INT(expected > RFP_MIN_MARGIN ? expected : RFP_MIN_MARGIN, rfp_margin(3, true, false, true));
+    expected = 3 * RFP_MARGIN - RFP_OPP_WORSENING;
+    TEST_ASSERT_EQUAL_INT(expected > RFP_MIN_MARGIN ? expected : RFP_MIN_MARGIN, rfp_margin(3, false, true, true));
+    expected = 3 * RFP_MARGIN - 3 * RFP_NO_TT;
+    TEST_ASSERT_EQUAL_INT(expected > RFP_MIN_MARGIN ? expected : RFP_MIN_MARGIN, rfp_margin(3, false, false, false));
+    TEST_ASSERT_TRUE(rfp_margin(1, true, true, false) >= RFP_MIN_MARGIN);
+    /* The score: static eval moved RFP_BETA_BLEND / 1024 of the way to beta, between the two. */
+    const int score = rfp_score(400, 0);
+    TEST_ASSERT_TRUE(score >= 0 && score <= 400);
+    TEST_ASSERT_EQUAL_INT((int) ((400LL * (1024 - RFP_BETA_BLEND)) / 1024), score);
+    /* Opponent worsening: the two evals sum to more than the margin; never after a check (-INF). */
+    TEST_ASSERT_TRUE(is_opp_worsening(RFP_OPP_WORSENING_MARGIN, 1));
+    TEST_ASSERT_FALSE(is_opp_worsening(RFP_OPP_WORSENING_MARGIN, 0));
+    TEST_ASSERT_FALSE(is_opp_worsening(5000, -INF));
+}
+
+void test_opp_can_win_material() {
+    board_t board;
+    /* Quiet start: nothing attacked. */
+    parse_fen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", &board);
+    TEST_ASSERT_FALSE(opp_can_win_material(&board));
+    /* A black pawn attacks the white knight on d4. */
+    parse_fen("4k3/8/8/4p3/3N4/8/8/4K3 w - - 0 1", &board);
+    TEST_ASSERT_TRUE(opp_can_win_material(&board));
+    /* A black knight attacks the white rook on d1; a pawn attacking only a pawn doesn't count. */
+    parse_fen("4k3/8/8/8/8/4n3/3P4/3RK3 w - - 0 1", &board);
+    TEST_ASSERT_TRUE(opp_can_win_material(&board));
+    parse_fen("4k3/8/8/8/8/4p3/3P4/4K3 w - - 0 1", &board);
+    TEST_ASSERT_FALSE(opp_can_win_material(&board));
+    /* A black rook attacks the white queen along the file; blocked, it doesn't. */
+    parse_fen("3rk3/8/8/8/8/8/8/3QK3 w - - 0 1", &board);
+    TEST_ASSERT_TRUE(opp_can_win_material(&board));
+    parse_fen("3rk3/8/8/8/3P4/8/8/3QK3 w - - 0 1", &board);
+    TEST_ASSERT_FALSE(opp_can_win_material(&board));
+    /* Our own king doesn't block: the black rook attacks the white queen behind the white king. */
+    parse_fen("3rk3/8/8/8/8/3K4/8/3Q4 w - - 0 1", &board);
+    TEST_ASSERT_TRUE(opp_can_win_material(&board));
+    /* From black's side: a white bishop attacks the black rook. */
+    parse_fen("r3k3/8/8/8/8/8/6B1/4K3 b - - 0 1", &board);
+    TEST_ASSERT_TRUE(opp_can_win_material(&board));
 }
 
 void test_improving() {
@@ -682,74 +951,9 @@ void test_improving() {
     TEST_ASSERT_FALSE(is_improving(500, -INF, -INF));
 }
 
-void test_futility_guards() {
-    /* Eval 400 below alpha 0 at depth 2: -400 + FUTILITY_BASE + 2 * FUTILITY_MARGIN <= 0. */
-    TEST_ASSERT_TRUE(is_futile(2, -400, 0, false, false));
-    TEST_ASSERT_FALSE(is_futile(2, -(FUTILITY_BASE + 2 * FUTILITY_MARGIN) + 1, 0, false, false));
-    TEST_ASSERT_TRUE(is_futile(2, -(FUTILITY_BASE + 2 * FUTILITY_MARGIN), 0, false, false));
-    /* Up to FUTILITY_MAX_DEPTH. */
-    TEST_ASSERT_TRUE(is_futile(FUTILITY_MAX_DEPTH, -5000, 0, false, false));
-    /* Too deep, in check, PV node, mate bound. */
-    TEST_ASSERT_FALSE(is_futile(FUTILITY_MAX_DEPTH + 1, -5000, 0, false, false));
-    TEST_ASSERT_FALSE(is_futile(2, -400, 0, true, false));
-    TEST_ASSERT_FALSE(is_futile(2, -400, 0, false, true));
-    TEST_ASSERT_FALSE(is_futile(2, -MATE_VALUE, -MATE_VALUE + 10, false, false));
-}
 
-void test_late_move_pruning_guards() {
-    /* Improving: from LMP_BASE / 100 + depth^2 moves, rounded up (depth 2: 3 + 4 = 7 by default). */
-    const int at_2 = (LMP_BASE + 400 + 99) / 100;
-    TEST_ASSERT_FALSE(can_late_move_prune(2, at_2 - 1, 0, false, false, true));
-    TEST_ASSERT_TRUE(can_late_move_prune(2, at_2, 0, false, false, true));
-    TEST_ASSERT_TRUE(can_late_move_prune(1, (LMP_BASE + 100 + 99) / 100, 0, false, false, true));
-    /* Too deep, in check, PV node, mate bound. */
-    TEST_ASSERT_FALSE(can_late_move_prune(LMP_MAX_DEPTH + 1, 200, 0, false, false, true));
-    TEST_ASSERT_FALSE(can_late_move_prune(2, 50, 0, true, false, true));
-    TEST_ASSERT_FALSE(can_late_move_prune(2, 50, 0, false, true, true));
-    TEST_ASSERT_FALSE(can_late_move_prune(2, 50, -MATE_VALUE + 10, false, false, true));
-    /* Never before the first move: base + depth^2 >= 1. */
-    TEST_ASSERT_FALSE(can_late_move_prune(0, 0, 0, false, false, true));
-    /* Not improving: LMP_NOT_IMPROVING_PCT of the limit, rounded up. */
-    for (int depth = 1; depth <= LMP_MAX_DEPTH; depth++) {
-        const int limit = LMP_BASE + 100 * depth * depth;
-        const int reduced = (limit * LMP_NOT_IMPROVING_PCT + 9999) / 10000;
-        TEST_ASSERT_TRUE(reduced >= 1 && reduced <= (limit + 99) / 100);
-        TEST_ASSERT_FALSE(can_late_move_prune(depth, reduced - 1, 0, false, false, false));
-        TEST_ASSERT_TRUE(can_late_move_prune(depth, reduced, 0, false, false, false));
-    }
-}
 
-void test_see_pruning_guards() {
-    TEST_ASSERT_TRUE(can_see_prune(SEE_PRUNE_MAX_DEPTH, 1, 0, false, false));
-    /* Too deep, in check, PV node, mate bound, before the first move. */
-    TEST_ASSERT_FALSE(can_see_prune(SEE_PRUNE_MAX_DEPTH + 1, 1, 0, false, false));
-    TEST_ASSERT_FALSE(can_see_prune(2, 1, 0, true, false));
-    TEST_ASSERT_FALSE(can_see_prune(2, 1, 0, false, true));
-    TEST_ASSERT_FALSE(can_see_prune(2, 1, -MATE_VALUE + 10, false, false));
-    TEST_ASSERT_FALSE(can_see_prune(2, 0, 0, false, false));
 
-    TEST_ASSERT_EQUAL_INT(-3 * SEE_QUIET_MARGIN, see_prune_threshold(3, true));
-    TEST_ASSERT_EQUAL_INT(-9 * SEE_CAPTURE_MARGIN, see_prune_threshold(3, false));
-}
-
-void test_see_pruning_thresholds() {
-    board_t board;
-    search_state_t search_state;
-    limits_t limits;
-
-    /* 1.e4 d5: Qg4 hangs the queen to ...Bxg4, Nf3 is safe. */
-    setup_position("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2", &board, &search_state, &limits, 1);
-    TEST_ASSERT_TRUE(see(&board, parse_move("d1g4", &board)) < see_prune_threshold(SEE_PRUNE_MAX_DEPTH, true));
-    TEST_ASSERT_FALSE(see(&board, parse_move("g1f3", &board)) < see_prune_threshold(1, true));
-
-    /* 1.e4 e5 2.Qh5 Nc6: Qxf7+ Kxf7 loses 800, pruned at depth 2 but not at depth 7, where the
-     * threshold (-980) allows for a sacrifice. */
-    setup_position("r1bqkbnr/pppp1ppp/2n5/4p2Q/4P3/8/PPPP1PPP/RNB1KBNR w KQkq - 2 3", &board, &search_state, &limits, 1);
-    const int qxf7 = see(&board, parse_move("h5f7", &board));
-    TEST_ASSERT_EQUAL_INT(-800, qxf7);
-    TEST_ASSERT_TRUE(qxf7 < see_prune_threshold(2, false));
-    TEST_ASSERT_FALSE(qxf7 < see_prune_threshold(7, false));
-}
 
 void test_quiescence_searches_promotion_with_negative_history() {
     board_t board;
@@ -761,74 +965,14 @@ void test_quiescence_searches_promotion_with_negative_history() {
      * searches it (it never sorts among the losing captures, which end the qsearch). */
     setup_position("8/P7/8/8/8/8/k7/7K w - - 0 1", &board, &search_state, &limits, 1);
     const move_t promotion = parse_move("a7a8q", &board);
-    for (int i = 0; i < 100; i++) penalise_history(&search_state, promotion, 20);
-    TEST_ASSERT_TRUE(search_state.history_moves[P][a8] < 0);
+    set_quiet_history(&search_state, &board, promotion, -16384);
     TEST_ASSERT_EQUAL_INT(QUEEN_PROMOTION_SCORE, score_move(promotion, 0, &board, &search_state));
 
     const int stand_pat = evaluation(&board, &search_state.nnue);
     TEST_ASSERT_TRUE(quiescence(-INF, INF, &board, &search_state, &limits) > stand_pat + 500);
 }
 
-void test_lmr_reduction() {
-    /* No reduction for the first moves or shallow depths. */
-    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(1, 10, false, 0, false, true));
-    TEST_ASSERT_EQUAL_INT(0, lmr_reduction(3, 1, false, 0, false, true));
 
-    /* Grows with depth and with the move number, never decreasing. */
-    for (int depth = 2; depth < 40; depth++) {
-        for (int moves = 1; moves < 60; moves++) {
-            int r = lmr_reduction(depth, moves, false, 0, false, true);
-            TEST_ASSERT_TRUE(r >= lmr_reduction(depth - 1, moves, false, 0, false, true));
-            TEST_ASSERT_TRUE(r >= lmr_reduction(depth, moves - 1, false, 0, false, true));
-            /* Never below the qsearch: the reduced search has depth - 1 - r >= 0. */
-            TEST_ASSERT_TRUE(depth - 1 - r >= 0);
-            /* PV nodes are reduced less, by at most LMR_PV_NODE rounded up. */
-            int pv = lmr_reduction(depth, moves, true, 0, false, true);
-            TEST_ASSERT_TRUE(pv <= r && pv >= r - (LMR_PV_NODE + PLY_GRAIN - 1) / PLY_GRAIN);
-        }
-    }
-
-    /* A deep late move is reduced by more than the old flat 1. */
-    TEST_ASSERT_TRUE(lmr_reduction(12, 20, false, 0, false, true) >= 2);
-
-    /* Moves past the end of the table use the last column. */
-    TEST_ASSERT_EQUAL_INT(lmr_reduction(20, LMR_TABLE_SIZE - 1, false, 0, false, true), lmr_reduction(20, 200, false, 0, false, true));
-
-    /* History: a whole ply less per LMR_HISTORY_DIVISOR of a good score, more per LMR_HISTORY_DIVISOR of
-     * a bad one (rounded towards zero), added to the table's fraction before rounding down; within
-     * [0, depth - 2]. */
-    const int t = lmr_table[12][20];
-    const int histories[] = { 0, LMR_HISTORY_DIVISOR / 4, LMR_HISTORY_DIVISOR - 1, LMR_HISTORY_DIVISOR,
-                              -LMR_HISTORY_DIVISOR / 4, -LMR_HISTORY_DIVISOR, HISTORY_MAX, -HISTORY_MAX };
-    for (int i = 0; i < (int) (sizeof(histories) / sizeof(*histories)); i++) {
-        const int g = t - histories[i] / LMR_HISTORY_DIVISOR * PLY_GRAIN;
-        const int plies = g <= 0 ? 0 : g / PLY_GRAIN;
-        TEST_ASSERT_EQUAL_INT(plies < 10 ? plies : 10, lmr_reduction(12, 20, false, histories[i], false, true));
-    }
-}
-
-void test_lmr_cut_node_and_improving() {
-    /* LMR_CUT_NODE more at a cut node, LMR_NOT_IMPROVING more when not improving, both added to the
-     * table's fraction and rounded down once. */
-    const int t = lmr_table[12][20];
-    TEST_ASSERT_EQUAL_INT(t / PLY_GRAIN, lmr_reduction(12, 20, false, 0, false, true));
-    TEST_ASSERT_EQUAL_INT((t + LMR_CUT_NODE) / PLY_GRAIN, lmr_reduction(12, 20, false, 0, true, true));
-    TEST_ASSERT_EQUAL_INT((t + LMR_NOT_IMPROVING) / PLY_GRAIN, lmr_reduction(12, 20, false, 0, false, false));
-    TEST_ASSERT_EQUAL_INT((t + LMR_CUT_NODE + LMR_NOT_IMPROVING) / PLY_GRAIN,
-                          lmr_reduction(12, 20, false, 0, true, false));
-    /* A checking move: LMR_GIVES_CHECK less, with LMR_ROUND_OFFSET added before rounding down. */
-    const int c = t - LMR_GIVES_CHECK + LMR_ROUND_OFFSET;
-    TEST_ASSERT_EQUAL_INT(c <= 0 ? 0 : c / PLY_GRAIN, lmr_reduction_full(12, 20, false, 0, false, true, true));
-    TEST_ASSERT_EQUAL_INT(lmr_reduction(12, 20, false, 0, false, true), lmr_reduction_full(12, 20, false, 0, false, true, false));
-    /* Still clamped: never below the qsearch, and never negative. */
-    for (int depth = 2; depth < 40; depth++) {
-        for (int moves = 1; moves < 60; moves++) {
-            const int most = lmr_reduction(depth, moves, false, -HISTORY_MAX, true, false);
-            TEST_ASSERT_TRUE(depth - 1 - most >= 0);
-            TEST_ASSERT_TRUE(lmr_reduction(depth, moves, true, HISTORY_MAX, false, true) >= 0);
-        }
-    }
-}
 
 void test_iir_reduction() {
     const move_t tt_move = encode_move(e2, e4, P, 0, 0, 1, 0, 0, 0);
@@ -952,164 +1096,12 @@ void test_pv_followed_only_on_pv_path() {
     TEST_ASSERT_EQUAL_UINT64(0, search_state.pv_nodes);
 }
 
-void test_store_killer() {
-    search_state_t search_state;
-    init_search_state(&search_state);
-    search_state.ply = 3;
-    const move_t first = encode_move(g1, f3, N, 0, 0, 0, 0, 0, 0);
-    const move_t second = encode_move(b1, c3, N, 0, 0, 0, 0, 0, 0);
 
-    /* The newest killer first, the previous one second... */
-    store_killer(&search_state, first);
-    store_killer(&search_state, second);
-    TEST_ASSERT_EQUAL_UINT32(second, search_state.killer_moves[0][3]);
-    TEST_ASSERT_EQUAL_UINT32(first, search_state.killer_moves[1][3]);
 
-    /* ...and other plies are untouched. */
-    TEST_ASSERT_EQUAL_UINT32(0, search_state.killer_moves[0][2]);
-}
 
-void test_killers_are_not_captures() {
-    board_t board;
-    search_state_t search_state;
-    limits_t limits;
 
-    /* A tactical middlegame: captures are ordered by MVV-LVA, never as killers. */
-    setup_position("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
-                   &board, &search_state, &limits, 6);
-    limits.quiet = true;
-    find_best_move(&board, &search_state, &limits);
-    for (int slot = 0; slot < 2; slot++) {
-        for (int ply = 0; ply < MAX_PLY; ply++) {
-            const move_t killer = search_state.killer_moves[slot][ply];
-            if (killer) TEST_ASSERT_FALSE(get_capture_flag(killer));
-        }
-    }
-}
 
-/* The continuation history entry of 'mv' after 'previous', 'back' plies before it (1, 2 or 4). */
-static int16_t* cont_entry(search_state_t* search_state, int back, move_t previous, move_t mv) {
-    const int i = back == 4 ? 2 : back - 1;
-    return &(*search_state->cont_history)[i][get_piece_moved(previous) * 64 + get_target_square(previous)]
-                                          [get_piece_moved(mv) * 64 + get_target_square(mv)];
-}
 
-void test_quiet_history_sums_continuation() {
-    board_t board;
-    search_state_t search_state;
-    limits_t limits;
-    setup_position("4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1", &board, &search_state, &limits, 1);
-    const move_t mv = parse_move("a1a5", &board);
-    const move_t m1 = encode_move(e8, d8, k, 0, 0, 0, 0, 0, 0);  /* 1 ply back, the opponent's */
-    const move_t m2 = encode_move(h1, h3, R, 0, 0, 0, 0, 0, 0);  /* 2 plies back, ours */
-    const move_t m4 = encode_move(e1, f1, K, 0, 0, 0, 0, 0, 0);  /* 4 plies back */
-    search_state.history_moves[R][a5] = 100;
-
-    /* At the root there are no moves back: the history alone. */
-    TEST_ASSERT_EQUAL_INT(100, quiet_history(&search_state, mv));
-
-    /* Four plies in, with the moves 1, 2 and 4 plies back: the sum of all four. */
-    search_state.ply = 4;
-    search_state.path_moves[3] = m1;
-    search_state.path_moves[2] = m2;
-    search_state.path_moves[1] = encode_move(d8, e8, k, 0, 0, 0, 0, 0, 0); /* 3 plies back, not used */
-    search_state.path_moves[0] = m4;
-    *cont_entry(&search_state, 1, m1, mv) = 20;
-    *cont_entry(&search_state, 2, m2, mv) = -30;
-    *cont_entry(&search_state, 4, m4, mv) = 7;
-    TEST_ASSERT_EQUAL_INT(100 + 20 - 30 + 7, quiet_history(&search_state, mv));
-
-    /* A null move one ply back (0) has no entry: skipped. */
-    search_state.path_moves[3] = 0;
-    TEST_ASSERT_EQUAL_INT(100 - 30 + 7, quiet_history(&search_state, mv));
-
-    /* Ordered by the sum / QUIET_ORDER_DIVISOR, within the quiet band even at the extremes. */
-    search_state.path_moves[3] = m1;
-    search_state.history_moves[R][a5] = HISTORY_MAX;
-    *cont_entry(&search_state, 1, m1, mv) = HISTORY_MAX;
-    *cont_entry(&search_state, 2, m2, mv) = HISTORY_MAX;
-    *cont_entry(&search_state, 4, m4, mv) = HISTORY_MAX;
-    TEST_ASSERT_EQUAL_INT(4 * HISTORY_MAX / QUIET_ORDER_DIVISOR, score_move(mv, 0, &board, &search_state));
-    TEST_ASSERT_TRUE(score_move(mv, 0, &board, &search_state) < KILLER_2_SCORE);
-}
-
-void test_continuation_history_updates_and_isnt_aged() {
-    board_t board;
-    search_state_t search_state;
-    limits_t limits;
-    setup_position("4k3/8/8/8/8/8/8/R3K2R w KQ - 0 1", &board, &search_state, &limits, 1);
-    const move_t mv = parse_move("a1a5", &board);
-    const move_t m1 = encode_move(e8, d8, k, 0, 0, 0, 0, 0, 0);
-    const move_t m2 = encode_move(h1, h3, R, 0, 0, 0, 0, 0, 0);
-    const move_t m4 = encode_move(e1, f1, K, 0, 0, 0, 0, 0, 0);
-    search_state.ply = 4;
-    search_state.path_moves[3] = m1;
-    search_state.path_moves[2] = m2;
-    search_state.path_moves[0] = m4;
-
-    /* The bonus goes to the history and to each continuation entry, the same amount from 0. */
-    update_history(&search_state, mv, 5);
-    const int bonus = search_state.history_moves[R][a5];
-    TEST_ASSERT_TRUE(bonus > 0);
-    TEST_ASSERT_EQUAL_INT(bonus, *cont_entry(&search_state, 1, m1, mv));
-    TEST_ASSERT_EQUAL_INT(bonus, *cont_entry(&search_state, 2, m2, mv));
-    TEST_ASSERT_EQUAL_INT(bonus, *cont_entry(&search_state, 4, m4, mv));
-    /* The malus takes it back down. */
-    penalise_history(&search_state, mv, 5);
-    TEST_ASSERT_TRUE(*cont_entry(&search_state, 1, m1, mv) < bonus);
-
-    /* Not after a null move: no entry is written for it. */
-    const move_t other = parse_move("a1a3", &board);
-    search_state.path_moves[3] = 0;
-    update_history(&search_state, other, 5);
-    TEST_ASSERT_EQUAL_INT(0, *cont_entry(&search_state, 1, m1, other));
-    TEST_ASSERT_TRUE(*cont_entry(&search_state, 2, m2, other) > 0);
-
-    /* Before the next search the history is halved, the continuation history isn't. */
-    *cont_entry(&search_state, 1, m1, mv) = 1000;
-    search_state.history_moves[R][a5] = 1000;
-    clear_pv_table(&search_state);
-    TEST_ASSERT_EQUAL_INT(500, search_state.history_moves[R][a5]);
-    TEST_ASSERT_EQUAL_INT(1000, *cont_entry(&search_state, 1, m1, mv));
-
-    /* A new game clears it. */
-    init_search_state(&search_state);
-    TEST_ASSERT_EQUAL_INT(0, *cont_entry(&search_state, 1, m1, mv));
-}
-
-void test_history_pruning_guards() {
-    /* Below -HIST_PRUNE_MARGIN * depth at depth <= HIST_PRUNE_MAX_DEPTH: pruned. */
-    TEST_ASSERT_TRUE(can_history_prune(2, -2 * HIST_PRUNE_MARGIN - 1, 3, 0, false, false, false));
-    TEST_ASSERT_FALSE(can_history_prune(2, -2 * HIST_PRUNE_MARGIN, 3, 0, false, false, false));
-    TEST_ASSERT_FALSE(can_history_prune(HIST_PRUNE_MAX_DEPTH + 1, -1000000, 3, 0, false, false, false));
-    /* Never the first move, in check, a PV node, a killer, or near a mate score. */
-    TEST_ASSERT_FALSE(can_history_prune(2, -1000000, 0, 0, false, false, false));
-    TEST_ASSERT_FALSE(can_history_prune(2, -1000000, 3, 0, true, false, false));
-    TEST_ASSERT_FALSE(can_history_prune(2, -1000000, 3, 0, false, true, false));
-    TEST_ASSERT_FALSE(can_history_prune(2, -1000000, 3, 0, false, false, true));
-    TEST_ASSERT_FALSE(can_history_prune(2, -1000000, 3, -MATE_VALUE + 10, false, false, false));
-}
-
-void test_can_reduce() {
-    /* A late quiet move at depth is reduced. */
-    TEST_ASSERT_TRUE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, false, false, false));
-    /* Too early in the list, too shallow, not quiet, in check, a killer: not reduced. A check only
-     * with LMR_REDUCE_CHECKS. */
-    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES - 1, true, false, false, false, false));
-    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH - 1, LMR_MIN_MOVES, true, false, false, false, false));
-    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, false, false, false, false));
-    TEST_ASSERT_EQUAL_INT(LMR_REDUCE_CHECKS != 0, can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, true, false, false, false));
-    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, true, false, false));
-    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, true, false, false, true, false));
-    /* A losing capture late in the list is reduced (a killer flag doesn't matter for it), unless it's
-     * too early, too shallow or made in check (a check only with LMR_REDUCE_CHECKS). */
-    TEST_ASSERT_TRUE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, false, false, false, true));
-    TEST_ASSERT_TRUE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, false, false, true, true));
-    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES - 1, false, false, false, false, true));
-    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH - 1, LMR_MIN_MOVES, false, false, false, false, true));
-    TEST_ASSERT_EQUAL_INT(LMR_REDUCE_CHECKS != 0, can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, true, false, false, true));
-    TEST_ASSERT_FALSE(can_reduce(LMR_MIN_DEPTH, LMR_MIN_MOVES, false, false, true, false, true));
-}
 
 void test_pv_is_legal() {
     board_t board;
@@ -1413,12 +1405,12 @@ void test_probcut_conditions() {
 void test_tunable_parameters() {
 #ifdef TIKI_TUNE
     /* A tuning build: the parameters are variables, set by name (any case) and kept in range. */
-    TEST_ASSERT_EQUAL_INT(68, tunable_count);
+    TEST_ASSERT_EQUAL_INT(106, tunable_count);
     const int saved = RFP_MARGIN;
     TEST_ASSERT_TRUE(set_tunable("rfp_margin", 10, 120));
     TEST_ASSERT_EQUAL_INT(120, RFP_MARGIN);
     TEST_ASSERT_TRUE(set_tunable("RFP_MARGIN", 10, 100000));
-    TEST_ASSERT_EQUAL_INT(300, RFP_MARGIN);
+    TEST_ASSERT_EQUAL_INT(150, RFP_MARGIN);
     TEST_ASSERT_TRUE(set_tunable("RFP_MARGIN", 10, saved));
     TEST_ASSERT_EQUAL_INT(saved, RFP_MARGIN);
     /* The whole name must match. */

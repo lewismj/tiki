@@ -7,31 +7,91 @@
 #ifdef TIKI_TUNE
 int tune_rfp_margin = RFP_MARGIN_DEFAULT;
 int tune_rfp_max_depth = RFP_MAX_DEPTH_DEFAULT;
-int tune_futility_margin = FUTILITY_MARGIN_DEFAULT;
-int tune_futility_max_depth = FUTILITY_MAX_DEPTH_DEFAULT;
-int tune_lmp_base = LMP_BASE_DEFAULT;
-int tune_see_quiet_margin = SEE_QUIET_MARGIN_DEFAULT;
-int tune_see_capture_margin = SEE_CAPTURE_MARGIN_DEFAULT;
 int tune_se_margin = SE_MARGIN_DEFAULT;
 int tune_rfp_improving = RFP_IMPROVING_DEFAULT;
-int tune_futility_base = FUTILITY_BASE_DEFAULT;
-int tune_lmp_not_improving_pct = LMP_NOT_IMPROVING_PCT_DEFAULT;
+int tune_rfp_opp_worsening = RFP_OPP_WORSENING_DEFAULT;
+int tune_rfp_opp_worsening_margin = RFP_OPP_WORSENING_MARGIN_DEFAULT;
+int tune_rfp_no_tt = RFP_NO_TT_DEFAULT;
+int tune_rfp_min_margin = RFP_MIN_MARGIN_DEFAULT;
+int tune_rfp_beta_blend = RFP_BETA_BLEND_DEFAULT;
+int tune_hist_clear_main = HIST_CLEAR_MAIN_DEFAULT;
+int tune_hist_clear_cont = HIST_CLEAR_CONT_DEFAULT;
+int tune_hist_clear_pawn = HIST_CLEAR_PAWN_DEFAULT;
+int tune_hist_bonus_offset = HIST_BONUS_OFFSET_DEFAULT;
+int tune_hist_bonus_linear = HIST_BONUS_LINEAR_DEFAULT;
+int tune_hist_bonus_score_diff = HIST_BONUS_SCORE_DIFF_DEFAULT;
+int tune_hist_bonus_limit = HIST_BONUS_LIMIT_DEFAULT;
+int tune_hist_malus_offset = HIST_MALUS_OFFSET_DEFAULT;
+int tune_hist_malus_linear = HIST_MALUS_LINEAR_DEFAULT;
+int tune_hist_malus_score_diff = HIST_MALUS_SCORE_DIFF_DEFAULT;
+int tune_hist_malus_limit = HIST_MALUS_LIMIT_DEFAULT;
+int tune_cont_bonus_offset = CONT_BONUS_OFFSET_DEFAULT;
+int tune_cont_bonus_linear = CONT_BONUS_LINEAR_DEFAULT;
+int tune_cont_bonus_score_diff = CONT_BONUS_SCORE_DIFF_DEFAULT;
+int tune_cont_bonus_limit = CONT_BONUS_LIMIT_DEFAULT;
+int tune_cont_malus_offset = CONT_MALUS_OFFSET_DEFAULT;
+int tune_cont_malus_linear = CONT_MALUS_LINEAR_DEFAULT;
+int tune_cont_malus_score_diff = CONT_MALUS_SCORE_DIFF_DEFAULT;
+int tune_cont_malus_limit = CONT_MALUS_LIMIT_DEFAULT;
+int tune_hist_score_diff_max = HIST_SCORE_DIFF_MAX_DEFAULT;
+int tune_cont_update_weight_2 = CONT_UPDATE_WEIGHT_2_DEFAULT;
+int tune_cont_update_weight_3 = CONT_UPDATE_WEIGHT_3_DEFAULT;
+int tune_cont_update_weight_4 = CONT_UPDATE_WEIGHT_4_DEFAULT;
+int tune_cont_update_weight_6 = CONT_UPDATE_WEIGHT_6_DEFAULT;
+int tune_prior_cmh_cap = PRIOR_CMH_CAP_DEFAULT;
+int tune_prior_cmh_scale = PRIOR_CMH_SCALE_DEFAULT;
+int tune_prior_cmh_bias = PRIOR_CMH_BIAS_DEFAULT;
+int tune_pawn_hist_weight = PAWN_HIST_WEIGHT_DEFAULT;
+int tune_cont_order_weight_2 = CONT_ORDER_WEIGHT_2_DEFAULT;
+int tune_cont_order_weight_4 = CONT_ORDER_WEIGHT_4_DEFAULT;
+int tune_cont_order_weight_6 = CONT_ORDER_WEIGHT_6_DEFAULT;
+int tune_threat_escape_minor = THREAT_ESCAPE_MINOR_DEFAULT;
+int tune_threat_enter_minor = THREAT_ENTER_MINOR_DEFAULT;
+int tune_threat_escape_rook = THREAT_ESCAPE_ROOK_DEFAULT;
+int tune_threat_enter_rook = THREAT_ENTER_ROOK_DEFAULT;
+int tune_threat_escape_queen = THREAT_ESCAPE_QUEEN_DEFAULT;
+int tune_threat_enter_queen = THREAT_ENTER_QUEEN_DEFAULT;
+int tune_node_cache_bonus = NODE_CACHE_BONUS_DEFAULT;
+int tune_lmr_min_depth = LMR_MIN_DEPTH_DEFAULT;
+int tune_lmr_quiet_scale = LMR_QUIET_SCALE_DEFAULT;
+int tune_lmr_quiet_bias = LMR_QUIET_BIAS_DEFAULT;
+int tune_lmr_capture_scale = LMR_CAPTURE_SCALE_DEFAULT;
+int tune_lmr_capture_bias = LMR_CAPTURE_BIAS_DEFAULT;
+int tune_lmr_quiet_non_pv = LMR_QUIET_NON_PV_DEFAULT;
+int tune_lmr_quiet_tt_capture = LMR_QUIET_TT_CAPTURE_DEFAULT;
+int tune_lmr_quiet_refutation = LMR_QUIET_REFUTATION_DEFAULT;
+int tune_lmr_quiet_cut_node = LMR_QUIET_CUT_NODE_DEFAULT;
+int tune_lmr_quiet_not_improving = LMR_QUIET_NOT_IMPROVING_DEFAULT;
+int tune_lmr_quiet_check = LMR_QUIET_CHECK_DEFAULT;
+int tune_lmr_stat_offset = LMR_STAT_OFFSET_DEFAULT;
+int tune_lmr_stat_div = LMR_STAT_DIV_DEFAULT;
+int tune_lmr_capture_winning = LMR_CAPTURE_WINNING_DEFAULT;
+int tune_lmr_capture_bad = LMR_CAPTURE_BAD_DEFAULT;
+int tune_lmr_capture_cut_node = LMR_CAPTURE_CUT_NODE_DEFAULT;
+int tune_lmr_capture_not_improving = LMR_CAPTURE_NOT_IMPROVING_DEFAULT;
+int tune_lmr_capture_check = LMR_CAPTURE_CHECK_DEFAULT;
+int tune_lmr_tt_depth = LMR_TT_DEPTH_DEFAULT;
+int tune_lmr_deeper_margin = LMR_DEEPER_MARGIN_DEFAULT;
+int tune_pv_tt_move_min_root_depth = PV_TT_MOVE_MIN_ROOT_DEPTH_DEFAULT;
+int tune_alpha_improvement_min_depth = ALPHA_IMPROVEMENT_MIN_DEPTH_DEFAULT;
+int tune_lmp_base = LMP_BASE_DEFAULT;
+int tune_lmp_pv_scale = LMP_PV_SCALE_DEFAULT;
+int tune_hist_prune_max_depth = HIST_PRUNE_MAX_DEPTH_DEFAULT;
+int tune_hist_prune_linear = HIST_PRUNE_LINEAR_DEFAULT;
+int tune_hist_prune_quad = HIST_PRUNE_QUAD_DEFAULT;
+int tune_futility_lmr_sq = FUTILITY_LMR_SQ_DEFAULT;
+int tune_futility_stat_div = FUTILITY_STAT_DIV_DEFAULT;
+int tune_see_capture_depth = SEE_CAPTURE_DEPTH_DEFAULT;
+int tune_see_capture_mult = SEE_CAPTURE_MULT_DEFAULT;
+int tune_see_quiet_depth = SEE_QUIET_DEPTH_DEFAULT;
+int tune_see_quiet_mult = SEE_QUIET_MULT_DEFAULT;
+int tune_see_quiet_stat_div = SEE_QUIET_STAT_DIV_DEFAULT;
 int tune_nmp_min_depth = NMP_MIN_DEPTH_DEFAULT;
 int tune_nmp_r_base = NMP_R_BASE_DEFAULT;
 int tune_nmp_r_depth_rate = NMP_R_DEPTH_RATE_DEFAULT;
 int tune_nmp_r_eval_div = NMP_R_EVAL_DIV_DEFAULT;
 int tune_nmp_r_eval_max = NMP_R_EVAL_MAX_DEFAULT;
 int tune_nmp_verify_depth = NMP_VERIFY_DEPTH_DEFAULT;
-int tune_lmr_history_divisor = LMR_HISTORY_DIVISOR_DEFAULT;
-int tune_hist_prune_max_depth = HIST_PRUNE_MAX_DEPTH_DEFAULT;
-int tune_hist_prune_margin = HIST_PRUNE_MARGIN_DEFAULT;
-int tune_lmr_pv_node = LMR_PV_NODE_DEFAULT;
-int tune_lmr_reduce_checks = LMR_REDUCE_CHECKS_DEFAULT;
-int tune_prune_checks = PRUNE_CHECKS_DEFAULT;
-int tune_lmr_gives_check = LMR_GIVES_CHECK_DEFAULT;
-int tune_lmr_round_offset = LMR_ROUND_OFFSET_DEFAULT;
-int tune_lmr_cut_node = LMR_CUT_NODE_DEFAULT;
-int tune_lmr_not_improving = LMR_NOT_IMPROVING_DEFAULT;
 int tune_tm_moves_left = TM_MOVES_LEFT_DEFAULT;
 int tune_tm_soft_percent = TM_SOFT_PERCENT_DEFAULT;
 int tune_tm_hard_percent = TM_HARD_PERCENT_DEFAULT;
@@ -44,15 +104,6 @@ int tune_corr_rate = CORR_RATE_DEFAULT;
 int tune_se_min_depth = SE_MIN_DEPTH_DEFAULT;
 int tune_se_tt_depth_margin = SE_TT_DEPTH_MARGIN_DEFAULT;
 int tune_se_reduction = SE_REDUCTION_DEFAULT;
-int tune_lmr_killer_max = LMR_KILLER_MAX_DEFAULT;
-int tune_lmr_base = LMR_BASE_DEFAULT;
-int tune_lmr_divisor = LMR_DIVISOR_DEFAULT;
-int tune_lmr_min_depth = LMR_MIN_DEPTH_DEFAULT;
-int tune_lmr_min_moves = LMR_MIN_MOVES_DEFAULT;
-int tune_hist_bonus_scale = HIST_BONUS_SCALE_DEFAULT;
-int tune_hist_bonus_max = HIST_BONUS_MAX_DEFAULT;
-int tune_lmp_max_depth = LMP_MAX_DEPTH_DEFAULT;
-int tune_see_prune_max_depth = SEE_PRUNE_MAX_DEPTH_DEFAULT;
 int tune_iir_min_depth = IIR_MIN_DEPTH_DEFAULT;
 int tune_aspiration_window = ASPIRATION_WINDOW_DEFAULT;
 int tune_delta_margin = DELTA_MARGIN_DEFAULT;
@@ -64,16 +115,86 @@ int tune_probcut_improving = PROBCUT_IMPROVING_DEFAULT;
 /* name, variable, min, max, c_end, r_end. c_end is about a twentieth of the range, at least 0.5
  * (OpenBench's minimum for integers); r_end is OpenBench's usual 0.002. */
 const tunable_t tunables[] = {
-    { "RFP_MARGIN",         &tune_rfp_margin,         40, 300, 12.0, 0.002 },
+    { "RFP_MARGIN",         &tune_rfp_margin,         20, 150,  6.0, 0.002 },
     { "RFP_MAX_DEPTH",      &tune_rfp_max_depth,       3,  10,  0.5, 0.002 },
-    { "RFP_IMPROVING",      &tune_rfp_improving,       0, 500, 25.0, 0.002 },
-    { "FUTILITY_BASE",      &tune_futility_base,       0, 150,  8.0, 0.002 },
-    { "FUTILITY_MARGIN",    &tune_futility_margin,    40, 250, 10.0, 0.002 },
-    { "FUTILITY_MAX_DEPTH", &tune_futility_max_depth,  1,  12,  0.5, 0.002 },
-    { "LMP_BASE",           &tune_lmp_base,          100, 800, 50.0, 0.002 },  /* 1/100 move */
-    { "LMP_NOT_IMPROVING_PCT", &tune_lmp_not_improving_pct, 40, 100, 3.0, 0.002 },
-    { "SEE_QUIET_MARGIN",   &tune_see_quiet_margin,   20, 150,  6.0, 0.002 },
-    { "SEE_CAPTURE_MARGIN", &tune_see_capture_margin,  5,  60,  3.0, 0.002 },
+    { "RFP_IMPROVING",      &tune_rfp_improving,       0, 250, 12.0, 0.002 },
+    { "RFP_OPP_WORSENING",  &tune_rfp_opp_worsening,   0,  80,  4.0, 0.002 },
+    { "RFP_OPP_WORSENING_MARGIN", &tune_rfp_opp_worsening_margin, 0, 200, 10.0, 0.002 },
+    { "RFP_NO_TT",          &tune_rfp_no_tt,           0,  60,  3.0, 0.002 },
+    { "RFP_MIN_MARGIN",     &tune_rfp_min_margin,      0,  40,  2.0, 0.002 },
+    { "RFP_BETA_BLEND",     &tune_rfp_beta_blend,      0, 1024, 50.0, 0.002 },
+    { "HIST_CLEAR_MAIN", &tune_hist_clear_main, -2000, 2000, 200.0, 0.002 },
+    { "HIST_CLEAR_CONT", &tune_hist_clear_cont, -2000, 2000, 200.0, 0.002 },
+    { "HIST_CLEAR_PAWN", &tune_hist_clear_pawn, -2000, 2000, 200.0, 0.002 },
+    { "HIST_BONUS_OFFSET", &tune_hist_bonus_offset, -200, 0, 10.0, 0.002 },
+    { "HIST_BONUS_LINEAR", &tune_hist_bonus_linear, 100, 250, 7.5, 0.002 },
+    { "HIST_BONUS_SCORE_DIFF", &tune_hist_bonus_score_diff, 0, 667, 33.4, 0.002 },
+    { "HIST_BONUS_LIMIT", &tune_hist_bonus_limit, 1000, 4000, 150.0, 0.002 },
+    { "HIST_MALUS_OFFSET", &tune_hist_malus_offset, -200, 50, 12.5, 0.002 },
+    { "HIST_MALUS_LINEAR", &tune_hist_malus_linear, 75, 200, 6.2, 0.002 },
+    { "HIST_MALUS_SCORE_DIFF", &tune_hist_malus_score_diff, 0, 667, 33.4, 0.002 },
+    { "HIST_MALUS_LIMIT", &tune_hist_malus_limit, 1000, 4000, 150.0, 0.002 },
+    { "CONT_BONUS_OFFSET", &tune_cont_bonus_offset, -200, 0, 10.0, 0.002 },
+    { "CONT_BONUS_LINEAR", &tune_cont_bonus_linear, 100, 250, 7.5, 0.002 },
+    { "CONT_BONUS_SCORE_DIFF", &tune_cont_bonus_score_diff, 0, 667, 33.4, 0.002 },
+    { "CONT_BONUS_LIMIT", &tune_cont_bonus_limit, 1000, 4000, 150.0, 0.002 },
+    { "CONT_MALUS_OFFSET", &tune_cont_malus_offset, -200, 50, 12.5, 0.002 },
+    { "CONT_MALUS_LINEAR", &tune_cont_malus_linear, 75, 200, 6.2, 0.002 },
+    { "CONT_MALUS_SCORE_DIFF", &tune_cont_malus_score_diff, 0, 667, 33.4, 0.002 },
+    { "CONT_MALUS_LIMIT", &tune_cont_malus_limit, 1000, 4000, 150.0, 0.002 },
+    { "HIST_SCORE_DIFF_MAX", &tune_hist_score_diff_max, 38, 307, 13.4, 0.002 },
+    { "CONT_UPDATE_WEIGHT_2", &tune_cont_update_weight_2, 1, 2048, 102.3, 0.002 },
+    { "CONT_UPDATE_WEIGHT_3", &tune_cont_update_weight_3, 1, 2048, 102.3, 0.002 },
+    { "CONT_UPDATE_WEIGHT_4", &tune_cont_update_weight_4, 1, 2048, 102.3, 0.002 },
+    { "CONT_UPDATE_WEIGHT_6", &tune_cont_update_weight_6, 1, 2048, 102.3, 0.002 },
+    { "PRIOR_CMH_CAP", &tune_prior_cmh_cap, 400, 2400, 100.0, 0.002 },
+    { "PRIOR_CMH_SCALE", &tune_prior_cmh_scale, 20, 240, 11.0, 0.002 },
+    { "PRIOR_CMH_BIAS", &tune_prior_cmh_bias, 0, 200, 10.0, 0.002 },
+    { "PAWN_HIST_WEIGHT", &tune_pawn_hist_weight, 0, 2048, 102.4, 0.002 },
+    { "CONT_ORDER_WEIGHT_2", &tune_cont_order_weight_2, 1, 2048, 102.3, 0.002 },
+    { "CONT_ORDER_WEIGHT_4", &tune_cont_order_weight_4, 1, 1024, 51.1, 0.002 },
+    { "CONT_ORDER_WEIGHT_6", &tune_cont_order_weight_6, 1, 1024, 51.1, 0.002 },
+    { "THREAT_ESCAPE_MINOR", &tune_threat_escape_minor, 2000, 12000, 500.0, 0.002 },
+    { "THREAT_ENTER_MINOR", &tune_threat_enter_minor, 2000, 12000, 500.0, 0.002 },
+    { "THREAT_ESCAPE_ROOK", &tune_threat_escape_rook, 3000, 16000, 650.0, 0.002 },
+    { "THREAT_ENTER_ROOK", &tune_threat_enter_rook, 3000, 16000, 650.0, 0.002 },
+    { "THREAT_ESCAPE_QUEEN", &tune_threat_escape_queen, 4000, 20000, 800.0, 0.002 },
+    { "THREAT_ENTER_QUEEN", &tune_threat_enter_queen, 4000, 20000, 800.0, 0.002 },
+    { "NODE_CACHE_BONUS", &tune_node_cache_bonus, 1000, 8000, 350.0, 0.002 },
+    { "LMR_MIN_DEPTH", &tune_lmr_min_depth, 1, 3, 0.5, 0.002 },
+    { "LMR_QUIET_SCALE", &tune_lmr_quiet_scale, 200, 700, 25.0, 0.002 },
+    { "LMR_QUIET_BIAS", &tune_lmr_quiet_bias, 200, 800, 30.0, 0.002 },
+    { "LMR_CAPTURE_SCALE", &tune_lmr_capture_scale, 200, 700, 25.0, 0.002 },
+    { "LMR_CAPTURE_BIAS", &tune_lmr_capture_bias, 200, 900, 35.0, 0.002 },
+    { "LMR_QUIET_NON_PV", &tune_lmr_quiet_non_pv, -2048, 4096, 307.2, 0.002 },
+    { "LMR_QUIET_TT_CAPTURE", &tune_lmr_quiet_tt_capture, -2048, 4096, 307.2, 0.002 },
+    { "LMR_QUIET_REFUTATION", &tune_lmr_quiet_refutation, -2048, 4096, 307.2, 0.002 },
+    { "LMR_QUIET_CUT_NODE", &tune_lmr_quiet_cut_node, -2048, 4096, 307.2, 0.002 },
+    { "LMR_QUIET_NOT_IMPROVING", &tune_lmr_quiet_not_improving, -2048, 4096, 307.2, 0.002 },
+    { "LMR_QUIET_CHECK", &tune_lmr_quiet_check, -2048, 4096, 307.2, 0.002 },
+    { "LMR_STAT_OFFSET", &tune_lmr_stat_offset, 5000, 10000, 250.0, 0.002 },
+    { "LMR_STAT_DIV", &tune_lmr_stat_div, 5, 30, 1.2, 0.002 },
+    { "LMR_CAPTURE_WINNING", &tune_lmr_capture_winning, -2048, 4096, 307.2, 0.002 },
+    { "LMR_CAPTURE_BAD", &tune_lmr_capture_bad, -2048, 4096, 307.2, 0.002 },
+    { "LMR_CAPTURE_CUT_NODE", &tune_lmr_capture_cut_node, -2048, 4096, 307.2, 0.002 },
+    { "LMR_CAPTURE_NOT_IMPROVING", &tune_lmr_capture_not_improving, -2048, 2048, 204.8, 0.002 },
+    { "LMR_CAPTURE_CHECK", &tune_lmr_capture_check, -2048, 4096, 307.2, 0.002 },
+    { "LMR_TT_DEPTH", &tune_lmr_tt_depth, -2048, 4096, 307.2, 0.002 },
+    { "LMR_DEEPER_MARGIN", &tune_lmr_deeper_margin, 12, 120, 5.4, 0.002 },
+    { "PV_TT_MOVE_MIN_ROOT_DEPTH", &tune_pv_tt_move_min_root_depth, 4, 16, 0.6, 0.002 },
+    { "ALPHA_IMPROVEMENT_MIN_DEPTH", &tune_alpha_improvement_min_depth, 1, 6, 0.5, 0.002 },
+    { "LMP_BASE", &tune_lmp_base, 1, 8, 0.5, 0.002 },
+    { "LMP_PV_SCALE", &tune_lmp_pv_scale, 0, 4, 0.5, 0.002 },
+    { "HIST_PRUNE_MAX_DEPTH", &tune_hist_prune_max_depth, 4, 12, 0.5, 0.002 },
+    { "HIST_PRUNE_LINEAR", &tune_hist_prune_linear, 100, 400, 15.0, 0.002 },
+    { "HIST_PRUNE_QUAD", &tune_hist_prune_quad, 60, 300, 12.0, 0.002 },
+    { "FUTILITY_LMR_SQ", &tune_futility_lmr_sq, 96, 384, 14.4, 0.002 },
+    { "FUTILITY_STAT_DIV", &tune_futility_stat_div, 213, 1707, 74.7, 0.002 },
+    { "SEE_CAPTURE_DEPTH", &tune_see_capture_depth, 1, 12, 0.6, 0.002 },
+    { "SEE_CAPTURE_MULT", &tune_see_capture_mult, 60, 180, 6.0, 0.002 },
+    { "SEE_QUIET_DEPTH", &tune_see_quiet_depth, 1, 12, 0.6, 0.002 },
+    { "SEE_QUIET_MULT", &tune_see_quiet_mult, 10, 100, 4.5, 0.002 },
+    { "SEE_QUIET_STAT_DIV", &tune_see_quiet_stat_div, 64, 256, 9.6, 0.002 },
     { "SE_MARGIN",          &tune_se_margin,          16,  96,  8.0, 0.002 },  /* 1/16 cp per ply */
     { "NMP_MIN_DEPTH",      &tune_nmp_min_depth,       1,   6,  0.5, 0.002 },
     /* Null move R in 1/PLY_GRAIN ply (the depth rate per ply of depth). */
@@ -82,17 +203,7 @@ const tunable_t tunables[] = {
     { "NMP_R_EVAL_DIV",     &tune_nmp_r_eval_div,    100,  400,  15.0, 0.002 },
     { "NMP_R_EVAL_MAX",     &tune_nmp_r_eval_max,   1024, 6144, 512.0, 0.002 },
     { "NMP_VERIFY_DEPTH",   &tune_nmp_verify_depth,    8,  24,  1.0, 0.002 },
-    { "LMR_HISTORY_DIVISOR", &tune_lmr_history_divisor, 400, 16000, 400.0, 0.002 },
-    { "HIST_PRUNE_MAX_DEPTH", &tune_hist_prune_max_depth, 1, 8,  0.5, 0.002 },
-    { "HIST_PRUNE_MARGIN",  &tune_hist_prune_margin,  50,  2000,  100.0, 0.002 },
     /* In 1/PLY_GRAIN ply: 0 to 3 plies, c_end half a ply. */
-    { "LMR_PV_NODE",        &tune_lmr_pv_node,         0, 3072, 512.0, 0.002 },
-    { "LMR_REDUCE_CHECKS",  &tune_lmr_reduce_checks,   0,    1,   0.5, 0.002 },
-    { "PRUNE_CHECKS",       &tune_prune_checks,        0,    1,   0.5, 0.002 },
-    { "LMR_GIVES_CHECK",    &tune_lmr_gives_check,     0, 3072, 256.0, 0.002 },
-    { "LMR_ROUND_OFFSET",   &tune_lmr_round_offset,    0, 1023,  64.0, 0.002 },
-    { "LMR_CUT_NODE",       &tune_lmr_cut_node,        0, 3072, 512.0, 0.002 },
-    { "LMR_NOT_IMPROVING",  &tune_lmr_not_improving,   0, 3072, 512.0, 0.002 },
     /* Time management (limits.h). Tuned at one time control, they fit that one best. The stability
      * factor stays above the next one (1.2), so a changed best move always gets the most time. */
     { "TM_MOVES_LEFT",      &tune_tm_moves_left,      10,  40,  1.5, 0.002 },
@@ -108,15 +219,6 @@ const tunable_t tunables[] = {
     { "SE_MIN_DEPTH",        &tune_se_min_depth,    4,   10,    0.5, 0.002 },
     { "SE_TT_DEPTH_MARGIN",  &tune_se_tt_depth_margin,    1,    6,    0.5, 0.002 },
     { "SE_REDUCTION",        &tune_se_reduction,    0,    3,    0.5, 0.002 },
-    { "LMR_KILLER_MAX",      &tune_lmr_killer_max,    0,    3,    0.5, 0.002 },
-    { "LMR_BASE",            &tune_lmr_base,    0,  150,    7.5, 0.002 },
-    { "LMR_DIVISOR",         &tune_lmr_divisor,  150,  400,   12.5, 0.002 },
-    { "LMR_MIN_DEPTH",       &tune_lmr_min_depth,    2,    6,    0.5, 0.002 },
-    { "LMR_MIN_MOVES",       &tune_lmr_min_moves,    1,    6,    0.5, 0.002 },
-    { "HIST_BONUS_SCALE",    &tune_hist_bonus_scale,    4,   40,    1.8, 0.002 },
-    { "HIST_BONUS_MAX",      &tune_hist_bonus_max,  400, 4000,  180.0, 0.002 },
-    { "LMP_MAX_DEPTH",       &tune_lmp_max_depth,    3,   10,    0.5, 0.002 },
-    { "SEE_PRUNE_MAX_DEPTH", &tune_see_prune_max_depth,    4,   12,    0.5, 0.002 },
     { "IIR_MIN_DEPTH",       &tune_iir_min_depth,    2,    8,    0.5, 0.002 },
     { "ASPIRATION_WINDOW",   &tune_aspiration_window,    8,   80,    3.6, 0.002 },
     { "DELTA_MARGIN",        &tune_delta_margin,   50,  400,   17.5, 0.002 },
@@ -144,7 +246,7 @@ bool set_tunable(const char* name, size_t length, int value) {
         const tunable_t* t = &tunables[i];
         if (strlen(t->name) == length && strncasecmp(name, t->name, length) == 0) {
             *t->value = value < t->min ? t->min : (value > t->max ? t->max : value);
-            init_lmr_table();   /* LMR_BASE and LMR_DIVISOR shape it. */
+            init_lmr_table();   /* LMR_QUIET_/LMR_CAPTURE_ SCALE and BIAS shape it. */
             return true;
         }
     }

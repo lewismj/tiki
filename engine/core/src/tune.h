@@ -41,31 +41,91 @@ void print_spsa_input(void);
 enum {
     RFP_MARGIN_DEFAULT = RFP_MARGIN,
     RFP_MAX_DEPTH_DEFAULT = RFP_MAX_DEPTH,
-    FUTILITY_MARGIN_DEFAULT = FUTILITY_MARGIN,
-    FUTILITY_MAX_DEPTH_DEFAULT = FUTILITY_MAX_DEPTH,
-    LMP_BASE_DEFAULT = LMP_BASE,
-    SEE_QUIET_MARGIN_DEFAULT = SEE_QUIET_MARGIN,
-    SEE_CAPTURE_MARGIN_DEFAULT = SEE_CAPTURE_MARGIN,
     SE_MARGIN_DEFAULT = SE_MARGIN,
     RFP_IMPROVING_DEFAULT = RFP_IMPROVING,
-    FUTILITY_BASE_DEFAULT = FUTILITY_BASE,
-    LMP_NOT_IMPROVING_PCT_DEFAULT = LMP_NOT_IMPROVING_PCT,
+    RFP_OPP_WORSENING_DEFAULT = RFP_OPP_WORSENING,
+    RFP_OPP_WORSENING_MARGIN_DEFAULT = RFP_OPP_WORSENING_MARGIN,
+    RFP_NO_TT_DEFAULT = RFP_NO_TT,
+    RFP_MIN_MARGIN_DEFAULT = RFP_MIN_MARGIN,
+    RFP_BETA_BLEND_DEFAULT = RFP_BETA_BLEND,
+    HIST_CLEAR_MAIN_DEFAULT = HIST_CLEAR_MAIN,
+    HIST_CLEAR_CONT_DEFAULT = HIST_CLEAR_CONT,
+    HIST_CLEAR_PAWN_DEFAULT = HIST_CLEAR_PAWN,
+    HIST_BONUS_OFFSET_DEFAULT = HIST_BONUS_OFFSET,
+    HIST_BONUS_LINEAR_DEFAULT = HIST_BONUS_LINEAR,
+    HIST_BONUS_SCORE_DIFF_DEFAULT = HIST_BONUS_SCORE_DIFF,
+    HIST_BONUS_LIMIT_DEFAULT = HIST_BONUS_LIMIT,
+    HIST_MALUS_OFFSET_DEFAULT = HIST_MALUS_OFFSET,
+    HIST_MALUS_LINEAR_DEFAULT = HIST_MALUS_LINEAR,
+    HIST_MALUS_SCORE_DIFF_DEFAULT = HIST_MALUS_SCORE_DIFF,
+    HIST_MALUS_LIMIT_DEFAULT = HIST_MALUS_LIMIT,
+    CONT_BONUS_OFFSET_DEFAULT = CONT_BONUS_OFFSET,
+    CONT_BONUS_LINEAR_DEFAULT = CONT_BONUS_LINEAR,
+    CONT_BONUS_SCORE_DIFF_DEFAULT = CONT_BONUS_SCORE_DIFF,
+    CONT_BONUS_LIMIT_DEFAULT = CONT_BONUS_LIMIT,
+    CONT_MALUS_OFFSET_DEFAULT = CONT_MALUS_OFFSET,
+    CONT_MALUS_LINEAR_DEFAULT = CONT_MALUS_LINEAR,
+    CONT_MALUS_SCORE_DIFF_DEFAULT = CONT_MALUS_SCORE_DIFF,
+    CONT_MALUS_LIMIT_DEFAULT = CONT_MALUS_LIMIT,
+    HIST_SCORE_DIFF_MAX_DEFAULT = HIST_SCORE_DIFF_MAX,
+    CONT_UPDATE_WEIGHT_2_DEFAULT = CONT_UPDATE_WEIGHT_2,
+    CONT_UPDATE_WEIGHT_3_DEFAULT = CONT_UPDATE_WEIGHT_3,
+    CONT_UPDATE_WEIGHT_4_DEFAULT = CONT_UPDATE_WEIGHT_4,
+    CONT_UPDATE_WEIGHT_6_DEFAULT = CONT_UPDATE_WEIGHT_6,
+    PRIOR_CMH_CAP_DEFAULT = PRIOR_CMH_CAP,
+    PRIOR_CMH_SCALE_DEFAULT = PRIOR_CMH_SCALE,
+    PRIOR_CMH_BIAS_DEFAULT = PRIOR_CMH_BIAS,
+    PAWN_HIST_WEIGHT_DEFAULT = PAWN_HIST_WEIGHT,
+    CONT_ORDER_WEIGHT_2_DEFAULT = CONT_ORDER_WEIGHT_2,
+    CONT_ORDER_WEIGHT_4_DEFAULT = CONT_ORDER_WEIGHT_4,
+    CONT_ORDER_WEIGHT_6_DEFAULT = CONT_ORDER_WEIGHT_6,
+    THREAT_ESCAPE_MINOR_DEFAULT = THREAT_ESCAPE_MINOR,
+    THREAT_ENTER_MINOR_DEFAULT = THREAT_ENTER_MINOR,
+    THREAT_ESCAPE_ROOK_DEFAULT = THREAT_ESCAPE_ROOK,
+    THREAT_ENTER_ROOK_DEFAULT = THREAT_ENTER_ROOK,
+    THREAT_ESCAPE_QUEEN_DEFAULT = THREAT_ESCAPE_QUEEN,
+    THREAT_ENTER_QUEEN_DEFAULT = THREAT_ENTER_QUEEN,
+    NODE_CACHE_BONUS_DEFAULT = NODE_CACHE_BONUS,
+    LMR_MIN_DEPTH_DEFAULT = LMR_MIN_DEPTH,
+    LMR_QUIET_SCALE_DEFAULT = LMR_QUIET_SCALE,
+    LMR_QUIET_BIAS_DEFAULT = LMR_QUIET_BIAS,
+    LMR_CAPTURE_SCALE_DEFAULT = LMR_CAPTURE_SCALE,
+    LMR_CAPTURE_BIAS_DEFAULT = LMR_CAPTURE_BIAS,
+    LMR_QUIET_NON_PV_DEFAULT = LMR_QUIET_NON_PV,
+    LMR_QUIET_TT_CAPTURE_DEFAULT = LMR_QUIET_TT_CAPTURE,
+    LMR_QUIET_REFUTATION_DEFAULT = LMR_QUIET_REFUTATION,
+    LMR_QUIET_CUT_NODE_DEFAULT = LMR_QUIET_CUT_NODE,
+    LMR_QUIET_NOT_IMPROVING_DEFAULT = LMR_QUIET_NOT_IMPROVING,
+    LMR_QUIET_CHECK_DEFAULT = LMR_QUIET_CHECK,
+    LMR_STAT_OFFSET_DEFAULT = LMR_STAT_OFFSET,
+    LMR_STAT_DIV_DEFAULT = LMR_STAT_DIV,
+    LMR_CAPTURE_WINNING_DEFAULT = LMR_CAPTURE_WINNING,
+    LMR_CAPTURE_BAD_DEFAULT = LMR_CAPTURE_BAD,
+    LMR_CAPTURE_CUT_NODE_DEFAULT = LMR_CAPTURE_CUT_NODE,
+    LMR_CAPTURE_NOT_IMPROVING_DEFAULT = LMR_CAPTURE_NOT_IMPROVING,
+    LMR_CAPTURE_CHECK_DEFAULT = LMR_CAPTURE_CHECK,
+    LMR_TT_DEPTH_DEFAULT = LMR_TT_DEPTH,
+    LMR_DEEPER_MARGIN_DEFAULT = LMR_DEEPER_MARGIN,
+    PV_TT_MOVE_MIN_ROOT_DEPTH_DEFAULT = PV_TT_MOVE_MIN_ROOT_DEPTH,
+    ALPHA_IMPROVEMENT_MIN_DEPTH_DEFAULT = ALPHA_IMPROVEMENT_MIN_DEPTH,
+    LMP_BASE_DEFAULT = LMP_BASE,
+    LMP_PV_SCALE_DEFAULT = LMP_PV_SCALE,
+    HIST_PRUNE_MAX_DEPTH_DEFAULT = HIST_PRUNE_MAX_DEPTH,
+    HIST_PRUNE_LINEAR_DEFAULT = HIST_PRUNE_LINEAR,
+    HIST_PRUNE_QUAD_DEFAULT = HIST_PRUNE_QUAD,
+    FUTILITY_LMR_SQ_DEFAULT = FUTILITY_LMR_SQ,
+    FUTILITY_STAT_DIV_DEFAULT = FUTILITY_STAT_DIV,
+    SEE_CAPTURE_DEPTH_DEFAULT = SEE_CAPTURE_DEPTH,
+    SEE_CAPTURE_MULT_DEFAULT = SEE_CAPTURE_MULT,
+    SEE_QUIET_DEPTH_DEFAULT = SEE_QUIET_DEPTH,
+    SEE_QUIET_MULT_DEFAULT = SEE_QUIET_MULT,
+    SEE_QUIET_STAT_DIV_DEFAULT = SEE_QUIET_STAT_DIV,
     NMP_MIN_DEPTH_DEFAULT = NMP_MIN_DEPTH,
     NMP_R_BASE_DEFAULT = NMP_R_BASE,
     NMP_R_DEPTH_RATE_DEFAULT = NMP_R_DEPTH_RATE,
     NMP_R_EVAL_DIV_DEFAULT = NMP_R_EVAL_DIV,
     NMP_R_EVAL_MAX_DEFAULT = NMP_R_EVAL_MAX,
     NMP_VERIFY_DEPTH_DEFAULT = NMP_VERIFY_DEPTH,
-    LMR_HISTORY_DIVISOR_DEFAULT = LMR_HISTORY_DIVISOR,
-    HIST_PRUNE_MAX_DEPTH_DEFAULT = HIST_PRUNE_MAX_DEPTH,
-    HIST_PRUNE_MARGIN_DEFAULT = HIST_PRUNE_MARGIN,
-    LMR_PV_NODE_DEFAULT = LMR_PV_NODE,
-    LMR_REDUCE_CHECKS_DEFAULT = LMR_REDUCE_CHECKS,
-    PRUNE_CHECKS_DEFAULT = PRUNE_CHECKS,
-    LMR_GIVES_CHECK_DEFAULT = LMR_GIVES_CHECK,
-    LMR_ROUND_OFFSET_DEFAULT = LMR_ROUND_OFFSET,
-    LMR_CUT_NODE_DEFAULT = LMR_CUT_NODE,
-    LMR_NOT_IMPROVING_DEFAULT = LMR_NOT_IMPROVING,
     TM_MOVES_LEFT_DEFAULT = TM_MOVES_LEFT,
     TM_SOFT_PERCENT_DEFAULT = TM_SOFT_PERCENT,
     TM_HARD_PERCENT_DEFAULT = TM_HARD_PERCENT,
@@ -78,15 +138,6 @@ enum {
     SE_MIN_DEPTH_DEFAULT = SE_MIN_DEPTH,
     SE_TT_DEPTH_MARGIN_DEFAULT = SE_TT_DEPTH_MARGIN,
     SE_REDUCTION_DEFAULT = SE_REDUCTION,
-    LMR_KILLER_MAX_DEFAULT = LMR_KILLER_MAX,
-    LMR_BASE_DEFAULT = LMR_BASE,
-    LMR_DIVISOR_DEFAULT = LMR_DIVISOR,
-    LMR_MIN_DEPTH_DEFAULT = LMR_MIN_DEPTH,
-    LMR_MIN_MOVES_DEFAULT = LMR_MIN_MOVES,
-    HIST_BONUS_SCALE_DEFAULT = HIST_BONUS_SCALE,
-    HIST_BONUS_MAX_DEFAULT = HIST_BONUS_MAX,
-    LMP_MAX_DEPTH_DEFAULT = LMP_MAX_DEPTH,
-    SEE_PRUNE_MAX_DEPTH_DEFAULT = SEE_PRUNE_MAX_DEPTH,
     IIR_MIN_DEPTH_DEFAULT = IIR_MIN_DEPTH,
     ASPIRATION_WINDOW_DEFAULT = ASPIRATION_WINDOW,
     DELTA_MARGIN_DEFAULT = DELTA_MARGIN,
@@ -98,31 +149,91 @@ enum {
 
 extern int tune_rfp_margin;
 extern int tune_rfp_max_depth;
-extern int tune_futility_margin;
-extern int tune_futility_max_depth;
-extern int tune_lmp_base;
-extern int tune_see_quiet_margin;
-extern int tune_see_capture_margin;
 extern int tune_se_margin;
 extern int tune_rfp_improving;
-extern int tune_futility_base;
-extern int tune_lmp_not_improving_pct;
+extern int tune_rfp_opp_worsening;
+extern int tune_rfp_opp_worsening_margin;
+extern int tune_rfp_no_tt;
+extern int tune_rfp_min_margin;
+extern int tune_rfp_beta_blend;
+extern int tune_hist_clear_main;
+extern int tune_hist_clear_cont;
+extern int tune_hist_clear_pawn;
+extern int tune_hist_bonus_offset;
+extern int tune_hist_bonus_linear;
+extern int tune_hist_bonus_score_diff;
+extern int tune_hist_bonus_limit;
+extern int tune_hist_malus_offset;
+extern int tune_hist_malus_linear;
+extern int tune_hist_malus_score_diff;
+extern int tune_hist_malus_limit;
+extern int tune_cont_bonus_offset;
+extern int tune_cont_bonus_linear;
+extern int tune_cont_bonus_score_diff;
+extern int tune_cont_bonus_limit;
+extern int tune_cont_malus_offset;
+extern int tune_cont_malus_linear;
+extern int tune_cont_malus_score_diff;
+extern int tune_cont_malus_limit;
+extern int tune_hist_score_diff_max;
+extern int tune_cont_update_weight_2;
+extern int tune_cont_update_weight_3;
+extern int tune_cont_update_weight_4;
+extern int tune_cont_update_weight_6;
+extern int tune_prior_cmh_cap;
+extern int tune_prior_cmh_scale;
+extern int tune_prior_cmh_bias;
+extern int tune_pawn_hist_weight;
+extern int tune_cont_order_weight_2;
+extern int tune_cont_order_weight_4;
+extern int tune_cont_order_weight_6;
+extern int tune_threat_escape_minor;
+extern int tune_threat_enter_minor;
+extern int tune_threat_escape_rook;
+extern int tune_threat_enter_rook;
+extern int tune_threat_escape_queen;
+extern int tune_threat_enter_queen;
+extern int tune_node_cache_bonus;
+extern int tune_lmr_min_depth;
+extern int tune_lmr_quiet_scale;
+extern int tune_lmr_quiet_bias;
+extern int tune_lmr_capture_scale;
+extern int tune_lmr_capture_bias;
+extern int tune_lmr_quiet_non_pv;
+extern int tune_lmr_quiet_tt_capture;
+extern int tune_lmr_quiet_refutation;
+extern int tune_lmr_quiet_cut_node;
+extern int tune_lmr_quiet_not_improving;
+extern int tune_lmr_quiet_check;
+extern int tune_lmr_stat_offset;
+extern int tune_lmr_stat_div;
+extern int tune_lmr_capture_winning;
+extern int tune_lmr_capture_bad;
+extern int tune_lmr_capture_cut_node;
+extern int tune_lmr_capture_not_improving;
+extern int tune_lmr_capture_check;
+extern int tune_lmr_tt_depth;
+extern int tune_lmr_deeper_margin;
+extern int tune_pv_tt_move_min_root_depth;
+extern int tune_alpha_improvement_min_depth;
+extern int tune_lmp_base;
+extern int tune_lmp_pv_scale;
+extern int tune_hist_prune_max_depth;
+extern int tune_hist_prune_linear;
+extern int tune_hist_prune_quad;
+extern int tune_futility_lmr_sq;
+extern int tune_futility_stat_div;
+extern int tune_see_capture_depth;
+extern int tune_see_capture_mult;
+extern int tune_see_quiet_depth;
+extern int tune_see_quiet_mult;
+extern int tune_see_quiet_stat_div;
 extern int tune_nmp_min_depth;
 extern int tune_nmp_r_base;
 extern int tune_nmp_r_depth_rate;
 extern int tune_nmp_r_eval_div;
 extern int tune_nmp_r_eval_max;
 extern int tune_nmp_verify_depth;
-extern int tune_lmr_history_divisor;
-extern int tune_hist_prune_max_depth;
-extern int tune_hist_prune_margin;
-extern int tune_lmr_pv_node;
-extern int tune_lmr_reduce_checks;
-extern int tune_prune_checks;
-extern int tune_lmr_gives_check;
-extern int tune_lmr_round_offset;
-extern int tune_lmr_cut_node;
-extern int tune_lmr_not_improving;
 extern int tune_tm_moves_left;
 extern int tune_tm_soft_percent;
 extern int tune_tm_hard_percent;
@@ -135,15 +246,6 @@ extern int tune_corr_rate;
 extern int tune_se_min_depth;
 extern int tune_se_tt_depth_margin;
 extern int tune_se_reduction;
-extern int tune_lmr_killer_max;
-extern int tune_lmr_base;
-extern int tune_lmr_divisor;
-extern int tune_lmr_min_depth;
-extern int tune_lmr_min_moves;
-extern int tune_hist_bonus_scale;
-extern int tune_hist_bonus_max;
-extern int tune_lmp_max_depth;
-extern int tune_see_prune_max_depth;
 extern int tune_iir_min_depth;
 extern int tune_aspiration_window;
 extern int tune_delta_margin;
@@ -154,31 +256,91 @@ extern int tune_probcut_improving;
 
 #undef RFP_MARGIN
 #undef RFP_MAX_DEPTH
-#undef FUTILITY_MARGIN
-#undef FUTILITY_MAX_DEPTH
-#undef LMP_BASE
-#undef SEE_QUIET_MARGIN
-#undef SEE_CAPTURE_MARGIN
 #undef SE_MARGIN
 #undef RFP_IMPROVING
-#undef FUTILITY_BASE
-#undef LMP_NOT_IMPROVING_PCT
+#undef RFP_OPP_WORSENING
+#undef RFP_OPP_WORSENING_MARGIN
+#undef RFP_NO_TT
+#undef RFP_MIN_MARGIN
+#undef RFP_BETA_BLEND
+#undef HIST_CLEAR_MAIN
+#undef HIST_CLEAR_CONT
+#undef HIST_CLEAR_PAWN
+#undef HIST_BONUS_OFFSET
+#undef HIST_BONUS_LINEAR
+#undef HIST_BONUS_SCORE_DIFF
+#undef HIST_BONUS_LIMIT
+#undef HIST_MALUS_OFFSET
+#undef HIST_MALUS_LINEAR
+#undef HIST_MALUS_SCORE_DIFF
+#undef HIST_MALUS_LIMIT
+#undef CONT_BONUS_OFFSET
+#undef CONT_BONUS_LINEAR
+#undef CONT_BONUS_SCORE_DIFF
+#undef CONT_BONUS_LIMIT
+#undef CONT_MALUS_OFFSET
+#undef CONT_MALUS_LINEAR
+#undef CONT_MALUS_SCORE_DIFF
+#undef CONT_MALUS_LIMIT
+#undef HIST_SCORE_DIFF_MAX
+#undef CONT_UPDATE_WEIGHT_2
+#undef CONT_UPDATE_WEIGHT_3
+#undef CONT_UPDATE_WEIGHT_4
+#undef CONT_UPDATE_WEIGHT_6
+#undef PRIOR_CMH_CAP
+#undef PRIOR_CMH_SCALE
+#undef PRIOR_CMH_BIAS
+#undef PAWN_HIST_WEIGHT
+#undef CONT_ORDER_WEIGHT_2
+#undef CONT_ORDER_WEIGHT_4
+#undef CONT_ORDER_WEIGHT_6
+#undef THREAT_ESCAPE_MINOR
+#undef THREAT_ENTER_MINOR
+#undef THREAT_ESCAPE_ROOK
+#undef THREAT_ENTER_ROOK
+#undef THREAT_ESCAPE_QUEEN
+#undef THREAT_ENTER_QUEEN
+#undef NODE_CACHE_BONUS
+#undef LMR_MIN_DEPTH
+#undef LMR_QUIET_SCALE
+#undef LMR_QUIET_BIAS
+#undef LMR_CAPTURE_SCALE
+#undef LMR_CAPTURE_BIAS
+#undef LMR_QUIET_NON_PV
+#undef LMR_QUIET_TT_CAPTURE
+#undef LMR_QUIET_REFUTATION
+#undef LMR_QUIET_CUT_NODE
+#undef LMR_QUIET_NOT_IMPROVING
+#undef LMR_QUIET_CHECK
+#undef LMR_STAT_OFFSET
+#undef LMR_STAT_DIV
+#undef LMR_CAPTURE_WINNING
+#undef LMR_CAPTURE_BAD
+#undef LMR_CAPTURE_CUT_NODE
+#undef LMR_CAPTURE_NOT_IMPROVING
+#undef LMR_CAPTURE_CHECK
+#undef LMR_TT_DEPTH
+#undef LMR_DEEPER_MARGIN
+#undef PV_TT_MOVE_MIN_ROOT_DEPTH
+#undef ALPHA_IMPROVEMENT_MIN_DEPTH
+#undef LMP_BASE
+#undef LMP_PV_SCALE
+#undef HIST_PRUNE_MAX_DEPTH
+#undef HIST_PRUNE_LINEAR
+#undef HIST_PRUNE_QUAD
+#undef FUTILITY_LMR_SQ
+#undef FUTILITY_STAT_DIV
+#undef SEE_CAPTURE_DEPTH
+#undef SEE_CAPTURE_MULT
+#undef SEE_QUIET_DEPTH
+#undef SEE_QUIET_MULT
+#undef SEE_QUIET_STAT_DIV
 #undef NMP_MIN_DEPTH
 #undef NMP_R_BASE
 #undef NMP_R_DEPTH_RATE
 #undef NMP_R_EVAL_DIV
 #undef NMP_R_EVAL_MAX
 #undef NMP_VERIFY_DEPTH
-#undef LMR_HISTORY_DIVISOR
-#undef HIST_PRUNE_MAX_DEPTH
-#undef HIST_PRUNE_MARGIN
-#undef LMR_PV_NODE
-#undef LMR_REDUCE_CHECKS
-#undef PRUNE_CHECKS
-#undef LMR_GIVES_CHECK
-#undef LMR_ROUND_OFFSET
-#undef LMR_CUT_NODE
-#undef LMR_NOT_IMPROVING
 #undef TM_MOVES_LEFT
 #undef TM_SOFT_PERCENT
 #undef TM_HARD_PERCENT
@@ -191,15 +353,6 @@ extern int tune_probcut_improving;
 #undef SE_MIN_DEPTH
 #undef SE_TT_DEPTH_MARGIN
 #undef SE_REDUCTION
-#undef LMR_KILLER_MAX
-#undef LMR_BASE
-#undef LMR_DIVISOR
-#undef LMR_MIN_DEPTH
-#undef LMR_MIN_MOVES
-#undef HIST_BONUS_SCALE
-#undef HIST_BONUS_MAX
-#undef LMP_MAX_DEPTH
-#undef SEE_PRUNE_MAX_DEPTH
 #undef IIR_MIN_DEPTH
 #undef ASPIRATION_WINDOW
 #undef DELTA_MARGIN
@@ -209,31 +362,91 @@ extern int tune_probcut_improving;
 #undef PROBCUT_IMPROVING
 #define RFP_MARGIN tune_rfp_margin
 #define RFP_MAX_DEPTH tune_rfp_max_depth
-#define FUTILITY_MARGIN tune_futility_margin
-#define FUTILITY_MAX_DEPTH tune_futility_max_depth
-#define LMP_BASE tune_lmp_base
-#define SEE_QUIET_MARGIN tune_see_quiet_margin
-#define SEE_CAPTURE_MARGIN tune_see_capture_margin
 #define SE_MARGIN tune_se_margin
 #define RFP_IMPROVING tune_rfp_improving
-#define FUTILITY_BASE tune_futility_base
-#define LMP_NOT_IMPROVING_PCT tune_lmp_not_improving_pct
+#define RFP_OPP_WORSENING tune_rfp_opp_worsening
+#define RFP_OPP_WORSENING_MARGIN tune_rfp_opp_worsening_margin
+#define RFP_NO_TT tune_rfp_no_tt
+#define RFP_MIN_MARGIN tune_rfp_min_margin
+#define RFP_BETA_BLEND tune_rfp_beta_blend
+#define HIST_CLEAR_MAIN tune_hist_clear_main
+#define HIST_CLEAR_CONT tune_hist_clear_cont
+#define HIST_CLEAR_PAWN tune_hist_clear_pawn
+#define HIST_BONUS_OFFSET tune_hist_bonus_offset
+#define HIST_BONUS_LINEAR tune_hist_bonus_linear
+#define HIST_BONUS_SCORE_DIFF tune_hist_bonus_score_diff
+#define HIST_BONUS_LIMIT tune_hist_bonus_limit
+#define HIST_MALUS_OFFSET tune_hist_malus_offset
+#define HIST_MALUS_LINEAR tune_hist_malus_linear
+#define HIST_MALUS_SCORE_DIFF tune_hist_malus_score_diff
+#define HIST_MALUS_LIMIT tune_hist_malus_limit
+#define CONT_BONUS_OFFSET tune_cont_bonus_offset
+#define CONT_BONUS_LINEAR tune_cont_bonus_linear
+#define CONT_BONUS_SCORE_DIFF tune_cont_bonus_score_diff
+#define CONT_BONUS_LIMIT tune_cont_bonus_limit
+#define CONT_MALUS_OFFSET tune_cont_malus_offset
+#define CONT_MALUS_LINEAR tune_cont_malus_linear
+#define CONT_MALUS_SCORE_DIFF tune_cont_malus_score_diff
+#define CONT_MALUS_LIMIT tune_cont_malus_limit
+#define HIST_SCORE_DIFF_MAX tune_hist_score_diff_max
+#define CONT_UPDATE_WEIGHT_2 tune_cont_update_weight_2
+#define CONT_UPDATE_WEIGHT_3 tune_cont_update_weight_3
+#define CONT_UPDATE_WEIGHT_4 tune_cont_update_weight_4
+#define CONT_UPDATE_WEIGHT_6 tune_cont_update_weight_6
+#define PRIOR_CMH_CAP tune_prior_cmh_cap
+#define PRIOR_CMH_SCALE tune_prior_cmh_scale
+#define PRIOR_CMH_BIAS tune_prior_cmh_bias
+#define PAWN_HIST_WEIGHT tune_pawn_hist_weight
+#define CONT_ORDER_WEIGHT_2 tune_cont_order_weight_2
+#define CONT_ORDER_WEIGHT_4 tune_cont_order_weight_4
+#define CONT_ORDER_WEIGHT_6 tune_cont_order_weight_6
+#define THREAT_ESCAPE_MINOR tune_threat_escape_minor
+#define THREAT_ENTER_MINOR tune_threat_enter_minor
+#define THREAT_ESCAPE_ROOK tune_threat_escape_rook
+#define THREAT_ENTER_ROOK tune_threat_enter_rook
+#define THREAT_ESCAPE_QUEEN tune_threat_escape_queen
+#define THREAT_ENTER_QUEEN tune_threat_enter_queen
+#define NODE_CACHE_BONUS tune_node_cache_bonus
+#define LMR_MIN_DEPTH tune_lmr_min_depth
+#define LMR_QUIET_SCALE tune_lmr_quiet_scale
+#define LMR_QUIET_BIAS tune_lmr_quiet_bias
+#define LMR_CAPTURE_SCALE tune_lmr_capture_scale
+#define LMR_CAPTURE_BIAS tune_lmr_capture_bias
+#define LMR_QUIET_NON_PV tune_lmr_quiet_non_pv
+#define LMR_QUIET_TT_CAPTURE tune_lmr_quiet_tt_capture
+#define LMR_QUIET_REFUTATION tune_lmr_quiet_refutation
+#define LMR_QUIET_CUT_NODE tune_lmr_quiet_cut_node
+#define LMR_QUIET_NOT_IMPROVING tune_lmr_quiet_not_improving
+#define LMR_QUIET_CHECK tune_lmr_quiet_check
+#define LMR_STAT_OFFSET tune_lmr_stat_offset
+#define LMR_STAT_DIV tune_lmr_stat_div
+#define LMR_CAPTURE_WINNING tune_lmr_capture_winning
+#define LMR_CAPTURE_BAD tune_lmr_capture_bad
+#define LMR_CAPTURE_CUT_NODE tune_lmr_capture_cut_node
+#define LMR_CAPTURE_NOT_IMPROVING tune_lmr_capture_not_improving
+#define LMR_CAPTURE_CHECK tune_lmr_capture_check
+#define LMR_TT_DEPTH tune_lmr_tt_depth
+#define LMR_DEEPER_MARGIN tune_lmr_deeper_margin
+#define PV_TT_MOVE_MIN_ROOT_DEPTH tune_pv_tt_move_min_root_depth
+#define ALPHA_IMPROVEMENT_MIN_DEPTH tune_alpha_improvement_min_depth
+#define LMP_BASE tune_lmp_base
+#define LMP_PV_SCALE tune_lmp_pv_scale
+#define HIST_PRUNE_MAX_DEPTH tune_hist_prune_max_depth
+#define HIST_PRUNE_LINEAR tune_hist_prune_linear
+#define HIST_PRUNE_QUAD tune_hist_prune_quad
+#define FUTILITY_LMR_SQ tune_futility_lmr_sq
+#define FUTILITY_STAT_DIV tune_futility_stat_div
+#define SEE_CAPTURE_DEPTH tune_see_capture_depth
+#define SEE_CAPTURE_MULT tune_see_capture_mult
+#define SEE_QUIET_DEPTH tune_see_quiet_depth
+#define SEE_QUIET_MULT tune_see_quiet_mult
+#define SEE_QUIET_STAT_DIV tune_see_quiet_stat_div
 #define NMP_MIN_DEPTH tune_nmp_min_depth
 #define NMP_R_BASE tune_nmp_r_base
 #define NMP_R_DEPTH_RATE tune_nmp_r_depth_rate
 #define NMP_R_EVAL_DIV tune_nmp_r_eval_div
 #define NMP_R_EVAL_MAX tune_nmp_r_eval_max
 #define NMP_VERIFY_DEPTH tune_nmp_verify_depth
-#define LMR_HISTORY_DIVISOR tune_lmr_history_divisor
-#define HIST_PRUNE_MAX_DEPTH tune_hist_prune_max_depth
-#define HIST_PRUNE_MARGIN tune_hist_prune_margin
-#define LMR_PV_NODE tune_lmr_pv_node
-#define LMR_REDUCE_CHECKS tune_lmr_reduce_checks
-#define PRUNE_CHECKS tune_prune_checks
-#define LMR_GIVES_CHECK tune_lmr_gives_check
-#define LMR_ROUND_OFFSET tune_lmr_round_offset
-#define LMR_CUT_NODE tune_lmr_cut_node
-#define LMR_NOT_IMPROVING tune_lmr_not_improving
 #define TM_MOVES_LEFT tune_tm_moves_left
 #define TM_SOFT_PERCENT tune_tm_soft_percent
 #define TM_HARD_PERCENT tune_tm_hard_percent
@@ -246,15 +459,6 @@ extern int tune_probcut_improving;
 #define SE_MIN_DEPTH tune_se_min_depth
 #define SE_TT_DEPTH_MARGIN tune_se_tt_depth_margin
 #define SE_REDUCTION tune_se_reduction
-#define LMR_KILLER_MAX tune_lmr_killer_max
-#define LMR_BASE tune_lmr_base
-#define LMR_DIVISOR tune_lmr_divisor
-#define LMR_MIN_DEPTH tune_lmr_min_depth
-#define LMR_MIN_MOVES tune_lmr_min_moves
-#define HIST_BONUS_SCALE tune_hist_bonus_scale
-#define HIST_BONUS_MAX tune_hist_bonus_max
-#define LMP_MAX_DEPTH tune_lmp_max_depth
-#define SEE_PRUNE_MAX_DEPTH tune_see_prune_max_depth
 #define IIR_MIN_DEPTH tune_iir_min_depth
 #define ASPIRATION_WINDOW tune_aspiration_window
 #define DELTA_MARGIN tune_delta_margin

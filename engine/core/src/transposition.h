@@ -308,10 +308,6 @@ static inline_always void tt_save(const uint64_t position_hash,
     if (eval != TT_EVAL_NONE) eval = eval > TT_EVAL_MAX ? TT_EVAL_MAX : eval < -TT_EVAL_MAX ? -TT_EVAL_MAX : eval;
     const uint64_t data = tt_pack(move, score, depth, hash_flag, tt_generation);
     const uint64_t key_eval = (position_hash & TT_KEY_MASK) | (uint16_t) (int16_t) eval;
-#ifdef TIKI_VERIFY
-    verify_journal_record((void*) &entry->data, atomic_load_explicit(&entry->data, memory_order_relaxed), 8);
-    verify_journal_record((void*) &entry->check, atomic_load_explicit(&entry->check, memory_order_relaxed), 8);
-#endif
     atomic_store_explicit(&entry->data, data, memory_order_relaxed);
     atomic_store_explicit(&entry->check, key_eval ^ data, memory_order_relaxed);
 }
