@@ -511,11 +511,11 @@ static inline_always bool is_mate_score(int score) {
 /**
  * Whether the side to move's position is improving: its network eval is above the one at its
  * previous node, two plies up, or four if that node was in check (no eval, -INF). With neither to
- * compare with, not improving.
+ * compare with, it counts as improving.
  */
 bool is_improving(int static_eval, int eval_2_plies_up, int eval_4_plies_up) {
     const int previous = eval_2_plies_up != -INF ? eval_2_plies_up : eval_4_plies_up;
-    return previous != -INF && static_eval > previous;
+    return previous == -INF || static_eval > previous;
 }
 
 /**
@@ -1493,7 +1493,6 @@ static int negamax_node(int alpha,
     if (search_state->ply == 0) {
         nnue_reset_root(&search_state->nnue, board);
         search_state->best_move_nodes = 0;
-        search_state->root_search_start = search_state->nodes;
     }
 
     /* Whether this node is on the previous iteration's PV, set by the parent for this node only. */
@@ -1605,13 +1604,10 @@ static int negamax_node(int alpha,
     const int static_eval = in_check ? -INF : VERIFY_PLAIN ? corrected_eval : adjusted_eval(corrected_eval, tt_hit ? &tt : NULL);
 
     /* Improving: the network's eval against this side's previous node (is_improving). Every node
-     * two or four plies up is an ancestor, so its entry was written before this node was reached.
-     * Not straight after a null move: the side to move didn't get a move in between. */
+     * two or four plies up is an ancestor, so its entry was written before this node was reached. */
     const int ply = search_state->ply;
     search_state->static_evals[ply] = in_check ? -INF : raw_eval;
-    const bool after_null_move =
-        search_state->null_move_index != 0 && search_state->null_move_index == search_state->repetition_index;
-    const bool improving = !in_check && !after_null_move &&
+    const bool improving = !in_check &&
                            is_improving(raw_eval, ply >= 2 ? search_state->static_evals[ply - 2] : -INF,
                                         ply >= 4 ? search_state->static_evals[ply - 4] : -INF);
 
@@ -2505,6 +2501,7 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
     const int helper_count = start_helpers(board, search_state, limits, &helpers);
 
     for (int i = 1; i <= depth; i++) {
+        const uint64_t nodes_before = search_state->nodes;
         score = aspiration_search(board, search_state, limits, i, score);
 
         /* The search may have been stopped, the PV table is then partly overwritten so keep
@@ -2528,9 +2525,8 @@ move_t find_best_move(board_t* board, search_state_t* search_state, limits_t* li
         if (limits->time_set) {
             uint64_t soft_stop = limits->soft_stop_time;
             if (limits->adaptive && i >= TM_SCALE_MIN_DEPTH) {
-                /* The last root search's (an aspiration fail searches the root again). */
                 const double scale = tm_scale(stability, search_state->best_move_nodes,
-                                              search_state->nodes - search_state->root_search_start);
+                                              search_state->nodes - nodes_before);
                 soft_stop = limits->start_time +
                             (uint64_t) ((double) (limits->soft_stop_time - limits->start_time) * scale);
                 if (soft_stop > limits->stop_time) soft_stop = limits->stop_time;

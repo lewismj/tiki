@@ -943,14 +943,13 @@ void test_opp_can_win_material() {
 }
 
 void test_improving() {
-    /* Against two plies up, or four if that was in check (-INF); with neither, not improving. */
+    /* Against two plies up, or four if that was in check (-INF); with neither, improving. */
     TEST_ASSERT_TRUE(is_improving(50, 40, -INF));
     TEST_ASSERT_FALSE(is_improving(40, 40, -INF));
     TEST_ASSERT_FALSE(is_improving(30, 40, 0));
     TEST_ASSERT_TRUE(is_improving(30, -INF, 20));
     TEST_ASSERT_FALSE(is_improving(10, -INF, 20));
-    TEST_ASSERT_FALSE(is_improving(-500, -INF, -INF));
-    TEST_ASSERT_FALSE(is_improving(500, -INF, -INF));
+    TEST_ASSERT_TRUE(is_improving(-500, -INF, -INF));
 }
 
 

@@ -52,8 +52,7 @@ int vote_best_thread(const thread_result_t* results, int count);
 /**
  * The factor on the soft time limit after a completed depth (see limits.h): from how many depths
  * in a row the best move has been unchanged ('stability', 0 when it just changed) and the share of
- * the root's nodes ('root_nodes', the last root search's: an aspiration fail searches the root
- * again) its search took ('best_move_nodes').
+ * the root's nodes ('root_nodes', that depth's) its search took ('best_move_nodes').
  */
 double tm_scale(int stability, uint64_t best_move_nodes, uint64_t root_nodes);
 
